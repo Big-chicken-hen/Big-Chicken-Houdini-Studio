@@ -5,7 +5,7 @@ from pathlib import Path
 from PySide6 import QtCore, QtWidgets
 
 from ..common import AppPaths, StudioError, read_json
-from ..launcher import codex_executable, discover_houdini, launch
+from ..launcher import codex_executable, discover_houdini, launch, render_output_directory
 from ..workspace import Workspaces
 from .shared import LIGHT, StudioGlyph, Task, button, label
 
@@ -91,6 +91,11 @@ class StudioLauncher(QtWidgets.QWidget):
         form.addWidget(label("起始场景"), 3, 0)
         form.addWidget(self.hip, 3, 1)
         form.addWidget(button("选择…", self.choose_hip), 3, 2)
+        form.addWidget(label("渲染目录"), 4, 0)
+        self.output_path = QtWidgets.QLineEdit(str(render_output_directory(self.paths)))
+        self.output_path.setReadOnly(True)
+        self.output_path.setToolTip("新渲染的默认输出目录；已有 HIP 的输出参数保持原值。")
+        form.addWidget(self.output_path, 4, 1, 1, 2)
         form.setColumnStretch(1, 1)
         main.addWidget(sheet)
         self.status = label("工作空间将单独保存会话、附件与执行记录。", "muted", True)
@@ -130,6 +135,7 @@ class StudioLauncher(QtWidgets.QWidget):
         item = self.projects.currentItem()
         workspace_id = item.data(QtCore.Qt.UserRole) if item else None
         session = self.sessions.get(workspace_id, {})
+        self.output_path.setText(session.get("render_output_directory") or str(render_output_directory(self.paths)))
         active = session.get("state") in {"starting", "ready", "unknown"}
         self.launch_button.setEnabled(bool(workspace_id) and not self.busy and not active)
         self.launch_button.setText("工作室已打开" if active else "进入工作室    ↗")
@@ -191,7 +197,7 @@ class StudioLauncher(QtWidgets.QWidget):
 
     def launched(self, value):
         self.busy = False
-        self.sessions[self.launch_workspace] = {"directory": value["directory"], "state": "starting"}
+        self.sessions[self.launch_workspace] = {**value, "state": "starting"}
         self.update_selection()
         self.poll.start()
 

@@ -35,6 +35,7 @@ class Bridge:
         self.turn_id = None
         self.codex_state = "idle"
         self.stop_requested = False
+        self.owner_stopped = False
         self.completed_turns = collections.deque(maxlen=256)
         self.pending_requests = {}
         self._runtime = None
@@ -119,9 +120,17 @@ class Bridge:
         executable = Path(os.environ.get("BCS_PYTHON_EXECUTABLE") or sys.executable)
         if executable.name.lower() == "pythonw.exe":
             executable = executable.with_name("python.exe")
+        context_config = {}
+        project_config = self.paths.root / ".codex" / "config.toml"
+        if project_config.is_file():
+            # Only these two simple integer settings cross into scene sessions;
+            # repository development instructions and hooks remain separate.
+            for key, value in re.findall(r"(?m)^\s*(model_context_window|model_auto_compact_token_limit)\s*=\s*(\d+)\s*(?:#.*)?$",
+                                         project_config.read_text(encoding="utf-8")):
+                context_config[key] = int(value)
         return {"cwd": str(self.cwd), "approvalPolicy": "on-request", "sandbox": "workspace-write",
                 "developerInstructions": SCENE_INSTRUCTIONS,
-                "config": {"project_doc_max_bytes": 0, "mcp_servers": {"big_chicken": {
+                "config": {**context_config, "project_doc_max_bytes": 0, "mcp_servers": {"big_chicken": {
                     "command": str(executable), "args": ["-m", "studio.mcp"],
                     "env_vars": ["HIA_PROJECT_ROOT", "BCS_SESSION_ID", "BCS_WORKSPACE_ID", "BCS_SESSION_TOKEN",
                                  "BCS_OWNER_ID", "BCS_PYTHON_EXECUTABLE", "HIA_RENDER_OUTPUT_DIR", "PYTHONPATH", "TEMP", "TMP"],
@@ -187,11 +196,13 @@ class Bridge:
                 raise StudioError("TURN_ACTIVE", "Wait for native turn confirmation or reconcile the conversation", 409)
             if not self.thread_id:
                 raise StudioError("THREAD_REQUIRED", "Create or select a conversation first", 409)
-            try:
-                self.runtime().call("POST", "/owner/resume", {"owner_id": self.owner_id})
-            except StudioError as exc:
-                if exc.code not in {"HOUDINI_STARTING", "CONNECTION_LOST"}:
-                    raise
+            if self.owner_stopped:
+                try:
+                    self.runtime().call("POST", "/owner/resume", {"owner_id": self.owner_id})
+                    self.owner_stopped = False
+                except StudioError as exc:
+                    if exc.code not in {"HOUDINI_STARTING", "CONNECTION_LOST"}:
+                        raise
             self.codex_state, self.stop_requested = "starting", False
         params = {"threadId": self.thread_id, "input": inputs}
         for key in ("model", "effort"):
@@ -221,7 +232,7 @@ class Bridge:
                 thread_id, revision = self.thread_id, self.turn_revision
             if not thread_id:
                 return {"reconciled": False, "message": "Select a native conversation first"}
-            value = self.client.request("thread/read", {"threadId": thread_id, "includeTurns": True})
+            value = self.read_thread(thread_id)
             with self.lock:
                 fresh = revision == self.turn_revision
                 if fresh:
@@ -229,7 +240,19 @@ class Bridge:
                 turn_id = self.turn_id if self.stop_requested else None
             if turn_id:
                 self.client.request("turn/interrupt", {"threadId": thread_id, "turnId": turn_id})
-            return {"reconciled": fresh, "codex_state": self.codex_state, "thread": value.get("thread")}
+            return {**value, "reconciled": fresh, "codex_state": self.codex_state}
+
+    def read_thread(self, thread_id):
+        try:
+            return self.client.request("thread/read", {"threadId": thread_id, "includeTurns": True})
+        except BridgeError as exc:
+            # 0.153.4's in-memory store cannot list turns before the first
+            # rollout exists. Keep native metadata, never fabricate chat history.
+            if exc.code != "CODEX_RPC_ERROR" or "list_turns is not supported yet" not in exc.message:
+                raise
+            value = self.client.request("thread/read", {"threadId": thread_id, "includeTurns": False})
+            return {**value, "history_available": False,
+                    "history_message": "Native conversation history is not available yet"}
 
     def _apply_native_state(self, thread):
         turns = thread.get("turns", [])
@@ -252,6 +275,7 @@ class Bridge:
     def stop(self):
         with self.lock:
             self.stop_requested = True
+            self.owner_stopped = True
             if self.codex_state in {"running", "starting"}:
                 self.codex_state = "stopping"
             turn_id, thread_id = self.turn_id, self.thread_id
@@ -288,7 +312,8 @@ class Bridge:
             return {"operation_id": op_id, "state": "unknown"}
         if value.get("state") == "finished":
             return {"operation_id": op_id, "nodes": value.get("result", {}).get("selected", []),
-                    "scene_epoch": value.get("scene_epoch"), "state": "finished"}
+                    "scene_epoch": value.get("result", {}).get("scene_epoch", value.get("scene_epoch")),
+                    "state": "finished"}
         return value
 
     def attach(self, source):
@@ -337,7 +362,7 @@ class Bridge:
             if method == "GET" and path == "/thread":
                 if not self.thread_id:
                     return {"thread": None}
-                return self.client.request("thread/read", {"threadId": self.thread_id, "includeTurns": True})
+                return self.read_thread(self.thread_id)
             if method == "POST" and path == "/reconcile":
                 return self.reconcile()
             if method == "POST" and path == "/selection":

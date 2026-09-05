@@ -36,6 +36,7 @@ python scripts/setup.py --backend-only --dev
 ```
 
 完整安装、离线安装、直接启动、显式记忆导出和交付边界见 [安装与交付](docs/installation.md)。设计验收依据是 [用户 Pro 诊断](docs/pro-diagnosis.md) 和 [重建契约](docs/rebuild-brief.md)。
+本次已运行的检查与尚未验证的真实会话范围见 [集成验收记录](docs/verification.md)。
 
 ## 数据与执行边界
 

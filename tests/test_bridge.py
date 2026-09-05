@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from studio.bridge import Bridge
-from studio.codex.errors import BridgeError
+from studio.codex.errors import BridgeError, CodexRPCError
 from studio.common import AppPaths, StudioError
 from studio.workspace import Workspaces
 
@@ -151,6 +151,23 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(config["project_doc_max_bytes"], 0)
         self.assertTrue(config["mcp_servers"]["big_chicken"]["command"].endswith("python.exe"))
         self.assertIn("HIA_RENDER_OUTPUT_DIR", config["mcp_servers"]["big_chicken"]["env_vars"])
+
+    def test_native_unmaterialized_history_keeps_metadata_and_context_settings(self):
+        def read(method, params):
+            if params.get("includeTurns"):
+                raise CodexRPCError(method, {"message": "list_turns is not supported yet"})
+            return {"thread": {"id": "thread-1", "status": {"type": "idle"}, "turns": []}}
+        self.client.handler = read
+        self.assertFalse(self.bridge.read_thread("thread-1")["history_available"])
+        self.bridge.codex_state = "unknown"
+        self.bridge.reconcile()
+        self.assertEqual(self.bridge.codex_state, "idle")
+        folder = self.paths.root / ".codex"
+        folder.mkdir()
+        (folder / "config.toml").write_text("model_context_window = 400000\nmodel_auto_compact_token_limit = 350000\n", encoding="utf-8")
+        config = self.bridge.thread_config()["config"]
+        self.assertEqual(config["model_context_window"], 400000)
+        self.assertEqual(config["model_auto_compact_token_limit"], 350000)
 
 
 if __name__ == "__main__":
