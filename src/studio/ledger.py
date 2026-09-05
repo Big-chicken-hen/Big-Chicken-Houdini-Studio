@@ -10,15 +10,25 @@ from .common import StudioError, encoded, now, payload_hash
 
 
 class Ledger:
-    def __init__(self, path):
+    def __init__(self, path, redact=lambda text: text):
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.lock = threading.RLock()
+        self.redact = redact
         self.db = sqlite3.connect(path, check_same_thread=False)
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA synchronous=FULL")
         self.db.execute("CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY, hash TEXT NOT NULL, "
                         "receipt TEXT NOT NULL, detail TEXT)")
         self.db.commit()
+
+    def sanitize(self, value):
+        if isinstance(value, str):
+            return self.redact(value)
+        if isinstance(value, dict):
+            return {self.redact(str(k)): self.sanitize(v) for k, v in value.items()}
+        if isinstance(value, (tuple, list)):
+            return [self.sanitize(v) for v in value]
+        return value
 
     def accept(self, op):
         digest = payload_hash({key: value for key, value in op.items() if key != "operation_id"})
@@ -32,11 +42,12 @@ class Ledger:
             receipt = {"operation_id": op["operation_id"], "payload_hash": digest,
                        "workspace_id": op["workspace_id"], "owner_id": op["owner_id"],
                        "runtime_id": op["runtime_id"], "scene_epoch": op.get("scene_epoch"),
-                       "kind": op["kind"], "label": str(op.get("label", op["kind"]))[:160],
+                       "kind": op["kind"], "label": self.redact(str(op.get("label", op["kind"])))[:160],
                        "state": "queued", "mutation_outcome": "not_run", "checks_outcome": "not_run",
                        "external_side_effects": "unknown" if op["kind"] == "execute" else "none",
                        "automatic_retry_safe": False, "cancel_requested": False,
                        "created_at": now(), "result_ref": None, "timings": {}}
+            receipt = self.sanitize(receipt)
             self.db.execute("INSERT INTO operations VALUES (?,?,?,NULL)",
                             (op["operation_id"], digest, encoded(receipt)))
             return receipt, True
@@ -51,10 +62,10 @@ class Ledger:
     def update(self, operation_id, *, detail=None, **changes):
         with self.lock, self.db:
             receipt = self.get(operation_id)
-            receipt.update(changes)
+            receipt.update(self.sanitize(changes))
             if detail is not None:
                 receipt["result_ref"] = operation_id
-                self.db.execute("UPDATE operations SET detail=? WHERE id=?", (encoded(detail), operation_id))
+                self.db.execute("UPDATE operations SET detail=? WHERE id=?", (encoded(self.sanitize(detail)), operation_id))
             self.db.execute("UPDATE operations SET receipt=? WHERE id=?", (encoded(receipt), operation_id))
             return receipt
 

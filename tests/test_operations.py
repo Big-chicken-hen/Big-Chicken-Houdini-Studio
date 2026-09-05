@@ -1,0 +1,395 @@
+"""Focused protocol faults using fake HOM, never a Houdini GUI/AI end-to-end test."""
+from __future__ import annotations
+
+import base64
+import contextlib
+import io
+import json
+import sqlite3
+import tempfile
+import threading
+import time
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from studio.common import StudioError, encoded, new_id
+from studio.http import MAX_BODY, Client, serve
+from studio.ledger import Ledger
+from studio.mcp import Adapter, serve_stdio
+from studio.runtime import OperationRuntime
+from studio.runtime_server import runtime_router
+from studio.scene import ExecutionResult, HoudiniScene
+
+
+TOKEN = "test-session-secret-0123456789abcdef"
+TEST_ROOT = Path(__file__).resolve().parents[1] / ".runtime" / "operation-tests"
+
+
+class FakeHou:
+    def __init__(self):
+        self.count = 0
+        self.started, self.release = threading.Event(), threading.Event()
+        self.hipFile = SimpleNamespace(path=lambda: "/same/scene.hip", hasUnsavedChanges=lambda: False,
+                                       addEventCallback=lambda callback: None, removeEventCallback=lambda callback: None)
+        self.hipFileEventType = SimpleNamespace(BeforeLoad="load", BeforeClear="clear")
+        self.undos = SimpleNamespace(group=lambda label: contextlib.nullcontext())
+
+    def applicationVersionString(self):
+        return "fake-HOM"
+
+    def frame(self):
+        return 1
+
+    def node(self, path):
+        return None
+
+    def mutate(self):
+        self.count += 1
+
+    def block(self):
+        self.started.set()
+        if not self.release.wait(3):
+            raise RuntimeError("Test release was not signalled")
+
+
+class GatedDispatch:
+    def __init__(self):
+        self.entered, self.release = threading.Event(), threading.Event()
+
+    def __call__(self, callback):
+        self.entered.set()
+        if not self.release.wait(3):
+            raise RuntimeError("Test dispatch was not released")
+        return callback()
+
+
+class FaultLedger(Ledger):
+    fail = False
+    persistent = False
+
+    def update(self, operation_id, **changes):
+        if self.fail and (changes.get("state") == "finished" or self.persistent):
+            if not self.persistent:
+                self.fail = False
+            raise sqlite3.OperationalError("simulated storage failure")
+        return super().update(operation_id, **changes)
+
+
+class RouteClient:
+    def __init__(self, runtime, lose_post=False):
+        self.route = runtime_router(runtime)
+        self.posts = []
+        self.lose_post = lose_post
+
+    def call(self, method, path, payload=None):
+        from urllib.parse import parse_qs, urlsplit
+        parts = urlsplit(path)
+        value = self.route(method, parts.path, parse_qs(parts.query), payload or {})
+        if method == "POST" and path == "/operations":
+            self.posts.append(payload)
+            if self.lose_post:
+                raise StudioError("CONNECTION_LOST", "Response was lost", 503)
+        return value
+
+
+class OperationsTests(unittest.TestCase):
+    def setUp(self):
+        TEST_ROOT.mkdir(parents=True, exist_ok=True)
+        self.directory = tempfile.TemporaryDirectory(dir=TEST_ROOT)
+        self.root = Path(self.directory.name)
+        self.hou = FakeHou()
+        self.scene = HoudiniScene(self.hou, self.root / "captures", secrets=(TOKEN,))
+        self.runtime = None
+        self.dispatch = None
+
+    def tearDown(self):
+        self.hou.release.set()
+        if isinstance(self.dispatch, GatedDispatch):
+            self.dispatch.release.set()
+        if self.runtime is not None:
+            self.runtime.close()
+            self.assertFalse(self.runtime.worker.is_alive(), "Test worker must close SQLite before cleanup")
+        self.scene.close()
+        self.directory.cleanup()
+
+    def start(self, capacity=16, gated=False, ledger_type=Ledger):
+        self.dispatch = GatedDispatch() if gated else lambda callback: callback()
+        ledger = ledger_type(self.root / "receipts.sqlite")
+        self.runtime = OperationRuntime(ledger, self.scene, self.dispatch, workspace_id="workspace",
+                                        session_id="session", capacity=capacity)
+        return self.runtime
+
+    def op(self, script="hou.mutate()", **changes):
+        return {"operation_id": new_id(), "workspace_id": "workspace", "owner_id": "owner",
+                "runtime_id": self.runtime.runtime_id, "scene_epoch": self.scene.epoch,
+                "kind": "execute", "arguments": {"script": script}, **changes}
+
+    def drain(self):
+        deadline = time.monotonic() + 3
+        while self.runtime.health()["queue_depth"] and time.monotonic() < deadline:
+            time.sleep(0.005)
+        self.assertEqual(self.runtime.health()["queue_depth"], 0)
+
+    def run_op(self, script="hou.mutate()", **arguments):
+        op = self.op(arguments={"script": script, **arguments}, label=arguments.get("label", "execute"))
+        self.runtime.submit(op)
+        self.drain()
+        return self.runtime.get(op["operation_id"])
+
+    def assert_code(self, code, call):
+        with self.assertRaises(StudioError) as raised:
+            call()
+        self.assertEqual(raised.exception.code, code)
+
+    def test_stale_after_queue_same_path_reload_and_cancel_capacity(self):
+        runtime = self.start(capacity=2, gated=True)
+        stale = self.op()
+        runtime.submit(stale)
+        self.assertTrue(self.dispatch.entered.wait(1))
+        cancelled = self.op()
+        runtime.submit(cancelled)
+        runtime.cancel(cancelled["operation_id"])
+        self.assertEqual(runtime.health()["queue_depth"], 2)
+        self.assertEqual(runtime.queue.maxsize, 2)
+        self.assert_code("QUEUE_FULL", lambda: runtime.submit(self.op()))
+        old_path, old_epoch = self.scene.cached()["hip_path"], self.scene.epoch
+        self.scene._hip_event("load", old_hip_file=old_path, new_hip_file=old_path)
+        self.assertNotEqual(old_epoch, self.scene.epoch)
+        self.assertEqual(old_path, self.scene.cached()["hip_path"])
+        self.dispatch.release.set()
+        self.drain()
+        self.assertEqual(runtime.get(stale["operation_id"])["error"]["code"], "STALE_SCENE")
+        self.assertEqual(runtime.get(cancelled["operation_id"])["mutation_outcome"], "not_run")
+        self.assertEqual(self.hou.count, 0)
+
+    def test_lost_response_queries_same_id_and_conflicting_payload_never_runs(self):
+        runtime = self.start()
+        client = RouteClient(runtime, lose_post=True)
+        adapter = Adapter(client, None, {"runtime_id": runtime.runtime_id, "workspace_id": "workspace"}, "owner")
+        adapter.scene_epoch = self.scene.epoch
+        response = adapter.call("hia_execute_hom", {"script": "hou.mutate(); result = 42"})
+        receipt = json.loads(response["content"][0]["text"])
+        self.assertEqual(receipt["state"], "finished")
+        self.assertEqual(len(client.posts), 1)
+        op = client.posts[0]
+        self.assertEqual(runtime.submit(op)["operation_id"], receipt["operation_id"])
+        changed = {**op, "arguments": {"script": "hou.mutate(); result = 43"}}
+        self.assert_code("OPERATION_ID_CONFLICT", lambda: runtime.submit(changed))
+        self.assertEqual(self.hou.count, 1)
+        # Even an unaccepted/lost submission returns its preallocated ID, never a second POST.
+        class LostClient:
+            calls = []
+            def call(self, method, path, payload=None):
+                self.calls.append((method, path))
+                raise StudioError("CONNECTION_LOST", "Lost", 503)
+        lost = LostClient()
+        adapter.runtime = lost
+        response = adapter.call("hia_execute_hom", {"script": "hou.mutate()"})
+        unknown = json.loads(response["content"][0]["text"])
+        self.assertEqual(unknown["state"], "unknown")
+        self.assertEqual(lost.calls, [("POST", "/operations"), ("GET", "/operations/" + unknown["operation_id"])])
+        class PollFailure:
+            def call(self, method, path, payload=None):
+                if method == "POST":
+                    return {"operation_id": payload["operation_id"], "state": "queued", "mutation_outcome": "not_run"}
+                raise StudioError("RECEIPT_UNAVAILABLE", "Receipt commit was not confirmed", 503)
+        adapter.runtime = PollFailure()
+        response = adapter.call("hia_execute_hom", {"script": "hou.mutate()"})
+        unknown = json.loads(response["content"][0]["text"])
+        self.assertEqual(unknown["state"], "unknown")
+        self.assertEqual(unknown["mutation_outcome"], "unknown")
+        self.assertEqual(unknown["last_confirmed_state"], "queued")
+        self.assertFalse(unknown["receipt_confirmed"])
+
+    def test_stop_fences_queued_work_but_running_hom_remains_running(self):
+        runtime = self.start()
+        running = self.op("hou.mutate(); hou.block()")
+        runtime.submit(running)
+        self.assertTrue(self.hou.started.wait(1))
+        queued = self.op()
+        runtime.submit(queued)
+        stopped = runtime.stop_owner("owner")
+        self.assertTrue(stopped["future_operations_stopped"])
+        self.assertEqual(runtime.get(running["operation_id"])["state"], "running")
+        self.assertTrue(runtime.get(running["operation_id"])["cancel_requested"])
+        self.assertTrue(runtime.health()["main_thread_busy"])
+        self.assertEqual(runtime.get(queued["operation_id"])["state"], "cancelled")
+        self.assert_code("OWNER_STOPPED", lambda: runtime.submit(self.op()))
+        self.hou.release.set()
+        self.drain()
+        self.assertEqual(runtime.get(running["operation_id"])["mutation_outcome"], "completed")
+        self.assertEqual(self.hou.count, 1)
+
+    def test_post_execution_failures_do_not_reclassify_mutation(self):
+        self.start()
+        with patch.object(self.scene, "checks", side_effect=[[], RuntimeError("postcheck failure")]):
+            receipt = self.run_op(checks=[{"kind": "node_exists", "path": "/obj/test"}])
+        self.assertEqual((receipt["mutation_outcome"], receipt["checks_outcome"]), ("completed", "failed"))
+        with patch.object(self.scene, "inspect", side_effect=[{"path": "/obj/test"}, StudioError("INVALID_ARGUMENTS", "after read")]):
+            receipt = self.run_op(observe=[{"path": "/obj/test"}])
+        self.assertEqual(receipt["mutation_outcome"], "completed")
+        self.assertIn("observation_error", receipt["result"])
+        receipt = self.run_op("hou.mutate()\nclass Broken:\n def __repr__(self): raise ValueError('cannot render')\nresult = Broken()")
+        self.assertEqual(receipt["mutation_outcome"], "completed")
+        self.assertIn("result_error", receipt["result"])
+        with patch.object(self.scene, "run", return_value=ExecutionResult(detail={"bad": object()}, mutation_outcome="completed")), \
+                patch.object(self.scene, "refresh_cached", side_effect=RuntimeError("cache unavailable")):
+            receipt = self.run_op()
+        self.assertEqual(receipt["mutation_outcome"], "completed")
+        self.assertEqual(receipt["result"]["result_error"]["code"], "RESULT_SERIALIZATION_FAILED")
+
+    def test_bad_check_and_observe_arguments_reject_before_admission(self):
+        runtime = self.start()
+        invalid = [{"checks": [{"kind": "input_equals", "path": "/obj", "expected": None, "index": "bad"}]},
+                   {"checks": [{"kind": "parm_equals", "path": "/obj", "parm": "tx", "tolerance": -1}]},
+                   {"observe": [{"view": "children", "path": "/obj", "limit": "bad"}]},
+                   {"checks": [{"kind": "node_exists", "path": None}]}]
+        for args in invalid:
+            with self.subTest(args=args):
+                self.assert_code("INVALID_ARGUMENTS", lambda: runtime.submit(self.op(arguments={"script": "hou.mutate()", **args})))
+        self.assertEqual(runtime.recent(), [])
+        self.assertEqual(self.hou.count, 0)
+
+    def test_external_file_effect_then_exception_never_claims_safe_retry(self):
+        self.start()
+        target = self.root / "external-effect.txt"
+        script = ("from pathlib import Path\nfrom studio.common import StudioError\n"
+                  f"Path({str(target)!r}).write_text('effect', encoding='utf-8')\n"
+                  "hou.mutate()\nraise StudioError('INVALID_ARGUMENTS', 'raised inside the script')")
+        receipt = self.run_op(script)
+        self.assertEqual(target.read_text(), "effect")
+        self.assertEqual(receipt["mutation_outcome"], "partial")
+        self.assertEqual(receipt["external_side_effects"], "unknown")
+        self.assertFalse(receipt["automatic_retry_safe"])
+
+    def test_commit_failure_records_unknown_and_stops_next_hom(self):
+        runtime = self.start(gated=True, ledger_type=FaultLedger)
+        first, second = self.op(), self.op()
+        runtime.submit(first)
+        runtime.submit(second)
+        runtime.ledger.fail = True
+        self.dispatch.release.set()
+        self.drain()
+        self.assertEqual(runtime.get(first["operation_id"])["state"], "unknown")
+        self.assertEqual(runtime.get(first["operation_id"])["mutation_outcome"], "unknown")
+        self.assertEqual(runtime.get(second["operation_id"])["mutation_outcome"], "not_run")
+        self.assertTrue(runtime.health()["storage_fault"])
+        self.assert_code("RUNTIME_UNAVAILABLE", lambda: runtime.submit(self.op()))
+        self.assertEqual(self.hou.count, 1)
+
+    def test_total_storage_failure_never_exposes_stale_running_as_confirmed(self):
+        runtime = self.start(ledger_type=FaultLedger)
+        op = self.op("hou.mutate(); hou.block()")
+        runtime.submit(op)
+        self.assertTrue(self.hou.started.wait(1))
+        runtime.ledger.fail = runtime.ledger.persistent = True
+        self.hou.release.set()
+        self.drain()
+        self.assert_code("RECEIPT_UNAVAILABLE", lambda: runtime.get(op["operation_id"]))
+        projected = runtime.recent()[0]
+        self.assertEqual(projected["state"], "unknown")
+        self.assertFalse(projected["receipt_confirmed"])
+        self.assertEqual(self.hou.count, 1)
+
+    def test_crash_recovery_never_replays_running_or_queued_operations(self):
+        ledger = Ledger(self.root / "receipts.sqlite")
+        base = {"workspace_id": "workspace", "runtime_id": "previous", "owner_id": "owner",
+                "scene_epoch": "previous_scene", "kind": "execute", "arguments": {"script": "hou.mutate()"}}
+        running, queued = {**base, "operation_id": "running"}, {**base, "operation_id": "queued"}
+        ledger.accept(running)
+        ledger.accept(queued)
+        ledger.update("running", state="running")
+        ledger.close()
+        runtime = self.start()
+        self.assertEqual(runtime.get("running")["state"], "unknown")
+        self.assertEqual(runtime.get("queued")["mutation_outcome"], "not_run")
+        self.assertEqual(runtime.submit(running)["state"], "unknown")
+        self.assertEqual(self.hou.count, 0)
+
+    def test_large_success_details_are_paged_and_outputs_redacted_before_truncation(self):
+        runtime = self.start()
+        stdout, stderr = io.StringIO(), io.StringIO()
+        script = f"import sys\nprint({TOKEN!r})\nprint({TOKEN!r}, file=sys.stderr)\nhou.mutate()\nresult = {{'large': 'x' * 100000, {TOKEN!r}: {TOKEN!r}}}"
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            receipt = self.run_op(script, label="x" * 150 + TOKEN)
+        self.assertEqual(receipt["state"], "finished")
+        self.assertTrue(receipt["result"]["detail_available"])
+        offset, pages = 0, []
+        while offset is not None:
+            page = runtime.ledger.detail(receipt["operation_id"], offset, 24000)
+            pages.append(page["text"])
+            offset = page["next_offset"]
+        detail = "".join(pages)
+        self.assertEqual(len(json.loads(detail)["value"]["large"]), 100000)
+        self.assertNotIn(TOKEN, detail + encoded(receipt) + stdout.getvalue() + stderr.getvalue())
+        self.assertNotIn(TOKEN[:10], encoded(receipt))
+        failed = self.run_op(f"raise RuntimeError({TOKEN!r})")
+        self.assertNotIn(TOKEN, encoded(failed))
+
+    def test_native_image_and_non_scene_tools_do_not_reexecute_hom(self):
+        runtime = self.start(gated=True)
+        bridge_calls = []
+        bridge = SimpleNamespace(call=lambda *args: bridge_calls.append(args) or {"ok": True})
+        adapter = Adapter(None, bridge, {}, "owner", runtime_loader=lambda: self.fail("Bridge-only tool loaded runtime"))
+        adapter.call("hia_project_memory", {"action": "list"})
+        adapter.call("hia_lookup", {"source": "documents", "query": "noise"})
+        self.assertEqual(len(bridge_calls), 2)
+        adapter.runtime, adapter.identity = RouteClient(runtime), {"runtime_id": runtime.runtime_id, "workspace_id": "workspace"}
+        with patch.object(self.scene, "lookup", return_value={"documentation": "pure docstring"}):
+            adapter.call("hia_lookup", {"source": "hom", "symbol": "hou.Node"})
+        self.assertFalse(self.dispatch.entered.is_set())
+        png = b"\x89PNG\r\n\x1a\nfixture"
+        image_path = self.root / "captures" / "fixture.png"
+        image_path.write_bytes(png)
+        self.scene._artifacts["fixture"] = image_path
+        content = adapter._receipt({"kind": "capture", "state": "finished", "result": {"artifact_id": "fixture"}})["content"]
+        self.assertEqual(content[1], {"type": "image", "mimeType": "image/png", "data": base64.b64encode(png).decode()})
+        self.assertEqual(self.hou.count, 0)
+
+    def test_stdio_bounded_lines_and_http_partial_response_are_uncertain(self):
+        class BoundedSource(io.BytesIO):
+            def readline(self, size=-1):
+                self_size = size
+                if not 0 < self_size <= MAX_BODY + 1:
+                    raise AssertionError("Unbounded readline")
+                return super().readline(size)
+        source = BoundedSource(b"x" * (MAX_BODY + 50) + b'\n{"id":1,"method":"ping"}\n')
+        output = io.StringIO()
+        serve_stdio(None, source, output, TOKEN)
+        messages = [json.loads(line) for line in output.getvalue().splitlines()]
+        self.assertEqual(messages[0]["error"]["code"], -32600)
+        self.assertEqual(messages[1]["result"], {})
+        import http.client
+        client = Client("http://127.0.0.1:12345", TOKEN)
+        response = SimpleNamespace(read=lambda size: (_ for _ in ()).throw(http.client.IncompleteRead(b"partial", 20)))
+        with patch.object(client.opener, "open", return_value=contextlib.nullcontext(response)):
+            self.assert_code("CONNECTION_LOST", lambda: client.call("POST", "/operations", {}))
+
+    def test_real_loopback_receipt_query_and_error_redaction(self):
+        runtime = self.start()
+        route = runtime_router(runtime)
+        def router(method, path, query, body):
+            if path == "/fault":
+                raise StudioError("FAULT", TOKEN)
+            return route(method, path, query, body)
+        server = serve(router, TOKEN)
+        try:
+            client = Client("http://127.0.0.1:" + str(server.server_port), TOKEN)
+            op = self.op()
+            client.call("POST", "/operations", op)
+            self.drain()
+            receipt = client.call("GET", "/operations/" + op["operation_id"])
+            self.assertEqual(receipt["mutation_outcome"], "completed")
+            with self.assertRaises(StudioError) as fault:
+                client.call("GET", "/fault")
+            self.assertNotIn(TOKEN, str(fault.exception))
+            self.assertEqual(self.hou.count, 1)
+        finally:
+            server.shutdown()
+            server.server_close()
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -2,26 +2,137 @@
 from __future__ import annotations
 
 import contextlib
+import inspect
 import math
 import re
 import threading
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .common import StudioError, new_id, now
 
 
-def json_value(value, depth=0):
+@dataclass
+class ExecutionResult:
+    """Facts set at the execution boundary, never inferred from exception names."""
+    detail: dict = field(default_factory=dict)
+    mutation_outcome: str = "not_run"
+    checks_outcome: str = "not_run"
+    state: str = "finished"
+    error: dict | None = None
+
+
+class DiscardOutput:
+    """Do not forward arbitrary script output to process logs or protocol stdout."""
+    def write(self, text):
+        return len(text)
+
+    def flush(self):
+        pass
+
+
+def node_path(value):
+    if not isinstance(value, str) or not value.startswith("/") or ".." in value.split("/"):
+        raise StudioError("INVALID_ARGUMENTS", "Node paths must be absolute")
+
+
+def validate_checks(definitions):
+    if not isinstance(definitions, list) or len(definitions) > 64:
+        raise StudioError("INVALID_ARGUMENTS", "At most 64 checks are allowed")
+    fields = {"node_exists": {"expected"}, "node_type": {"expected"},
+              "parm_equals": {"parm", "expected", "tolerance"},
+              "input_equals": {"index", "expected"}, "cook": set(), "geometry_nonempty": set()}
+    for check in definitions:
+        if not isinstance(check, dict) or not isinstance(check.get("kind"), str) or check["kind"] not in fields:
+            raise StudioError("INVALID_ARGUMENTS", "Invalid check kind")
+        kind = check["kind"]
+        if set(check) - ({"kind", "path"} | fields[kind]):
+            raise StudioError("INVALID_ARGUMENTS", "Unknown check field")
+        node_path(check.get("path"))
+        if kind == "node_exists" and not isinstance(check.get("expected", True), bool):
+            raise StudioError("INVALID_ARGUMENTS", "node_exists expected must be boolean")
+        if kind == "node_type" and not isinstance(check.get("expected"), str):
+            raise StudioError("INVALID_ARGUMENTS", "node_type requires an expected type name")
+        if kind == "parm_equals":
+            if not isinstance(check.get("parm"), str) or not check["parm"] or "expected" not in check:
+                raise StudioError("INVALID_ARGUMENTS", "parm_equals requires parm and expected")
+            tolerance = check.get("tolerance", 1e-6)
+            if type(tolerance) not in (int, float) or not math.isfinite(tolerance) or tolerance < 0:
+                raise StudioError("INVALID_ARGUMENTS", "Tolerance must be finite and nonnegative")
+        if kind == "input_equals":
+            if "expected" not in check or type(check.get("index", 0)) is not int or check.get("index", 0) < 0:
+                raise StudioError("INVALID_ARGUMENTS", "input_equals requires expected and a nonnegative index")
+            if check["expected"] is not None:
+                node_path(check["expected"])
+
+
+def validate_view(view):
+    if not isinstance(view, dict):
+        raise StudioError("INVALID_ARGUMENTS", "A view must be an object")
+    kind = view.get("view", "node")
+    fields = {"node": set(), "parms": {"names"}, "children": {"limit"},
+              "geometry": set(), "checks": {"checks"}}
+    if not isinstance(kind, str) or kind not in fields or set(view) - ({"view", "path"} | fields[kind]):
+        raise StudioError("INVALID_ARGUMENTS", "Invalid inspection view")
+    node_path(view.get("path", "/obj"))
+    if kind == "parms":
+        names = view.get("names")
+        if not isinstance(names, list) or not 1 <= len(names) <= 64 or any(not isinstance(n, str) or not n for n in names):
+            raise StudioError("INVALID_ARGUMENTS", "Supply 1 to 64 parameter names")
+    if kind == "children" and (type(view.get("limit", 64)) is not int or not 1 <= view.get("limit", 64) <= 200):
+        raise StudioError("INVALID_ARGUMENTS", "Child limit must be between 1 and 200")
+    if kind == "checks":
+        validate_checks(view.get("checks", []))
+
+
+def validate_arguments(kind, args):
+    """Pure validation: no node lookup, cook, observation or side effect."""
+    allowed = {"context": set(), "inspect": {"views"},
+               "execute": {"script", "label", "preconditions", "checks", "observe"},
+               "capture": {"frame", "resolution"},
+               "lookup": {"source", "query", "category", "type_name", "symbol", "version"}}
+    if not isinstance(args, dict) or kind not in allowed or set(args) - allowed[kind]:
+        raise StudioError("INVALID_ARGUMENTS", "Arguments do not match the operation")
+    if kind == "execute":
+        script = args.get("script")
+        if not isinstance(script, str) or not script.strip() or len(script) > 256000:
+            raise StudioError("INVALID_ARGUMENTS", "Supply a HOM script, up to 256000 characters")
+        if not isinstance(args.get("label", ""), str):
+            raise StudioError("INVALID_ARGUMENTS", "Label must be a string")
+        validate_checks(args.get("preconditions", []))
+        validate_checks(args.get("checks", []))
+    if kind in {"inspect", "execute"}:
+        views = args.get("views" if kind == "inspect" else "observe", [])
+        low, high = (1, 32) if kind == "inspect" else (0, 64)
+        if not isinstance(views, list) or not low <= len(views) <= high:
+            raise StudioError("INVALID_ARGUMENTS", "Invalid number of targeted views")
+        for view in views:
+            validate_view(view)
+    if kind == "capture":
+        frame, resolution = args.get("frame", 1), args.get("resolution", [1280, 720])
+        if type(frame) not in (int, float) or not math.isfinite(frame):
+            raise StudioError("INVALID_ARGUMENTS", "Frame must be finite")
+        if not isinstance(resolution, list) or len(resolution) != 2 or any(type(v) is not int or not 64 <= v <= 2560 for v in resolution):
+            raise StudioError("INVALID_ARGUMENTS", "Resolution requires two integers from 64 to 2560")
+    if kind == "lookup" and (any(not isinstance(v, str) for v in args.values()) or
+                             args.get("source", "metadata") not in {"metadata", "hom"}):
+        raise StudioError("INVALID_ARGUMENTS", "Use installed metadata or a public HOM symbol")
+
+
+def json_value(value, depth=0, redact=lambda text: text):
     if depth > 12:
         return "[nested value omitted]"
-    if value is None or isinstance(value, (str, bool, int)):
+    if isinstance(value, str):
+        return redact(value)
+    if value is None or isinstance(value, (bool, int)):
         return value
     if isinstance(value, float):
         return value if math.isfinite(value) else str(value)
     if isinstance(value, dict):
-        return {str(k): json_value(v, depth + 1) for k, v in value.items()}
+        return {redact(str(k)): json_value(v, depth + 1, redact) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
-        return [json_value(v, depth + 1) for v in value]
-    return repr(value)[:2000]
+        return [json_value(v, depth + 1, redact) for v in value]
+    return redact(repr(value))[:2000]
 
 
 class HoudiniScene:
@@ -34,19 +145,23 @@ class HoudiniScene:
         self.lock = threading.RLock()
         self._cached = {}
         self._artifacts = {}
+        self.houdini_version = self.hou.applicationVersionString()
         self.refresh_cached()
         self.hou.hipFile.addEventCallback(self._hip_event)
 
-    def _hip_event(self, event):
+    def _hip_event(self, event, **_kwargs):
         changes = {getattr(self.hou.hipFileEventType, name, None)
                    for name in ("BeforeLoad", "BeforeClear")}
         if event in changes:
-            self.epoch = new_id()
-        self.refresh_cached()
+            with self.lock:
+                self.epoch = new_id()
+                self._cached["scene_epoch"] = self.epoch
+        with contextlib.suppress(Exception):
+            self.refresh_cached()
 
     def refresh_cached(self):
         with self.lock:
-            self._cached = {"scene_epoch": self.epoch, "hip_path": self.hou.hipFile.path(),
+            self._cached = {"scene_epoch": self.epoch, "hip_path": self.redact(self.hou.hipFile.path()),
                             "dirty": self.hou.hipFile.hasUnsavedChanges(), "frame": self.hou.frame(),
                             "observed_at": now()}
 
@@ -60,8 +175,7 @@ class HoudiniScene:
         return re.sub(r"\bsk-[A-Za-z0-9_-]{16,}\b", "[REDACTED]", text)
 
     def _node(self, path):
-        if not isinstance(path, str) or not path.startswith("/") or ".." in path.split("/"):
-            raise StudioError("INVALID_ARGUMENTS", "Node paths must be absolute")
+        node_path(path)
         node = self.hou.node(path)
         if node is None:
             raise StudioError("NODE_NOT_FOUND", "Node does not exist: " + path)
@@ -88,8 +202,7 @@ class HoudiniScene:
         raise StudioError("INVALID_ARGUMENTS", "Unknown scene operation")
 
     def inspect(self, view):
-        if not isinstance(view, dict):
-            raise StudioError("INVALID_ARGUMENTS", "A view must be an object")
+        validate_view(view)
         kind, path = view.get("view", "node"), view.get("path", "/obj")
         node = self._node(path)
         base = {"path": path, "view": kind}
@@ -108,7 +221,7 @@ class HoudiniScene:
                 if parm is None:
                     values[name] = {"error": "PARM_NOT_FOUND"}
                 else:
-                    values[name] = json_value(parm.eval())
+                    values[name] = json_value(parm.eval(), redact=self.redact)
             return {**base, "values": values}
         if kind == "children":
             limit = min(200, max(1, int(view.get("limit", 64))))
@@ -130,8 +243,7 @@ class HoudiniScene:
         raise StudioError("INVALID_ARGUMENTS", "Unknown inspection view")
 
     def checks(self, definitions):
-        if not isinstance(definitions, list) or len(definitions) > 64:
-            raise StudioError("INVALID_ARGUMENTS", "At most 64 checks are allowed")
+        validate_checks(definitions)
         records = []
         for check in definitions:
             if not isinstance(check, dict):
@@ -148,7 +260,7 @@ class HoudiniScene:
                     record["passed"] = record["actual"] == check["expected"]
                 elif kind == "parm_equals":
                     parm = node.parm(check["parm"]) if node else None
-                    record["actual"] = json_value(parm.eval()) if parm else None
+                    record["actual"] = json_value(parm.eval(), redact=self.redact) if parm else None
                     expected = check["expected"]
                     if isinstance(expected, (int, float)) and not isinstance(expected, bool) and parm:
                         record["passed"] = math.isclose(float(record["actual"]), expected,
@@ -170,50 +282,67 @@ class HoudiniScene:
                     record["passed"] = record["points"] > 0
                 else:
                     raise StudioError("INVALID_ARGUMENTS", "Unknown check kind: " + str(kind))
-            except StudioError:
-                raise
             except Exception as exc:
                 record["error"] = self.redact(str(exc))[:400]
             records.append(record)
         return records
 
     def execute(self, args, cancelled):
-        script = args.get("script")
-        if not isinstance(script, str) or not script.strip() or len(script) > 256000:
-            raise StudioError("INVALID_ARGUMENTS", "Supply a HOM script, up to 256000 characters")
-        try:
-            code = compile(script, "<Big-Chicken HOM batch>", "exec")
-        except (SyntaxError, ValueError) as exc:
-            raise StudioError("COMPILE_FAILED", str(exc)) from exc
-        for field in ("preconditions", "checks", "observe"):
-            if not isinstance(args.get(field, []), list) or len(args.get(field, [])) > 64:
-                raise StudioError("INVALID_ARGUMENTS", field + " must contain at most 64 items")
-        checks = args.get("checks", [])
-        # Validate the schema before executing, without cooking postconditions early.
-        allowed = {"node_exists", "node_type", "parm_equals", "input_equals", "cook", "geometry_nonempty"}
-        for item in checks + args.get("preconditions", []):
-            if not isinstance(item, dict) or item.get("kind") not in allowed:
-                raise StudioError("INVALID_ARGUMENTS", "Invalid check definition")
-        preconditions = self.checks(args.get("preconditions", []))
-        if any(not item["passed"] for item in preconditions):
-            raise StudioError("PRECONDITION_FAILED", "A target changed since observation", checks=preconditions)
-        before = [self.inspect(view) for view in args.get("observe", [])]
-
+        outcome = ExecutionResult()
         def checkpoint():
             if cancelled():
                 raise StudioError("COOPERATIVE_STOP", "Stopped at an explicit script checkpoint")
-
-        checkpoint()
         namespace = {"hou": self.hou, "result": None, "checkpoint": checkpoint,
                      "cancel_requested": cancelled, "__name__": "__studio_hom__"}
-        # An undo group is a convenience for the user, never a Python transaction.
-        with self.hou.undos.group(str(args.get("label", "Big-Chicken Studio"))[:100]):
-            exec(code, namespace, namespace)
-        verified = self.checks(checks)
-        return {"value": json_value(namespace.get("result")), "checks": verified,
-                "observations": {"before": before, "after": [self.inspect(view) for view in args.get("observe", [])]},
-                "_checks_outcome": ("passed" if all(item["passed"] for item in verified) else "failed")
-                if verified else "not_run"}
+        # Redirect only for this batch; no raw print/traceback reaches the host log.
+        with contextlib.redirect_stdout(DiscardOutput()), contextlib.redirect_stderr(DiscardOutput()):
+            try:
+                validate_arguments("execute", args)
+                try:
+                    code = compile(args["script"], "<Big-Chicken HOM batch>", "exec")
+                except (SyntaxError, ValueError) as exc:
+                    raise StudioError("COMPILE_FAILED", "The HOM script did not compile") from exc
+                preconditions = self.checks(args.get("preconditions", []))
+                if any(not item["passed"] for item in preconditions):
+                    outcome.detail["preconditions"] = preconditions
+                    raise StudioError("PRECONDITION_FAILED", "A target changed since observation")
+                before = [self.inspect(view) for view in args.get("observe", [])]
+                outcome.detail["observations"] = {"before": before}
+                checkpoint()
+                # Undo grouping is a user convenience, never a Python transaction.
+                with self.hou.undos.group(self.redact(args.get("label", "Big-Chicken Studio"))[:100]):
+                    outcome.mutation_outcome = "partial"
+                    exec(code, namespace, namespace)
+                    outcome.mutation_outcome = "completed"
+            except BaseException as exc:
+                outcome.state = "rejected" if outcome.mutation_outcome == "not_run" else "failed"
+                outcome.error = self.error(exc, "HOM_FAILED")
+                return outcome
+
+            # Script completion survives postcondition, observation and conversion failures.
+            try:
+                verified = self.checks(args.get("checks", []))
+                outcome.detail["checks"] = verified
+                outcome.checks_outcome = ("passed" if all(c["passed"] for c in verified) else "failed") if verified else "not_run"
+            except BaseException as exc:
+                outcome.checks_outcome = "failed"
+                outcome.detail["checks_error"] = self.error(exc, "CHECKS_FAILED")
+            try:
+                outcome.detail["observations"]["after"] = [self.inspect(view) for view in args.get("observe", [])]
+            except BaseException as exc:
+                outcome.detail["observation_error"] = self.error(exc, "OBSERVATION_FAILED")
+            try:
+                outcome.detail["value"] = json_value(namespace.get("result"), redact=self.redact)
+            except BaseException as exc:
+                outcome.detail["result_error"] = self.error(exc, "RESULT_CONVERSION_FAILED")
+        return outcome
+
+    def error(self, exc, fallback):
+        try:
+            message = self.redact(str(exc))[:1600]
+        except BaseException:
+            message = "Exception message unavailable"
+        return {"code": self.redact(exc.code) if isinstance(exc, StudioError) else fallback, "message": message}
 
     def lookup(self, args):
         if args.get("source", "metadata") == "hom":
@@ -223,11 +352,11 @@ class HoudiniScene:
                 raise StudioError("INVALID_ARGUMENTS", "Use a public HOM symbol such as hou.Node.createNode")
             obj = self.hou
             for part in parts:
-                obj = getattr(obj, part, None)
+                obj = inspect.getattr_static(obj, part, None)
                 if obj is None:
                     raise StudioError("SYMBOL_NOT_FOUND", "HOM symbol is absent in this installation", 404)
-            return {"symbol": symbol, "documentation": (getattr(obj, "__doc__", "") or "")[:18000],
-                    "houdini_version": self.hou.applicationVersionString()}
+            return {"symbol": symbol, "documentation": self.redact(getattr(obj, "__doc__", "") or "")[:18000],
+                    "houdini_version": self.houdini_version}
         category = args.get("category", "Sop")
         category_object = self.hou.nodeTypeCategories().get(category)
         if category_object is None:

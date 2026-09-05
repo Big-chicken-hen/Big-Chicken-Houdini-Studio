@@ -18,15 +18,18 @@ def runtime_router(runtime):
         if method == "GET" and path == "/health":
             return runtime.health()
         if method == "GET" and path == "/operations":
-            return {"operations": runtime.ledger.recent()}
+            return {"operations": runtime.recent()}
+        if method == "POST" and path == "/lookup":
+            return runtime.lookup(body)
         if method == "POST" and path == "/operations":
             return runtime.submit(body)
         parts = path.strip("/").split("/")
         if parts[0] == "operations" and len(parts) >= 2:
             op_id = identifier(parts[1])
             if method == "GET" and len(parts) == 2:
-                return runtime.ledger.get(op_id)
+                return runtime.get(op_id)
             if method == "GET" and parts[2:] == ["detail"]:
+                runtime.get(op_id)
                 return runtime.ledger.detail(op_id, int(query.get("offset", [0])[0]))
             if method == "POST" and parts[2:] == ["cancel"]:
                 return runtime.cancel(op_id)
@@ -51,7 +54,7 @@ def start():
     workspace_id, session_id = os.environ["BCS_WORKSPACE_ID"], os.environ["BCS_SESSION_ID"]
     token = os.environ["BCS_SESSION_TOKEN"]
     scene = HoudiniScene(hou, paths.session(session_id) / "captures", secrets=(token,))
-    ledger = Ledger(paths.workspace(workspace_id) / "operations.sqlite")
+    ledger = Ledger(paths.workspace(workspace_id) / "operations.sqlite", redact=scene.redact)
     runtime = OperationRuntime(ledger, scene, hdefereval.executeInMainThreadWithResult,
                                workspace_id=workspace_id, session_id=session_id)
     server = serve(runtime_router(runtime), token)

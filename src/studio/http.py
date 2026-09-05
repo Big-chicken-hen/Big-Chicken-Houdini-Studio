@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hmac
+import http.client
 import json
 import threading
 import urllib.error
@@ -12,6 +13,44 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from .common import StudioError, encoded
 
 MAX_BODY = 2 * 1024 * 1024
+
+
+def redact(value, token):
+    if isinstance(value, str):
+        return value.replace(token, "[REDACTED]") if token else value
+    if isinstance(value, dict):
+        return {redact(str(k), token): redact(v, token) for k, v in value.items()}
+    if isinstance(value, list):
+        return [redact(v, token) for v in value]
+    return value
+
+
+class BoundedHTTPServer(ThreadingHTTPServer):
+    request_queue_size = 16
+    daemon_threads = True
+
+    def __init__(self, *args, **kwargs):
+        self.slots = threading.BoundedSemaphore(32)
+        super().__init__(*args, **kwargs)
+
+    def process_request(self, request, client_address):
+        if not self.slots.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self.slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self.slots.release()
+
+    def handle_error(self, request, client_address):
+        pass  # Never emit raw request/exception data into service logs.
 
 
 def loopback_url(url):
@@ -46,11 +85,14 @@ class Client:
                 return json.loads(raw)
         except urllib.error.HTTPError as exc:
             try:
-                error = json.loads(exc.read(MAX_BODY)).get("error", {})
+                try:
+                    error = json.loads(exc.read(MAX_BODY)).get("error", {})
+                except (ValueError, AttributeError, http.client.HTTPException):
+                    error = {}
             finally:
                 exc.close()
-            raise StudioError(error.get("code", "HTTP_ERROR"), error.get("message", str(exc)), exc.code) from exc
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise StudioError(error.get("code", "HTTP_ERROR"), redact(error.get("message", "Local service rejected the request"), self.token), exc.code) from exc
+        except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException, ValueError) as exc:
             raise StudioError("CONNECTION_LOST", "Local service did not confirm the request", 503) from exc
 
 
@@ -93,12 +135,12 @@ def serve(router, token, port=0):
                 value = router(method, parts.path, urllib.parse.parse_qs(parts.query), body)
             except StudioError as exc:
                 status, value = exc.status, exc.payload()
-            except (ValueError, TypeError, KeyError) as exc:
-                status, value = 400, {"error": {"code": "INVALID_REQUEST", "message": str(exc)[:200]}}
+            except (ValueError, TypeError, KeyError):
+                status, value = 400, {"error": {"code": "INVALID_REQUEST", "message": "Invalid request arguments"}}
             except Exception:
                 status, value = 500, {"error": {"code": "SERVICE_ERROR", "message": "Local service could not complete this request"}}
             try:
-                raw = encoded(value).encode("utf-8")
+                raw = encoded(redact(value, token)).encode("utf-8")
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Cache-Control", "no-store")
@@ -108,8 +150,7 @@ def serve(router, token, port=0):
             except (BrokenPipeError, ConnectionError, OSError):
                 pass  # Receipts were already persisted. The caller can query them by ID.
 
-    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
-    server.daemon_threads = True
+    server = BoundedHTTPServer(("127.0.0.1", port), Handler)
     thread = threading.Thread(target=server.serve_forever, name="studio-loopback", daemon=True)
     thread.start()
     return server
