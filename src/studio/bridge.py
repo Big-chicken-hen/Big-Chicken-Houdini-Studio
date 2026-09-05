@@ -1,0 +1,264 @@
+"""Codex/workspace integration. Runtime receipts remain the scene authority."""
+from __future__ import annotations
+
+import collections
+import json
+import os
+import shutil
+import sys
+import threading
+from pathlib import Path
+
+from .codex.client import CodexStdioClient
+from .codex.errors import BridgeError
+from .codex.protocol import ProtocolPolicy
+from .common import StudioError, atomic_json, new_id, read_json
+from .http import Client, serve
+from .instructions import SCENE_INSTRUCTIONS
+from .workspace import WorkspaceData, Workspaces
+
+
+class Bridge:
+    def __init__(self, paths, workspace_id, session_id, token, codex_path, client=None):
+        self.paths, self.workspace_id, self.session_id = paths, workspace_id, session_id
+        self.workspace = Workspaces(paths).get(workspace_id)
+        self.token, self.owner_id = token, session_id
+        self.data = WorkspaceData(paths, workspace_id)
+        self.cwd = paths.workspace(workspace_id) / "work"
+        self.lock = threading.RLock()
+        self.events = collections.deque(maxlen=1500)
+        self.sequence = 0
+        self.thread_id = None
+        self.turn_id = None
+        self.codex_state = "idle"
+        self.stop_requested = False
+        self.completed_turns = set()
+        self.pending_requests = {}
+        self._runtime = None
+        self.server = None
+        env = dict(os.environ)
+        for path in (paths.local("codex-home"), paths.local("tmp")):
+            path.mkdir(parents=True, exist_ok=True)
+        env.update({"HIA_PROJECT_ROOT": str(paths.root), "BCS_WORKSPACE_ID": workspace_id,
+                    "BCS_SESSION_ID": session_id, "BCS_OWNER_ID": self.owner_id, "BCS_SESSION_TOKEN": token,
+                    "CODEX_HOME": str(paths.local("codex-home")), "PYTHONPATH": str(paths.root / "src"),
+                    "TEMP": str(paths.local("tmp")), "TMP": str(paths.local("tmp"))})
+        self.client = client or CodexStdioClient([str(codex_path), "app-server"], cwd=self.cwd,
+                                                environment=env, policy=ProtocolPolicy(), event_sink=self.on_event)
+        if client:
+            self.client.set_event_sink(self.on_event)
+
+    def start(self):
+        self.server = serve(self.route, self.token)
+        atomic_json(self.paths.session(self.session_id) / "bridge.json",
+                    {"url": "http://127.0.0.1:" + str(self.server.server_port),
+                     "workspace_id": self.workspace_id, "launcher_session_id": self.session_id})
+        self.client.start()
+        self.client.initialize()
+
+    def on_event(self, event):
+        with self.lock:
+            method, params = event.get("method"), event.get("params", {})
+            if method == "turn/started":
+                turn = params.get("turn", {})
+                if params.get("threadId") == self.thread_id:
+                    self.turn_id = turn.get("id")
+                    self.codex_state = "stopping" if self.stop_requested else "running"
+            elif method == "turn/completed":
+                turn = params.get("turn", {})
+                self.completed_turns.add(turn.get("id"))
+                if params.get("threadId") == self.thread_id:
+                    self.codex_state = turn.get("status", "unknown")
+                    self.turn_id = None
+            elif event.get("type") == "process_exit":
+                self.codex_state = "unavailable"
+            if event.get("type") == "server_request":
+                self.pending_requests[str(event["request_id"])] = event
+            if method == "serverRequest/resolved":
+                self.pending_requests.pop(str(params.get("requestId")), None)
+            self.sequence += 1
+            self.events.append({"sequence": self.sequence, **event})
+
+    def runtime(self):
+        if self._runtime is None:
+            file = self.paths.session(self.session_id) / "runtime.json"
+            if not file.exists():
+                raise StudioError("HOUDINI_STARTING", "Houdini has not connected yet", 503)
+            descriptor = read_json(file)
+            if descriptor.get("launcher_session_id") != self.session_id or descriptor.get("workspace_id") != self.workspace_id:
+                raise StudioError("RUNTIME_MISMATCH", "Runtime descriptor belongs to another session", 409)
+            self._runtime = Client(descriptor["url"], self.token, timeout=0.8)
+        return self._runtime
+
+    def state(self):
+        try:
+            runtime = {"connection": "connected", **self.runtime().call("GET", "/health")}
+        except StudioError as exc:
+            runtime = {"connection": "unavailable", "message": exc.message}
+        with self.lock:
+            return {"workspace": self.workspace, "thread_id": self.thread_id, "turn_id": self.turn_id,
+                    "codex": {"state": self.codex_state, "alive": self.client.is_running,
+                              "stop_requested": self.stop_requested}, "runtime": runtime,
+                    "pending_requests": list(self.pending_requests.values())}
+
+    def thread_config(self):
+        return {"cwd": str(self.cwd), "approvalPolicy": "on-request", "sandbox": "workspace-write",
+                "developerInstructions": SCENE_INSTRUCTIONS,
+                "config": {"mcp_servers": {"big_chicken": {
+                    "command": sys.executable, "args": ["-m", "studio.mcp"],
+                    "env_vars": ["HIA_PROJECT_ROOT", "BCS_SESSION_ID", "BCS_WORKSPACE_ID", "BCS_SESSION_TOKEN",
+                                 "BCS_OWNER_ID", "PYTHONPATH", "TEMP", "TMP"],
+                    "startup_timeout_sec": 15, "tool_timeout_sec": 30}}}}
+
+    def select_thread(self, thread_id=None):
+        with self.lock:
+            if self.codex_state in {"running", "starting", "stopping"}:
+                raise StudioError("TURN_ACTIVE", "Finish or stop the current turn before switching conversations", 409)
+        config = self.thread_config()
+        # Ensure native MCP startup can find a runtime; this does not observe or rebind a scene.
+        self.runtime().call("GET", "/health")
+        if thread_id:
+            item = self.client.request("thread/read", {"threadId": thread_id, "includeTurns": False})["thread"]
+            if Path(item.get("cwd", "")).resolve() != self.cwd.resolve():
+                raise StudioError("THREAD_WORKSPACE_MISMATCH", "Conversation belongs to another workspace", 409)
+            config["threadId"] = thread_id
+        result = self.client.request("thread/resume" if thread_id else "thread/start", config)
+        with self.lock:
+            self.thread_id, self.turn_id = result["thread"]["id"], None
+            self.codex_state = "idle"
+        return result
+
+    def start_turn(self, body):
+        text = body.get("text", "")
+        if not isinstance(text, str) or not text.strip() or len(text) > 64000:
+            raise StudioError("INVALID_INPUT", "Enter a message of 1 to 64000 characters")
+        with self.lock:
+            if self.codex_state in {"starting", "running", "stopping"}:
+                raise StudioError("TURN_ACTIVE", "A turn is already active", 409)
+            if not self.thread_id:
+                raise StudioError("THREAD_REQUIRED", "Create or select a conversation first", 409)
+            self.runtime().call("POST", "/owner/resume", {"owner_id": self.owner_id})
+            self.codex_state, self.stop_requested = "starting", False
+        inputs = [{"type": "text", "text": text}]
+        for attachment in body.get("attachments", [])[:8]:
+            path = self.paths.local("workspaces", self.workspace_id, "attachments", attachment)
+            if not path.is_file() or path.parent != self.paths.workspace(self.workspace_id) / "attachments":
+                raise StudioError("ATTACHMENT_NOT_FOUND", "Reattach the missing image")
+            inputs.append({"type": "localImage", "path": str(path)})
+        params = {"threadId": self.thread_id, "input": inputs}
+        for key in ("model", "effort"):
+            if body.get(key):
+                params[key] = body[key]
+        try:
+            result = self.client.request("turn/start", params)
+        except Exception:
+            with self.lock:
+                self.codex_state = "unknown"  # A timed-out start may still have begun.
+            raise
+        with self.lock:
+            turn_id = result["turn"]["id"]
+            if turn_id not in self.completed_turns:
+                self.turn_id = turn_id
+                self.codex_state = "stopping" if self.stop_requested else "running"
+            should_interrupt = self.stop_requested and self.turn_id is not None
+        if should_interrupt:
+            self.client.request("turn/interrupt", {"threadId": self.thread_id, "turnId": turn_id})
+        return result
+
+    def stop(self):
+        with self.lock:
+            self.stop_requested = True
+            if self.codex_state in {"running", "starting"}:
+                self.codex_state = "stopping"
+            turn_id, thread_id = self.turn_id, self.thread_id
+        try:
+            scene = self.runtime().call("POST", "/owner/stop", {"owner_id": self.owner_id})
+        except StudioError as exc:
+            scene = {"confirmed": False, "message": exc.message}
+        error = None
+        if turn_id:
+            try:
+                self.client.request("turn/interrupt", {"threadId": thread_id, "turnId": turn_id})
+            except BridgeError as exc:
+                error = str(exc)
+        return {"codex_interrupt_requested": bool(turn_id), "codex_interrupt_error": error,
+                "scene": scene, "message": "Future operations are stopped; running HOM may still be finishing"}
+
+    def attach(self, source):
+        path = Path(source).resolve()
+        if path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"} or not path.is_file():
+            raise StudioError("IMAGE_REQUIRED", "Choose a PNG, JPEG or WebP image")
+        if path.stat().st_size > 12 * 1024 * 1024:
+            raise StudioError("IMAGE_TOO_LARGE", "Use an image smaller than 12 MB")
+        raw = path.read_bytes()
+        if not (raw.startswith(b"\x89PNG\r\n\x1a\n") or raw.startswith(b"\xff\xd8\xff") or
+                raw.startswith(b"RIFF") and raw[8:12] == b"WEBP"):
+            raise StudioError("IMAGE_INVALID", "The selected file is not a supported image")
+        folder = self.paths.workspace(self.workspace_id) / "attachments"
+        folder.mkdir(exist_ok=True)
+        name = new_id() + path.suffix.lower()
+        with (folder / name).open("xb") as stream:
+            stream.write(raw)
+        return {"attachment_id": name, "name": path.name, "path": str(folder / name)}
+
+    def route(self, method, path, query, body):
+        try:
+            if method == "GET" and path == "/state":
+                return self.state()
+            if method == "GET" and path == "/events":
+                cursor = int(query.get("after", [0])[0])
+                with self.lock:
+                    gap = bool(self.events and cursor and cursor < self.events[0]["sequence"] - 1)
+                    events = [e for e in self.events if e["sequence"] > cursor][:100]
+                    return {"events": events, "cursor": events[-1]["sequence"] if events else self.sequence,
+                            "resync_required": gap}
+            if method == "GET" and path == "/operations":
+                return self.runtime().call("GET", "/operations")
+            if path.startswith("/operations/"):
+                suffix = "?offset=" + str(int(query.get("offset", [0])[0])) if path.endswith("/detail") else ""
+                return self.runtime().call(method, path + suffix, body if method == "POST" else None)
+            if method == "POST" and path == "/memory":
+                return self.data.memory(body["action"], **{k: v for k, v in body.items() if k != "action"})
+            if method == "POST" and path == "/lookup":
+                return self.data.lookup(body.get("query", ""), body.get("version"))
+            if method == "POST" and path == "/threads/select":
+                return self.select_thread(body.get("thread_id"))
+            if method == "GET" and path == "/threads":
+                result = self.client.request("thread/list", {"cwd": str(self.cwd), "limit": 50})
+                result["data"] = [t for t in result.get("data", []) if Path(t.get("cwd", "")).resolve() == self.cwd.resolve()]
+                return result
+            if method == "GET" and path == "/thread":
+                if not self.thread_id:
+                    return {"thread": None}
+                return self.client.request("thread/read", {"threadId": self.thread_id, "includeTurns": True})
+            if method == "POST" and path == "/turn":
+                return self.start_turn(body)
+            if method == "POST" and path == "/stop":
+                return self.stop()
+            if method == "POST" and path == "/attachments":
+                return self.attach(body["path"])
+            if method == "GET" and path == "/models":
+                return self.client.request("model/list", {})
+            if method == "GET" and path == "/account":
+                return self.client.request("account/read", {"refreshToken": False})
+            if method == "POST" and path == "/account/login":
+                return self.client.request("account/login/start", {"type": "chatgpt"})
+            if method == "POST" and path == "/requests/respond":
+                request_id = str(body["request_id"])
+                with self.lock:
+                    request = self.pending_requests.get(request_id)
+                if request is None:
+                    raise StudioError("REQUEST_EXPIRED", "This request is no longer pending", 409)
+                self.client.respond_to_server_request(request["request_id"], body["result"])
+                with self.lock:
+                    self.pending_requests.pop(request_id, None)
+                return {"responded": True}
+        except BridgeError as exc:
+            raise StudioError(exc.code, exc.message, exc.http_status) from exc
+        raise StudioError("ROUTE_NOT_FOUND", "Unknown bridge route", 404)
+
+    def close(self):
+        self.client.close(grace_seconds=1)
+        if self.server:
+            self.server.shutdown()
+            self.server.server_close()

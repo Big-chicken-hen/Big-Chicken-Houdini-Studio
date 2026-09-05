@@ -1,0 +1,17 @@
+.runtime/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+.env
+auth.json
+*.hip
+*.hiplc
+*.hipnc
+*.exr
+*.bgeo*
+*.vdb
+*.log
+.coverage

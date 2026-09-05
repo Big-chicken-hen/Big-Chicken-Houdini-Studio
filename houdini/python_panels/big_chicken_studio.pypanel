@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<pythonPanelDocument>
+  <interface name="big_chicken_studio" label="Big-Chicken Studio" icon="MISC_python">
+    <script><![CDATA[
+def onCreateInterface():
+    from studio.ui.panel import StudioPanel
+    return StudioPanel()
+]]></script>
+    <includeInToolbarMenu menu_position="210" create_separator="true"/>
+    <help><![CDATA[Big-Chicken Houdini Studio. Conversations, live scene status and durable execution receipts.]]></help>
+  </interface>
+</pythonPanelDocument>
