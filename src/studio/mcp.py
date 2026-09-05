@@ -101,15 +101,20 @@ class Adapter:
                 if self.context_operation_id is not None and value.get("operation_id") == self.context_operation_id:
                     self.scene_epoch = epoch
         content = [{"type": "text", "text": encoded(value)}]
-        if value.get("kind") == "capture" and value.get("state") == "finished":
-            artifact_id = value.get("result", {}).get("artifact_id")
+        image_unavailable = False
+        if value.get("kind") == "capture" and isinstance(result, dict):
+            artifact_id = result.get("artifact_id")
             if artifact_id:
                 try:
-                    image = self.runtime.call("GET", "/artifacts/" + artifact_id)
+                    from .common import identifier
+                    image = self.runtime.call("GET", "/artifacts/" + identifier(artifact_id))
                     content.append({"type": "image", "mimeType": image["mime_type"], "data": image["data"]})
                 except StudioError as exc:
+                    image_unavailable = True
                     content.append({"type": "text", "text": encoded(exc.payload())})
-        return {"content": content, "isError": value.get("state") in {"failed", "rejected", "unknown"}}
+        # A valid image can accompany a failed restoration. Missing artifact bytes
+        # fail this retrieval without rewriting the original operation's receipt.
+        return {"content": content, "isError": image_unavailable or value.get("state") in {"failed", "rejected", "unknown"}}
 
     def call(self, name, args):
         tool = next((t for t in TOOLS if t["name"] == name), None)

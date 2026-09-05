@@ -233,6 +233,8 @@ class OperationsTests(unittest.TestCase):
         self.assertEqual(self.hou.count, 1)
 
     def test_readiness_capture_changes_only_stashed_settings_and_restores_frame(self):
+        from test_capture import png_bytes
+
         class Settings:
             def __init__(self, values):
                 self.values = dict(values)
@@ -250,24 +252,28 @@ class OperationsTests(unittest.TestCase):
         def flipbook(viewport, settings, open_dialog):
             used.append(settings.values)
             self.assertFalse(open_dialog)
-            self.assertEqual(viewport, "active-viewport")
+            self.assertIs(viewport, active_viewport)
             for option in expensive:
                 self.assertIs(settings.values[option], False)
             if len(used) == 2:
                 raise RuntimeError("simulated viewport failure")
-            frame = int(settings.values["frameRange"][0])
-            Path(settings.values["output"].replace("$F4", f"{frame:04d}")).write_bytes(b"fake PNG")
-        viewer = SimpleNamespace(flipbookSettings=lambda: original, curViewport=lambda: "active-viewport", flipbook=flipbook)
+            Path(settings.values["output"]).write_bytes(png_bytes(*settings.values["resolution"]))
+        active_viewport = SimpleNamespace(size=lambda: (0, 0, 320, 180))
+        viewer = SimpleNamespace(flipbookSettings=lambda: original, curViewport=lambda: active_viewport, flipbook=flipbook)
         with patch.multiple(self.hou, create=True, frame=lambda: current_frame[0],
                             setFrame=lambda value: current_frame.__setitem__(0, value),
                             ui=SimpleNamespace(paneTabOfType=lambda kind: viewer),
                             paneTabType=SimpleNamespace(SceneViewer="SceneViewer")):
             result = self.scene.capture({"frame": 24})
-            self.assertEqual(result["restored_frame"], 7)
+            self.assertEqual(result.state, "finished")
+            self.assertEqual(result.detail["actual_resolution"], [320, 180])
+            self.assertEqual(result.detail["restored_frame"], 7)
             self.assertEqual(current_frame[0], 7)
             self.assertEqual(original.values, expensive)
-            with self.assertRaisesRegex(RuntimeError, "simulated viewport failure"):
-                self.scene.capture({"frame": 30})
+            failed = self.scene.capture({"frame": 30})
+            self.assertEqual(failed.state, "failed")
+            self.assertIn("simulated viewport failure", failed.detail["capture_error"]["message"])
+            self.assertEqual(failed.detail["restore_errors"], [])
             self.assertEqual(current_frame[0], 7)
         self.assertEqual(original.values, expensive)
 
@@ -468,11 +474,12 @@ class OperationsTests(unittest.TestCase):
         with patch.object(self.scene, "lookup", return_value={"documentation": "pure docstring"}):
             adapter.call("hia_lookup", {"source": "hom", "symbol": "hou.Node"})
         self.assertFalse(self.dispatch.entered.is_set())
-        png = b"\x89PNG\r\n\x1a\nfixture"
-        image_path = self.root / "captures" / "fixture.png"
+        from test_capture import png_bytes
+        png = png_bytes()
+        artifact_id, image_path = self.scene._artifacts.allocate()
         image_path.write_bytes(png)
-        self.scene._artifacts["fixture"] = image_path
-        content = adapter._receipt({"kind": "capture", "state": "finished", "result": {"artifact_id": "fixture"}})["content"]
+        self.scene._artifacts.commit(artifact_id, {"actual_frame": 1}, (64, 64))
+        content = adapter._receipt({"kind": "capture", "state": "finished", "result": {"artifact_id": artifact_id}})["content"]
         self.assertEqual(content[1], {"type": "image", "mimeType": "image/png", "data": base64.b64encode(png).decode()})
         self.assertEqual(self.hou.count, 0)
 
