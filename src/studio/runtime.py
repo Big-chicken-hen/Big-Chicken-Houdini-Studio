@@ -11,10 +11,13 @@ from .scene import ExecutionResult, validate_arguments
 
 
 class OperationRuntime:
-    def __init__(self, ledger, scene, dispatch, *, workspace_id, session_id, capacity=16):
+    def __init__(self, ledger, scene, dispatch, *, workspace_id, session_id, capacity=16, ownership=None):
         if type(capacity) is not int or capacity < 1:
             raise ValueError("Queue capacity must be positive")
         self.ledger, self.scene, self.dispatch = ledger, scene, dispatch
+        # Production acquires this before opening Ledger. It belongs to the worker,
+        # not the HTTP server or supervisor, while scene execution can still finish.
+        self.ownership = ownership
         self.ledger.redact = scene.redact
         self.workspace_id, self.session_id = workspace_id, session_id
         self.runtime_id = new_id()
@@ -136,12 +139,23 @@ class OperationRuntime:
             return {"resumed": True}
 
     def _worker(self):
+        try:
+            self._drain_queue()
+        finally:
+            with self.lock:
+                self.closed = True
+            try:
+                self.ledger.close()
+            finally:
+                if self.ownership is not None:
+                    self.ownership.close()
+
+    def _drain_queue(self):
         while True:
             try:
                 op = self.queue.get(timeout=0.1)
             except queue.Empty:
                 if self.closed:
-                    self.ledger.close()
                     return
                 continue
             try:
@@ -231,4 +245,5 @@ class OperationRuntime:
                 except Exception:
                     pass
         self.worker.join(timeout=2)
-        # The worker closes SQLite when it actually exits, including delayed HOM completion.
+        # A timed-out join does not release SQLite or execution ownership. The worker
+        # retains both until delayed HOM and its final receipt have actually finished.
