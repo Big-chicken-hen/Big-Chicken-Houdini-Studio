@@ -1,11 +1,14 @@
 name: Focused checks
 on:
   push:
-    branches: [main, 'release/**']
+    branches: [main]
   pull_request:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   backend:
     strategy:
@@ -23,16 +26,63 @@ jobs:
       PIP_DISABLE_PIP_VERSION_CHECK: '1'
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
       - name: Explicit backend setup (no Qt or Houdini download)
         run: python scripts/setup.py --backend-only --dev
-      - name: Static check, small unittest set, and offline smoke
+      - name: Static check and backend tests
         shell: pwsh
         run: |
           $studioPython = if ($IsWindows) { '.runtime/venv/Scripts/python.exe' } else { '.runtime/venv/bin/python' }
-          & $studioPython scripts/check.py
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $studioPython scripts/check.py --suite backend
+          exit $LASTEXITCODE
+      - name: Offline protocol smoke (not Houdini)
+        shell: pwsh
+        run: |
+          $studioPython = if ($IsWindows) { '.runtime/venv/Scripts/python.exe' } else { '.runtime/venv/bin/python' }
           & $studioPython scripts/smoke.py
           exit $LASTEXITCODE
+  native-ui:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      HIA_PROJECT_ROOT: ${{ github.workspace }}
+      PYTHONPATH: ${{ github.workspace }}/src
+      QT_QPA_PLATFORM: offscreen
+      PIP_CACHE_DIR: ${{ github.workspace }}/.runtime/cache/pip
+      PIP_DISABLE_PIP_VERSION_CHECK: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Preserve exact source for reproducible UI review
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force .runtime/review | Out-Null
+          git bundle create .runtime/review/source.bundle --all
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git rev-parse HEAD | Out-File -Encoding utf8 .runtime/review/commit.txt
+      - name: Explicit native UI setup
+        run: python scripts/setup.py --dev
+      - name: Qt tests (no Houdini or Codex inference)
+        run: .runtime/venv/Scripts/python.exe scripts/check.py --suite ui
+      - name: Render native UI review fixtures
+        run: .runtime/venv/Scripts/python.exe scripts/preview_ui.py
+      - name: Upload review evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-ui-review
+          retention-days: 7
+          path: |
+            .runtime/review/
+            .runtime/previews/
+          if-no-files-found: error
