@@ -218,6 +218,11 @@ class PanelTest(unittest.TestCase):
     def test_real_qt_http_is_nonblocking_and_authenticates(self):
         token = secrets.token_urlsafe(32)
         observed = []
+        receipts = {
+            "/finished": {"operation_id": "finished-op", "state": "finished", "error": None},
+            "/failed": {"operation_id": "failed-op", "state": "failed",
+                        "error": {"code": "SCRIPT_ERROR", "message": "Script failed"}},
+        }
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
@@ -225,7 +230,8 @@ class PanelTest(unittest.TestCase):
                 time.sleep(0.12)
                 rejected = self.path == "/reject"
                 data = json.dumps({"error": {"code": "INVALID_INPUT", "message": "Correct the input",
-                                             "submission_state": "not_submitted"}} if rejected else {"ready": True}).encode()
+                                             "submission_state": "not_submitted"}} if rejected else
+                                  receipts.get(self.path, {"ready": True})).encode()
                 self.send_response(400 if rejected else 200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(data)))
@@ -256,6 +262,12 @@ class PanelTest(unittest.TestCase):
             process_until(lambda: bool(failures))
             self.assertEqual(str(failures[0]), "Correct the input")
             self.assertEqual(failures[0].submission_state, "not_submitted")
+            for path, receipt in receipts.items():
+                returned, errors = [], []
+                api.call("GET", path, done=returned.append, failed=errors.append)
+                process_until(lambda: bool(returned or errors))
+                self.assertEqual(errors, [])
+                self.assertEqual(returned, [receipt])
         finally:
             heartbeat.stop()
             api.close()

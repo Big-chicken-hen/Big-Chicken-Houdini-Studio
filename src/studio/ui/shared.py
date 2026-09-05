@@ -136,7 +136,8 @@ class Api(QtCore.QObject):
                 if not isinstance(value, dict):
                     raise ValueError("Bridge returned an invalid response")
                 status = reply.attribute(QtNetwork.QNetworkRequest.HttpStatusCodeAttribute)
-                if reply.error() != QtNetwork.QNetworkReply.NoError or "error" in value or (status and status >= 300):
+                # A receipt can contain an execution error while its HTTP query succeeds.
+                if reply.error() != QtNetwork.QNetworkReply.NoError or (status and status >= 300):
                     error = value.get("error")
                     message = error.get("message", "Request failed") if isinstance(error, dict) else reply.errorString()
                     if failed:
