@@ -58,7 +58,7 @@ def geometry_facts(node, view):
         result["truncated_attributes"][owner] = len(attributes) > 64
         selected = attributes[:64]
         records = [{"name": a.name(), "owner": owner, "data_type": str(a.dataType()),
-                    "tuple_size": a.size(), "type_info": str(a.typeInfo()), "is_array": a.isArrayType()}
+                    "tuple_size": a.size(), "qualifier": a.qualifier(), "is_array": a.isArrayType()}
                    for a in selected]
         result["attributes"][owner] = records
         if owner in {"point", "primitive"}:

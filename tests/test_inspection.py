@@ -32,9 +32,9 @@ class InspectionTests(unittest.TestCase):
     def test_large_geometry_reads_only_requested_elements_and_skips_array_values(self):
         accesses, reads = [], []
         scalar = NS(name=lambda: "Cd", dataType=lambda: "Float", size=lambda: 3,
-                    typeInfo=lambda: "Color", isArrayType=lambda: False)
+                    qualifier=lambda: "Color", isArrayType=lambda: False)
         array = NS(name=lambda: "weights", dataType=lambda: "Float", size=lambda: 1,
-                   typeInfo=lambda: "None", isArrayType=lambda: True)
+                   qualifier=lambda: "None", isArrayType=lambda: True)
         def value(attribute):
             self.assertIs(attribute, scalar, "Array values must not be fetched then sliced")
             reads.append(attribute.name())
