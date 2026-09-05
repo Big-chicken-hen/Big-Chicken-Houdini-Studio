@@ -239,11 +239,12 @@ class StudioPanel(QtWidgets.QWidget):
         actions.addWidget(self.attach_button)
         actions.addWidget(self.selection_button)
         actions.addStretch()
-        self.stop_button = button("停止", self.stop, "stop")
+        self.stop_button = button("请求停止", self.stop, "stop")
         self.send_button = button("发送   ↑", self.send, "primary")
         actions.addWidget(self.stop_button)
         actions.addWidget(self.send_button)
         controls.addLayout(actions)
+        controls.addWidget(label("长 HOM 占用主线程时，按钮可能延迟响应；操作是否停止以收据为准。", "muted", True))
         layout.addWidget(composer)
         self.tabs.addTab(page, "对话")
 
