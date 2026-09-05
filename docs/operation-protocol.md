@@ -70,6 +70,22 @@ A single-frame capture modifies only a stashed copy of the viewport flipbook set
 
 ## Metadata, documents and output
 
+`hia_inspect` supports `view=parameters` for an existing node. `pattern` filters
+actual parameter names; `offset` and `limit` page their native metadata without
+evaluating parameter values. Records retain the name returned by
+`parm.parmTemplate()` (which can already be expanded) and native multiparm
+instance indices. Do not infer an index base or a real parameter name from a
+template suffix. Use `view=parms` with the discovered names to read values.
+
+`view=geometry` accepts selected attribute `owners` (point, primitive, vertex,
+detail), optional exact `attributes`, and `samples` from 0 to 16. Metadata reports
+data type, tuple size, native qualifier and array status, limited to 64 attributes
+per owner. Sampling uses direct element indices, at most 16 attributes per
+sample, rather than constructing all point/primitive/vertex handles. Array,
+dictionary and oversized tuple values remain metadata-only. String previews are
+truncated explicitly. Native attribute metadata enumeration and the requested
+node's cook can still cost work; the sample limit is not a cook-time guarantee.
+
 `hia_lookup(source=metadata)` queries live installed node types/parameter templates through the same bounded main-thread queue, without requiring a scene observation. It must not call HOM from HTTP workers. `POST /lookup` accepts only `source=hom`: public symbol resolution uses static Python attributes and returns docstrings with the version cached at scene construction. It does not evaluate properties, read scene nodes or cook. No whole-installation metadata snapshot blocks startup.
 
 `hia_lookup(source=documents)` and `hia_project_memory` use Bridge/workspace routes directly. MCP loads the runtime descriptor only when a runtime capability is actually requested, so document and explicit memory operations work before Houdini connects.
