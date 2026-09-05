@@ -6,7 +6,9 @@ from dataclasses import dataclass
 from typing import Any
 
 
-@dataclass(frozen=True)
+# Python/contextlib/unittest update exception traceback, cause and context.
+# Freezing an Exception masks the original failure during propagation.
+@dataclass
 class BridgeError(Exception):
     """A safe, JSON-serializable error with an HTTP status."""
 
