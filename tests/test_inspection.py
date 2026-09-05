@@ -3,12 +3,18 @@ import unittest
 from types import SimpleNamespace as NS
 
 from studio.common import StudioError
-from studio.inspection import geometry_facts, parameter_instances
+from studio.inspection import bounded_value, geometry_facts, parameter_instances
 from studio.mcp import TOOLS, validate_schema
 from studio.scene import validate_view
 
 
 class InspectionTests(unittest.TestCase):
+    def test_string_redaction_precedes_truncation(self):
+        secret = "synthetic-session-token-0123456789abcdef"
+        result = bounded_value(["x" * 500 + secret + " tail"], lambda text: text.replace(secret, "[REDACTED]"))
+        self.assertNotIn(secret[:10], result[0]["text"])
+        self.assertIn("[REDACTED]", result[0]["text"])
+
     def test_parameter_page_exposes_real_multiparm_names_without_evaluation(self):
         visited = []
         def parm(index):

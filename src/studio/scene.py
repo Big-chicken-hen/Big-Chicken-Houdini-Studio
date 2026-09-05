@@ -255,10 +255,10 @@ class HoudiniScene:
                     "total": len(children), "truncated": len(children) > limit}
         if kind == "parameters":
             from .inspection import parameter_instances
-            return {**base, **parameter_instances(node, view)}
+            return {**base, **parameter_instances(node, view, self.redact)}
         if kind == "geometry":
             from .inspection import geometry_facts
-            return {**base, **geometry_facts(node, view)}
+            return {**base, **geometry_facts(node, view, self.redact)}
         if kind == "checks":
             return {**base, "checks": self.checks(view.get("checks", []))}
         raise StudioError("INVALID_ARGUMENTS", "Unknown inspection view")

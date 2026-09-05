@@ -4,19 +4,20 @@ from __future__ import annotations
 import math
 
 
-def bounded_value(value):
+def bounded_value(value, redact=lambda text: text):
     if isinstance(value, str):
+        value = redact(value)
         return value if len(value) <= 512 else {"text": value[:512], "truncated": True}
     if value is None or isinstance(value, (bool, int)):
         return value
     if isinstance(value, float):
         return value if math.isfinite(value) else str(value)
     if isinstance(value, (tuple, list)) and len(value) <= 16:
-        return [bounded_value(v) for v in value]
+        return [bounded_value(v, redact) for v in value]
     return {"omitted": "Non-scalar or oversized value; use a targeted HOM read if needed"}
 
 
-def parameter_instances(node, view):
+def parameter_instances(node, view, redact=lambda text: text):
     # HOM returns matching parameter handles for this node, not the whole scene.
     # Only the requested page's metadata is inspected; no parameter is evaluated.
     matched = node.globParms(view.get("pattern", "*"), single_pattern=True)
@@ -31,13 +32,13 @@ def parameter_instances(node, view):
                         "type": str(template.type()), "components": template.numComponents(),
                         "multiparm_instance": multipart,
                         "multiparm_indices": list(parm.multiParmInstanceIndices()) if multipart else [],
-                        "default": bounded_value(default()) if callable(default) else None})
+                        "default": bounded_value(default(), redact) if callable(default) else None})
     end = offset + len(records)
     return {"parameters": records, "total": len(matched), "offset": offset,
             "next_offset": end if end < len(matched) else None}
 
 
-def geometry_facts(node, view):
+def geometry_facts(node, view, redact=lambda text: text):
     geometry = node.geometry()  # This targeted view may cook the requested node.
     counts = {"point": int(geometry.intrinsicValue("pointcount")),
               "primitive": int(geometry.intrinsicValue("primitivecount")),
@@ -77,7 +78,7 @@ def geometry_facts(node, view):
                 if record["is_array"] or record["tuple_size"] > 16 or "dict" in record["data_type"].lower():
                     values[record["name"]] = {"omitted": "Array, dictionary or oversized tuple; metadata only"}
                 else:
-                    values[record["name"]] = bounded_value(element.attribValue(attribute))
+                    values[record["name"]] = bounded_value(element.attribValue(attribute), redact)
             samples.append({"index": index, "values": values})
         result["samples"][owner] = {"elements": samples, "element_limit": sample_count,
                                    "attribute_limit": 16, "truncated": counts[owner] > len(samples)}
