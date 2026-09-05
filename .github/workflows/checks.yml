@@ -74,10 +74,10 @@ jobs:
         run: .runtime/venv/Scripts/python.exe scripts/check.py --suite ui --tests-only
       - name: Render native UI review fixtures
         run: .runtime/venv/Scripts/python.exe scripts/preview_ui.py
-      - name: Render launcher states and high DPI
-        run: |
-          .runtime/venv/Scripts/python.exe scripts/preview_launcher.py --out .runtime/previews/launcher
-          .runtime/venv/Scripts/python.exe scripts/preview_launcher.py --case high-dpi --scale 2 --out .runtime/previews/launcher
+      - name: Render launcher states
+        run: .runtime/venv/Scripts/python.exe scripts/preview_launcher.py --out .runtime/previews/launcher
+      - name: Render launcher at high DPI
+        run: .runtime/venv/Scripts/python.exe scripts/preview_launcher.py --case high-dpi --scale 2 --out .runtime/previews/launcher
       - name: Upload UI evidence
         if: always()
         uses: actions/upload-artifact@v4
