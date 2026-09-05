@@ -4,7 +4,7 @@ from pathlib import Path
 
 from PySide6 import QtCore, QtWidgets
 
-from ..common import AppPaths, read_json
+from ..common import AppPaths, StudioError, read_json
 from ..launcher import codex_executable, discover_houdini, launch
 from ..workspace import Workspaces
 from .shared import LIGHT, StudioGlyph, Task, button, label
@@ -15,6 +15,10 @@ class StudioLauncher(QtWidgets.QWidget):
         super().__init__()
         self.paths = paths or AppPaths()
         self.workspaces = Workspaces(self.paths)
+        self.busy = False
+        self.status_pending = False
+        self.sessions = {}
+        self.launch_workspace = None
         self.setObjectName("studioLauncher")
         self.setWindowTitle("Big-Chicken · Houdini Studio")
         self.setStyleSheet(LIGHT)
@@ -96,13 +100,15 @@ class StudioLauncher(QtWidgets.QWidget):
         self.launch_button = button("进入工作室    ↗", self.start_session, "primary")
         footer.addWidget(self.launch_button)
         main.addLayout(footer)
-        self.session_dir = None
         self.poll = QtCore.QTimer(self)
-        self.poll.setInterval(600)
+        self.poll.setInterval(1500)
         self.poll.timeout.connect(self.session_status)
         self.reload_workspaces()
 
     def reload_workspaces(self):
+        current = self.projects.currentItem()
+        workspace_id = current.data(QtCore.Qt.UserRole) if current else None
+        self.projects.blockSignals(True)
         self.projects.clear()
         for value in self.workspaces.list():
             item = QtWidgets.QListWidgetItem(value["name"] + "\n独立会话  ·  项目决策  ·  执行记录")
@@ -110,18 +116,43 @@ class StudioLauncher(QtWidgets.QWidget):
             self.projects.addItem(item)
         if self.projects.count():
             self.projects.setCurrentRow(0)
+            for index in range(self.projects.count()):
+                if self.projects.item(index).data(QtCore.Qt.UserRole) == workspace_id:
+                    self.projects.setCurrentRow(index)
         else:
-            self.projects.addItem("还没有工作空间。点击“＋ 新建”开始。")
+            item = QtWidgets.QListWidgetItem("还没有工作空间。点击“＋ 新建”开始。")
+            item.setFlags(QtCore.Qt.NoItemFlags)
+            self.projects.addItem(item)
+        self.projects.blockSignals(False)
         self.update_selection()
 
     def update_selection(self):
         item = self.projects.currentItem()
-        self.launch_button.setEnabled(bool(item and item.data(QtCore.Qt.UserRole)))
+        workspace_id = item.data(QtCore.Qt.UserRole) if item else None
+        session = self.sessions.get(workspace_id, {})
+        active = session.get("state") in {"starting", "ready", "unknown"}
+        self.launch_button.setEnabled(bool(workspace_id) and not self.busy and not active)
+        self.launch_button.setText("工作室已打开" if active else "进入工作室    ↗")
+        if self.busy:
+            self.status.setText("检查环境，准备启动…")
+        elif session:
+            state = session.get("state")
+            text = {"starting": "Houdini 正在打开。运行时连接后即可进入 Panel。",
+                    "ready": "● 工作室已连接。请在 Houdini 的 Python Panel 中打开 Big-Chicken Studio。",
+                    "closed": "Houdini 已退出，会话与执行记录已保留。",
+                    "unknown": "会话状态暂时无法读取。正在等待下一次状态更新。"}.get(state)
+            self.status.setText(text or session.get("message", "启动失败，请检查所选环境。"))
+        else:
+            self.status.setText("工作空间将单独保存会话、附件与执行记录。")
 
     def create_workspace(self):
         name, ok = QtWidgets.QInputDialog.getText(self, "新建工作空间", "给这次创作起个名字")
         if ok and name.strip():
-            value = self.workspaces.create(name)
+            try:
+                value = self.workspaces.create(name)
+            except (StudioError, OSError) as exc:
+                self.status.setText(str(exc))
+                return
             self.reload_workspaces()
             for i in range(self.projects.count()):
                 if self.projects.item(i).data(QtCore.Qt.UserRole) == value["workspace_id"]:
@@ -144,35 +175,69 @@ class StudioLauncher(QtWidgets.QWidget):
             self.hip.setText(path)
 
     def start_session(self):
+        if not self.launch_button.isEnabled() or self.busy:
+            return
         item = self.projects.currentItem()
         if not item or not item.data(QtCore.Qt.UserRole):
             return
         values = (item.data(QtCore.Qt.UserRole), self.houdini.currentData() or "", self.codex.text(), self.hip.text() or None)
-        self.launch_button.setEnabled(False)
-        self.status.setText("检查环境，准备启动…")
+        self.busy = True
+        self.launch_workspace = values[0]
+        self.update_selection()
         self.task = Task(lambda: launch(self.paths, *values))
         self.task.signals.result.connect(self.launched)
         self.task.signals.error.connect(self.failed)
         QtCore.QThreadPool.globalInstance().start(self.task)
 
     def launched(self, value):
-        self.session_dir = Path(value["directory"])
-        self.status.setText("Houdini 正在打开。连接后在 Python Panel 中选择 Big-Chicken Studio。")
+        self.busy = False
+        self.sessions[self.launch_workspace] = {"directory": value["directory"], "state": "starting"}
+        self.update_selection()
         self.poll.start()
 
     def session_status(self):
-        file = self.session_dir / "status.json"
-        if not file.exists():
+        if self.status_pending:
             return
-        value = read_json(file)
-        if value["state"] == "ready":
-            self.status.setText("● 工作室已就绪。在 Houdini 的 Python Panel 菜单中打开 Big-Chicken Studio。")
+        self.status_pending = True
+        sessions = {key: dict(value) for key, value in self.sessions.items()}
+
+        def read_statuses():
+            result = {}
+            for key, session in sessions.items():
+                if session.get("state") in {"closed", "failed"}:
+                    continue
+                file = Path(session["directory"]) / "status.json"
+                try:
+                    if file.is_file():
+                        value = read_json(file)
+                        if not isinstance(value, dict) or "state" not in value:
+                            raise ValueError("Invalid session status")
+                        result[key] = {**session, **value}
+                except (ValueError, OSError):
+                    result[key] = {**session, "state": "unknown"}
+            return result
+
+        self.status_task = Task(read_statuses)
+        self.status_task.signals.result.connect(self.statuses_read)
+        self.status_task.signals.error.connect(self.status_read_failed)
+        QtCore.QThreadPool.globalInstance().start(self.status_task)
+
+    def statuses_read(self, values):
+        self.status_pending = False
+        self.sessions.update(values)
+        self.update_selection()
+        if all(value.get("state") in {"closed", "failed"} for value in self.sessions.values()):
             self.poll.stop()
-            self.launch_button.setEnabled(True)
-        elif value["state"] in {"failed", "closed"}:
-            self.failed(value.get("message", "Houdini 已退出。会话和执行记录已经保留。"))
+
+    def status_read_failed(self, message):
+        self.status_pending = False
+        self.status.setText("状态读取失败：" + message)
 
     def failed(self, message):
-        self.poll.stop()
+        self.busy = False
+        self.update_selection()
         self.status.setText(message)
-        self.launch_button.setEnabled(True)
+
+    def closeEvent(self, event):
+        self.poll.stop()
+        super().closeEvent(event)

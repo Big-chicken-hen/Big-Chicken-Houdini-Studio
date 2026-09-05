@@ -55,6 +55,7 @@ QPushButton:hover { background: #E9EEDC; }
 QPushButton#primary { background: #2E3B25; border: 0; color: #EBF3DC; padding: 14px 24px; font-weight: 700; }
 QPushButton#primary:hover { background: #465A36; }
 QPushButton:disabled { color: #959D8A; background: #E1E4D9; border-color: #E1E4D9; }
+QPushButton#primary:disabled { color: #8B957D; background: #DFE4D5; }
 QPushButton#railButton { color: #E6EBDF; background: #394331; border: 0; text-align: left; padding: 13px 16px; }
 QLineEdit, QComboBox { background: #FFFFFF; border: 1px solid #D6DBCD; border-radius: 6px; padding: 10px; }
 QComboBox::drop-down { border: none; width: 22px; }
@@ -67,6 +68,7 @@ QListWidget::item:selected { background: #E4EDCF; border-color: #A5B987; color: 
 
 def label(text, name=None, wrap=False):
     item = QtWidgets.QLabel(text)
+    item.setTextFormat(QtCore.Qt.PlainText)
     if name:
         item.setObjectName(name)
     item.setWordWrap(wrap)
@@ -97,11 +99,14 @@ class Api(QtCore.QObject):
         self.url, self.token = loopback_url(url), token
         self.manager = QtNetwork.QNetworkAccessManager(self)
         self.inflight = set()
+        self.replies = set()
+        self.closed = False
 
     def call(self, method, path, body=None, done=None, failed=None, unique=False):
-        if unique and path in self.inflight:
-            return
-        self.inflight.add(path)
+        key = (method, path.split("?", 1)[0])
+        if self.closed or unique and key in self.inflight:
+            return False
+        self.inflight.add(key)
         request = QtNetwork.QNetworkRequest(QtCore.QUrl(self.url + path))
         request.setRawHeader(b"Authorization", ("Bearer " + self.token).encode())
         request.setHeader(QtNetwork.QNetworkRequest.ContentTypeHeader, "application/json")
@@ -110,14 +115,22 @@ class Api(QtCore.QObject):
         request.setTransferTimeout(45000)
         reply = (self.manager.get(request) if method == "GET" else
                  self.manager.post(request, json.dumps(body or {}).encode()))
+        self.replies.add(reply)
 
         def finished():
-            self.inflight.discard(path)
+            self.inflight.discard(key)
+            self.replies.discard(reply)
             raw = bytes(reply.readAll())
             try:
+                if self.closed:
+                    return
                 value = json.loads(raw) if raw else {}
-                if reply.error() != QtNetwork.QNetworkReply.NoError or "error" in value:
-                    message = value.get("error", {}).get("message", reply.errorString())
+                if not isinstance(value, dict):
+                    raise ValueError("Bridge returned an invalid response")
+                status = reply.attribute(QtNetwork.QNetworkRequest.HttpStatusCodeAttribute)
+                if reply.error() != QtNetwork.QNetworkReply.NoError or "error" in value or (status and status >= 300):
+                    error = value.get("error")
+                    message = error.get("message", "Request failed") if isinstance(error, dict) else reply.errorString()
                     if failed:
                         failed(message)
                 elif done:
@@ -128,6 +141,12 @@ class Api(QtCore.QObject):
             finally:
                 reply.deleteLater()
         reply.finished.connect(finished)
+        return True
+
+    def close(self):
+        self.closed = True
+        for reply in tuple(self.replies):
+            reply.abort()
 
 
 class TaskSignals(QtCore.QObject):
