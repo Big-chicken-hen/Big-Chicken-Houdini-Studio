@@ -42,4 +42,4 @@ Keep changes on short-lived branches and group commits by behavior. Preserve pub
 Keep test effort proportional: targeted faults (stale scene after queue, duplicate ID, response loss, oversized result, Stop while running, external effect then exception) and native UI screenshots. Do not repeatedly run full suites or perform gratuitous hash audits.
 Project worktrees use `model_context_window = 400000` and `model_auto_compact_token_limit = 350000`. Bridge forwards these two project settings into native scene threads. These are configured limits, not a measurement of an already running task's effective context.
 
-No live Houdini GUI task or end-to-end Codex inference task has been verified yet. Do not claim either from fakes, generated schemas or offscreen UI screenshots.
+The first real Houdini node workflow and native Codex Box task are recorded in [stage readiness results](stage-readiness-results.md). Broader scene, capture, render and interruption behavior remains unverified. Fakes, generated schemas and offscreen screenshots do not extend that evidence.
