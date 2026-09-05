@@ -144,6 +144,10 @@ class RuntimeOwnershipTests(unittest.TestCase):
         self.assertEqual(startup_error["error"]["code"], "WORKSPACE_IN_USE")
 
     def test_supervisor_normal_handled_and_forced_exit_preserve_child_ownership(self):
+        # Windows venv python.exe is a redirector: its Popen PID differs from
+        # os.getpid() in the interpreter it launches. Fixtures need the real
+        # executable both for production registration and the owned-parent kill.
+        fixture_python = launcher.console_python(getattr(sys, "_base_executable", sys.executable))
         for mode in ("normal", "handled", "terminated"):
             with self.subTest(mode=mode):
                 # Each mode uses another workspace and control directory under this test root.
@@ -154,14 +158,14 @@ class RuntimeOwnershipTests(unittest.TestCase):
                 self.control = self.paths.local("control-" + mode)
                 self.control.mkdir()
                 atomic_json(folder / "launch.json", {"launcher_session_id": session_id,
-                    "workspace_id": self.workspace, "houdini": sys.executable, "codex": "unused-fixture",
+                    "workspace_id": self.workspace, "houdini": fixture_python, "codex": "unused-fixture",
                     "hip": str(Path(__file__).resolve())})
                 env = {**os.environ, "HIA_PROJECT_ROOT": str(self.root), "PYTHONPATH": str(APP_ROOT / "src"),
                        "PYTHONDONTWRITEBYTECODE": "1", "BCS_SESSION_ID": session_id,
                        "BCS_WORKSPACE_ID": self.workspace, "BCS_SESSION_TOKEN": "fixture-only-no-service",
                        "BCS_OWNERSHIP_CONTROL": str(self.control)}
                 env.pop("BCS_OWNERSHIP_FIXTURE_CHILD", None)
-                parent = subprocess.Popen([sys.executable, "-B", str(Path(__file__).resolve()), "--supervisor", mode],
+                parent = subprocess.Popen([fixture_python, "-B", str(Path(__file__).resolve()), "--supervisor", mode],
                                           cwd=APP_ROOT, env=env, stdin=subprocess.DEVNULL,
                                           stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
                                           creationflags=launcher.hidden_flags())
@@ -199,7 +203,7 @@ class RuntimeOwnershipTests(unittest.TestCase):
                         contender = self.paths.session("fresh-supervisor")
                         contender.mkdir()
                         atomic_json(contender / "launch.json", {"launcher_session_id": "fresh-supervisor",
-                            "workspace_id": self.workspace, "houdini": sys.executable, "codex": "unused"})
+                            "workspace_id": self.workspace, "houdini": fixture_python, "codex": "unused"})
                         with patch.dict(os.environ, {"BCS_SESSION_ID": "fresh-supervisor",
                             "BCS_WORKSPACE_ID": self.workspace, "BCS_SESSION_TOKEN": "fixture-only"}), \
                                 patch("studio.bridge.Bridge") as bridge, \
