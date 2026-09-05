@@ -1,6 +1,6 @@
 # 2026-09-05 集成验收记录
 
-交付为 Big-Chicken Houdini Studio 0.1.0 开发预览，主目录 `E:\Big-Chicken-Houdini-Studio`。三个独立 Codex 工作树分别交付 UI、启动安装和执行协议，总审审阅后合入新 Git 主线。完整 Pro 诊断保留在 `docs/pro-diagnosis.md`。
+本记录覆盖 Big-Chicken Houdini Studio 0.1.0 开发预览的启动安装、界面、执行协议及集成检查。架构审查原文保留在 `docs/pro-diagnosis.md`。
 
 ## 已实际验证
 
@@ -10,10 +10,10 @@
 - 原生 Codex 0.153.4 在独立且无凭据的项目内 `CODEX_HOME` 中完成 initialize、account/read、model/list、thread/start。MCP 启动事件返回 `ready`。未触发模型 turn 或登录。
 - 实测新建空会话的完整历史读取返回 `list_turns is not supported yet`，metadata-only 读取返回 idle。Bridge 已针对该响应保留原生状态并注明历史暂不可用；最终再次实测创建、读取和 reconcile 均成功处理。
 - 已从本机 Houdini 22.0.368 的只读 Python API 文件核对主线程调度入口、参数模板与 flipbook 所用方法存在。这只证明接口可用，不证明 GUI 行为。
-- 主项目及三个工作树配置均为 `model_context_window=400000`、`model_auto_compact_token_limit=350000`。Bridge 将这两个值显式传给新建/恢复的场景会话，原生 thread/start 接受了该配置。未修改用户全局配置，也没有将运行中会话的有效窗口声称为已测得。
+- 项目配置为 `model_context_window=400000`、`model_auto_compact_token_limit=350000`。Bridge 将这两个值显式传给新建/恢复的场景会话，原生 thread/start 接受了该配置。运行中会话的有效窗口尚未实测。
 
 ## 尚未实测
 
-真实 Houdini GUI 的 Panel 加载、已有 HIP 场景切换与主线程执行、实际 cook/viewport capture、Codex 登录与推理、跨启动的多轮历史恢复、模型看到原生 MCP 图片、真实进程崩溃及渲染交付端到端仍待真实会话验收。Windows 双击入口未以用户桌面操作测试，远端 CI 未运行，也未 push。
+真实 Houdini GUI 的 Panel 加载、已有 HIP 场景切换与主线程执行、实际 cook/viewport capture、Codex 登录与推理、跨启动的多轮历史恢复、模型看到原生 MCP 图片、真实进程崩溃及渲染交付端到端仍待真实会话验收。Windows 双击入口未以用户桌面操作测试。远端 CI 结果以仓库 Actions 记录为准。
 
 原生协议字段和已知空会话边界见 `contracts/codex/0.153.4/README.md`。启动入口为根目录的 `Start Studio.vbs`，安装及命令行替代入口见 `docs/installation.md`。既有用户 HIP、旧仓库和全局 Houdini/Codex 设置均不是本次修改目标。
