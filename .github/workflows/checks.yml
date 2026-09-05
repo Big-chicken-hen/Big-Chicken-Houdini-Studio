@@ -1,0 +1,38 @@
+name: Focused checks
+on:
+  push:
+    branches: [main, 'release/**']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  backend:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        python: ['3.10', '3.13']
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      HIA_PROJECT_ROOT: ${{ github.workspace }}
+      PYTHONPATH: ${{ github.workspace }}/src
+      PIP_CACHE_DIR: ${{ github.workspace }}/.runtime/cache/pip
+      PIP_DISABLE_PIP_VERSION_CHECK: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Explicit backend setup (no Qt or Houdini download)
+        run: python scripts/setup.py --backend-only --dev
+      - name: Static check, small unittest set, and offline smoke
+        shell: pwsh
+        run: |
+          $studioPython = if ($IsWindows) { '.runtime/venv/Scripts/python.exe' } else { '.runtime/venv/bin/python' }
+          & $studioPython scripts/check.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $studioPython scripts/smoke.py
+          exit $LASTEXITCODE
