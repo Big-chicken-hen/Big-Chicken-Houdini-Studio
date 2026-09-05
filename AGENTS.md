@@ -1,11 +1,11 @@
 # Big-Chicken Houdini Studio development
 
 This is a new repository. The old HIA checkout is reference material, never a write target.
-The user's Pro diagnosis in `docs/pro-diagnosis.md` is the architectural acceptance brief.
+The architectural acceptance briefs are `docs/pro-diagnosis.md` and `docs/stage-readiness-review.md`.
 Read `docs/rebuild-brief.md` before changing a subsystem. Do not replace this effort with a generic agent platform.
 
 - Resolve the app root from this checkout or HIA_PROJECT_ROOT. Source, dependencies, temporary files, previews, caches and logs stay below this app root; generated data belongs to .runtime.
-- Preserve all user data and unrelated changes. Do not reset, clean, delete, move or overwrite user files. Use a separate Git worktree for assigned tasks and commit only owned files.
+- Preserve all user data and unrelated changes. Do not reset, clean, delete, move or overwrite user files. Use short-lived branches and commit only owned files; preserve public main history.
 - Never modify the Houdini installation or user configuration. The launcher supplies child-only environment settings, project-local Houdini preferences and temporary directories.
 - All local services bind 127.0.0.1 and use a fresh launcher-session token. Do not put tokens in files, command lines, results or logs.
 - Codex is the only reasoning/content system. Keep native Codex Thread/Turn history and automatic compaction. No second agent, planner, recovery prompt generator, automatic memory or summarizer.
@@ -17,5 +17,3 @@ Read `docs/rebuild-brief.md` before changing a subsystem. Do not replace this ef
 - Panel and launcher must be substantially new interactions and layouts, not a skin over the old UI. Panel projects facts; it does not infer HOM completion from Codex events.
 - Do not control Houdini with Computer Use. Native Qt offscreen UI review is allowed for development, and does not constitute a real Houdini GUI test.
 - Use a small meaningful fault-test set, one static check and focused UI checks. Do not repeatedly run full test suites, compute arbitrary hashes or create process-heavy verification scaffolding. Report what is actually verified and what remains unverified.
-
-The user requested independent Codex worktree tasks, with GPT-6 Astra at the highest supported reasoning level, coordinated by the lead task. Do not use subagents as a substitute.

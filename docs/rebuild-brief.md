@@ -2,6 +2,7 @@
 
 Product: **Big-Chicken Houdini Studio**. New folder and new Git history; original HIA stays intact.
 Source diagnosis: [the user's complete Pro diagnosis](pro-diagnosis.md). Do not lose its execution semantics while redesigning the UI.
+Current delivery scope: [stage readiness review](stage-readiness-review.md). Preserve the architecture; fix confirmed boundaries, establish a real GUI and natural-language task slice, and validate the launcher visually.
 
 ## Required outcomes
 
@@ -37,7 +38,7 @@ POST `/memory` {action: list|record|supersede|delete, body?, record_id?}. No aut
 
 ## Coordination and validation
 
-User wants separate Codex worktree tasks, not subagents. Use GPT-6 Astra at highest supported reasoning level. Lead owns architecture and integration. Commit only assigned files and report your commit and actual validation.
+Keep changes on short-lived branches and group commits by behavior. Preserve published main history. Report actual validation and commit only owned files.
 Keep test effort proportional: targeted faults (stale scene after queue, duplicate ID, response loss, oversized result, Stop while running, external effect then exception) and native UI screenshots. Do not repeatedly run full suites or perform gratuitous hash audits.
 Project worktrees use `model_context_window = 400000` and `model_auto_compact_token_limit = 350000`. Bridge forwards these two project settings into native scene threads. These are configured limits, not a measurement of an already running task's effective context.
 
