@@ -68,6 +68,9 @@ class RequestCard(QtWidgets.QFrame):
                 open_button.setEnabled(url.scheme() in {"https", "http"})
                 self.layout.addWidget(open_button)
                 self.action("已完成，继续", lambda: self.submit({"action": "accept", "content": None}))
+            elif (params.get("_meta", {}).get("codex_approval_kind") == "mcp_tool_call" and
+                  params.get("requestedSchema") == {"type": "object", "properties": {}}):
+                self.action("允许本次", lambda: self.submit({"action": "accept", "content": {}}))
             else:
                 schema = params.get("requestedSchema", {})
                 self.layout.addWidget(label("按下列原生字段要求填写 JSON。提交前可检查完整内容。", "muted", True))

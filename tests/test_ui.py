@@ -168,7 +168,11 @@ class PanelTest(unittest.TestCase):
         question = {"request_id": 8, "method": "item/tool/requestUserInput", "params": {"threadId": "preview_thread", "questions": [
             {"id": "finish", "header": "材质", "question": "选择表面处理", "isOther": True,
              "options": [{"label": "磨砂", "description": "柔和反射"}, {"label": "抛光", "description": "清晰反射"}]}]}}
-        self.api.state["pending_requests"] = [approval, question]
+        tool_approval = {"request_id": 9, "method": "mcpServer/elicitation/request", "params": {
+            "threadId": "preview_thread", "mode": "form", "message": "Allow scene observation?",
+            "_meta": {"codex_approval_kind": "mcp_tool_call"},
+            "requestedSchema": {"type": "object", "properties": {}}}}
+        self.api.state["pending_requests"] = [approval, question, tool_approval]
         self.panel.apply_state(copy.deepcopy(self.api.state))
         self.assertFalse(any(path == "/requests/respond" for _, path, _ in self.api.calls))
         card = self.panel.request_cards["8"]
@@ -181,6 +185,11 @@ class PanelTest(unittest.TestCase):
         self.panel.request_cards["7"].actions[1].click()
         payload = [body for _, path, body in self.api.calls if path == "/requests/respond"][-1]
         self.assertEqual(payload["result"], {"decision": "decline"})
+        card = self.panel.request_cards["9"]
+        self.assertEqual(card.actions[0].text(), "允许本次")
+        card.actions[0].click()
+        payload = [body for _, path, body in self.api.calls if path == "/requests/respond"][-1]
+        self.assertEqual(payload, {"request_id": 9, "result": {"action": "accept", "content": {}}})
 
     def test_operation_read_and_cancel_race_never_claims_cancellation(self):
         self.api.operation.update(state="queued", result_ref="preview_operation")
