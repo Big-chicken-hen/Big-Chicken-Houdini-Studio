@@ -76,6 +76,15 @@ def start():
             "launcher_session_id": session_id, "houdini_pid": os.getpid()})
     except BaseException:
         try:
+            atomic_json(paths.session(session_id) / "runtime-error.json", {
+                "launcher_session_id": session_id, "workspace_id": workspace_id,
+                "error": {"code": "RUNTIME_START_FAILED",
+                          "message": "Houdini runtime startup failed. Close this session before reopening the workspace."}})
+        except BaseException:
+            # Diagnostic write failure must not bypass cleanup or replace the
+            # original startup exception. Never serialize exception text here.
+            pass
+        try:
             if server is not None:
                 server.shutdown()
                 server.server_close()
