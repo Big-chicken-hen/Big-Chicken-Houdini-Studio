@@ -65,7 +65,7 @@ def start():
         raise
     scene = ledger = runtime = server = None
     try:
-        scene = HoudiniScene(hou, paths.session(session_id) / "captures", secrets=(token,))
+        scene = HoudiniScene(hou, paths.workspace(workspace_id) / "artifacts", secrets=(token,))
         ledger = Ledger(paths.workspace(workspace_id) / "operations.sqlite", redact=scene.redact)
         runtime = OperationRuntime(ledger, scene, hdefereval.executeInMainThreadWithResult,
                                    workspace_id=workspace_id, session_id=session_id, ownership=ownership)
