@@ -436,7 +436,8 @@ class HoudiniScene:
         # Adapted frame/restore separation from HIA 6d9a2d7; no camera switching,
         # multi-frame orchestration or heuristic visual quality gate is inherited.
         detail = {"capture_api": "SceneViewer.flipbook", "requested_frame": args.get("frame"),
-                  "frame_before": None, "frame_before_capture": None, "actual_frame": None,
+                  "configured_frame_range": None, "frame_before": None,
+                  "frame_before_capture": None, "actual_frame": None,
                   "restored_frame": None, "capture_error": None, "restore_errors": []}
         previous_frame, artifact_id = None, None
         try:
@@ -460,7 +461,19 @@ class HoudiniScene:
             settings.useMotionBlur(False)
             settings.scopeChannelKeyframesOnly(False)
             settings.renderAllViewports(False)
+            # Observe the last rendered frame before our own finally restores the
+            # playbar; inherited flipbook auto-restoration could conceal rounding.
+            settings.leaveFrameAtEnd(True)
             settings.frameRange((frame, frame))
+            configured = settings.frameRange()
+            if not isinstance(configured, (tuple, list)) or len(configured) != 2:
+                raise StudioError("CAPTURE_FRAME_RANGE_UNAVAILABLE", "Flipbook frame range could not be verified")
+            detail["configured_frame_range"] = [
+                float(value) if type(value) in (int, float) and math.isfinite(value) else None
+                for value in configured]
+            if any(value is None or not math.isclose(value, frame, rel_tol=0, abs_tol=1e-6)
+                   for value in detail["configured_frame_range"]):
+                raise StudioError("CAPTURE_FRAME_MISMATCH", "Configured flipbook range does not match the requested frame")
             # A single still uses a literal unique path, not guessed $F rounding.
             settings.output(str(output))
             settings.resolution((width, height))

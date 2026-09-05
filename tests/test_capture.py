@@ -23,11 +23,17 @@ def png_bytes(width=64, height=64, rgb=(72, 104, 136)):
 
 
 class Settings:
-    def __init__(self, values):
+    def __init__(self, values, round_range=False):
         self.values = dict(values)
+        self.round_range = round_range
 
     def stash(self):
-        return Settings(self.values)
+        return Settings(self.values, self.round_range)
+
+    def frameRange(self, value=None):
+        if value is not None:
+            self.values["frameRange"] = tuple(round(item) for item in value) if self.round_range else value
+        return self.values.get("frameRange")
 
     def __getattr__(self, name):
         return lambda value: self.values.__setitem__(name, value)
@@ -38,12 +44,12 @@ class FakeHou:
         self.current_frame, self.original_frame = 7.0, 7.0
         self.used, self.frame_calls = [], []
         self.capture_error = self.restore_error = False
-        self.drift_before = self.drift_after = False
+        self.drift_before = self.drift_after = self.round_capture = False
         self.output_bytes = None
         self.output_size = None
         self.original = Settings({"initializeSimulations": True, "useMotionBlur": True,
                                   "scopeChannelKeyframesOnly": True, "renderAllViewports": True,
-                                  "gamma": 1.8, "lut": "existing-display-transform"})
+                                  "gamma": 1.8, "lut": "existing-display-transform", "leaveFrameAtEnd": False})
         self.viewport = SimpleNamespace(size=lambda: (0, 0, 320, 180))
         self.viewer = SimpleNamespace(curViewport=lambda: self.viewport, flipbookSettings=lambda: self.original,
                                       flipbook=self.flipbook)
@@ -73,8 +79,13 @@ class FakeHou:
             raise RuntimeError("original capture failure")
         width, height = self.output_size or settings.values["resolution"]
         Path(settings.values["output"]).write_bytes(self.output_bytes if self.output_bytes is not None else png_bytes(width, height))
-        if self.drift_after:
+        frame_before = self.current_frame
+        if self.round_capture:
+            self.current_frame = round(self.current_frame)
+        elif self.drift_after:
             self.current_frame += 1
+        if not settings.values.get("leaveFrameAtEnd", False):
+            self.current_frame = frame_before
 
 
 class CaptureTests(unittest.TestCase):
@@ -100,7 +111,9 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual(result["actual_resolution"], [320, 180])
         self.assertEqual(result["resolution_source"], "viewport")
         self.assertEqual((result["requested_frame"], result["frame_before_capture"], result["actual_frame"]), (2.5, 2.5, 2.5))
+        self.assertEqual(result["configured_frame_range"], [2.5, 2.5])
         self.assertEqual(result["restored_frame"], 7)
+        self.assertIs(self.hou.used[0]["leaveFrameAtEnd"], True)
         self.assertEqual(self.hou.original.values, original)
         for name in ("initializeSimulations", "useMotionBlur", "scopeChannelKeyframesOnly", "renderAllViewports",
                      "outputToMPlay", "useSheetSize", "cropOutMaskOverlay"):
@@ -108,6 +121,31 @@ class CaptureTests(unittest.TestCase):
         self.assertNotIn("$F", self.hou.used[0]["output"])
         self.assertEqual(png_dimensions(self.scene.artifact(result["artifact_id"])), (320, 180))
         self.assertNotIn("path", result)
+
+    def test_native_rounding_is_rejected_and_flipbook_cannot_hide_it_by_restoring_the_playbar(self):
+        for rounding_at in ("configuration", "render"):
+            with self.subTest(rounding_at=rounding_at):
+                hou = FakeHou()
+                hou.original.round_range = rounding_at == "configuration"
+                hou.round_capture = rounding_at == "render"
+                scene = HoudiniScene(hou, self.root / rounding_at)
+                try:
+                    outcome = scene.capture({"frame": 1.5})
+                    self.assertEqual(outcome.state, "failed")
+                    self.assertEqual(outcome.error["code"], "CAPTURE_FRAME_MISMATCH")
+                    self.assertEqual(outcome.detail["requested_frame"], 1.5)
+                    self.assertEqual(outcome.detail["restored_frame"], 7)
+                    self.assertNotIn("artifact_id", outcome.detail)
+                    self.assertIs(hou.original.values["leaveFrameAtEnd"], False)
+                    if rounding_at == "configuration":
+                        self.assertEqual(outcome.detail["configured_frame_range"], [2, 2])
+                        self.assertEqual(hou.used, [])
+                    else:
+                        self.assertEqual(outcome.detail["configured_frame_range"], [1.5, 1.5])
+                        self.assertEqual(outcome.detail["actual_frame"], 2)
+                        self.assertIs(hou.used[0]["leaveFrameAtEnd"], True)
+                finally:
+                    scene.close()
 
     def test_default_resolution_preserves_viewport_aspect_and_explicit_size_needs_no_viewport_size(self):
         self.assertEqual(capture_resolution({}, SimpleNamespace(size=lambda: (0, 0, 4000, 2000))), (2560, 1280, "viewport"))

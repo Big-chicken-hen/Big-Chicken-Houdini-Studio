@@ -243,7 +243,11 @@ class OperationsTests(unittest.TestCase):
                 return Settings(self.values)
 
             def __getattr__(self, name):
-                return lambda value: self.values.__setitem__(name, value)
+                def option(*values):
+                    if values:
+                        self.values[name] = values[0]
+                    return self.values.get(name)
+                return option
 
         expensive = {"initializeSimulations": True, "useMotionBlur": True,
                      "scopeChannelKeyframesOnly": True, "renderAllViewports": True}
