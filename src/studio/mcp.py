@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import sys
 import threading
 import time
@@ -13,18 +14,55 @@ from .http import MAX_BODY, Client, redact
 from .scene import validate_arguments
 
 
-def schema(properties=None, required=()):
-    return {"type": "object", "properties": properties or {}, "required": list(required), "additionalProperties": False}
+def schema(properties=None, required=(), definitions=None):
+    value = {"type": "object", "properties": properties or {}, "required": list(required), "additionalProperties": False}
+    if definitions:
+        value["$defs"] = definitions
+    return value
 
 
 STRING = {"type": "string"}
-ARRAY = {"type": "array", "items": {"type": "object"}, "maxItems": 64}
+NODE_PATH = {"type": "string", "pattern": "^/", "description": "Absolute Houdini node path; no '..' segments."}
+CHECK = {"oneOf": [
+    schema({"kind": {"enum": ["node_exists"]}, "path": NODE_PATH,
+            "expected": {"type": "boolean", "default": True}}, ["kind", "path"]),
+    schema({"kind": {"enum": ["node_type"]}, "path": NODE_PATH,
+            "expected": STRING}, ["kind", "path", "expected"]),
+    schema({"kind": {"enum": ["parm_equals"]}, "path": NODE_PATH,
+            "parm": {"type": "string", "minLength": 1},
+            "expected": {"description": "Expected JSON value from parm.eval(); numeric values use absolute tolerance."},
+            "tolerance": {"type": "number", "minimum": 0, "default": 1e-6}},
+           ["kind", "path", "parm", "expected"]),
+    schema({"kind": {"enum": ["input_equals"]}, "path": NODE_PATH,
+            "index": {"type": "integer", "minimum": 0, "default": 0},
+            "expected": {"oneOf": [NODE_PATH, {"type": "null"}],
+                         "description": "Connected source node path, or null for an existing target's unconnected input."}},
+           ["kind", "path", "expected"]),
+    schema({"kind": {"enum": ["cook"]}, "path": NODE_PATH}, ["kind", "path"]),
+    schema({"kind": {"enum": ["geometry_nonempty"]}, "path": NODE_PATH}, ["kind", "path"]),
+]}
+CHECKS = {"type": "array", "items": {"$ref": "#/$defs/check"}, "maxItems": 64}
+VIEW_PATH = {**NODE_PATH, "default": "/obj"}
+VIEW = {"oneOf": [
+    schema({"view": {"enum": ["node"], "default": "node"}, "path": VIEW_PATH}),
+    schema({"view": {"enum": ["parms"]}, "path": VIEW_PATH,
+            "names": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1, "maxItems": 64}},
+           ["view", "names"]),
+    schema({"view": {"enum": ["children"]}, "path": VIEW_PATH,
+            "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 64}}, ["view"]),
+    schema({"view": {"enum": ["geometry"]}, "path": VIEW_PATH}, ["view"]),
+    schema({"view": {"enum": ["checks"]}, "path": VIEW_PATH, "checks": CHECKS}, ["view"]),
+]}
+SCENE_DEFINITIONS = {"check": CHECK, "view": VIEW}
+VIEWS = {"type": "array", "items": {"$ref": "#/$defs/view"}, "minItems": 1, "maxItems": 32}
+OBSERVE = {"type": "array", "items": {"$ref": "#/$defs/view"}, "maxItems": 64,
+           "description": "Reads BEFORE and AFTER the script. Targets must already exist. For nodes created by this batch use post-execution checks or result readback."}
 TOOLS = [
     {"name": "hia_context", "description": "Observe the current HIP, selection and network. Binds subsequent operations to this scene generation. Explicitly call again after a scene replacement.", "inputSchema": schema()},
-    {"name": "hia_inspect", "description": "Read targeted live facts in one batch. views: {view: node|parms|children|geometry|checks, path, names?, checks?}. Geometry may cook; all views share the scene queue.", "inputSchema": schema({"views": ARRAY}, ["views"])},
+    {"name": "hia_inspect", "description": "Read targeted live facts in one batch. Views default to node at /obj; use explicit paths for task targets. Geometry/checks may cook; all views share the scene queue.", "inputSchema": schema({"views": VIEWS}, ["views"], SCENE_DEFINITIONS)},
     {"name": "hia_lookup", "description": "Look up installed node/parameter metadata, exact HOM documentation or imported versioned documents. Live metadata uses the HOM queue without requiring a scene observation. Docstrings and documents bypass it. No search is required for known deterministic edits.", "inputSchema": schema({"source": {"enum": ["metadata", "hom", "documents"]}, "query": STRING, "category": STRING, "type_name": STRING, "symbol": STRING, "version": STRING})},
-    {"name": "hia_execute_hom", "description": "Run a semantic HOM batch against the observed scene. Set result to a JSON value. Optional preconditions/checks: node_exists, node_type, parm_equals, input_equals, cook, geometry_nonempty. Checks use path, parm?, expected?, index?, tolerance?. observe accepts targeted inspect views. General Python has unknown external effects; never blindly retry. checkpoint() cooperatively stops; Undo is not a filesystem transaction.", "inputSchema": schema({"script": {"type": "string", "maxLength": 256000}, "label": STRING, "preconditions": ARRAY, "checks": ARRAY, "observe": ARRAY}, ["script"])},
-    {"name": "hia_capture", "description": "Capture the current viewport at a meaningful milestone. Returns native image content. Optional frame and resolution; restores the previous frame. Uses the same scene queue.", "inputSchema": schema({"frame": {"type": "number"}, "resolution": {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2}})},
+    {"name": "hia_execute_hom", "description": "Run a semantic HOM batch against the observed scene. Set result to a JSON value. Preconditions run before the script; checks run after. observe reads BEFORE and AFTER, so targets must already exist; use checks/result readback for newly created nodes. General Python has unknown external effects; never blindly retry. checkpoint() cooperatively stops; Undo is not a filesystem transaction.", "inputSchema": schema({"script": {"type": "string", "minLength": 1, "maxLength": 256000}, "label": STRING, "preconditions": CHECKS, "checks": CHECKS, "observe": OBSERVE}, ["script"], SCENE_DEFINITIONS)},
+    {"name": "hia_capture", "description": "Capture the current viewport at a meaningful milestone. Returns native image content. Optional frame and resolution; restores the previous frame. Disables inherited simulation initialization and motion blur on copied flipbook settings. Uses the same scene queue.", "inputSchema": schema({"frame": {"type": "number"}, "resolution": {"type": "array", "items": {"type": "integer", "minimum": 64, "maximum": 2560}, "minItems": 2, "maxItems": 2}})},
     {"name": "hia_operation", "description": "Retrieve the SAME operation receipt after a long operation or lost response, read paged details, or request cancellation. Query never reruns HOM. Queued work can be cancelled; running HOM stops only at cooperative boundaries.", "inputSchema": schema({"action": {"enum": ["get", "detail", "cancel", "list"]}, "operation_id": STRING, "offset": {"type": "integer", "minimum": 0}}, ["action"])},
     {"name": "hia_project_memory", "description": "Read workspace decisions or explicitly record, supersede or delete a decision ONLY when the user requests durable memory. Independent of live Houdini. No automatic summaries or embeddings.", "inputSchema": schema({"action": {"enum": ["list", "record", "supersede", "delete"]}, "body": STRING, "record_id": STRING}, ["action"])},
 ]
@@ -137,11 +175,26 @@ class Adapter:
         return self._receipt(value)
 
 
-def validate_schema(value, definition):
+def validate_schema(value, definition, definitions=None):
+    definitions = definitions if definitions is not None else definition.get("$defs", {})
+    if "$ref" in definition:
+        return validate_schema(value, definitions[definition["$ref"].removeprefix("#/$defs/")], definitions)
+    if "oneOf" in definition:
+        matches = 0
+        for option in definition["oneOf"]:
+            try:
+                validate_schema(value, option, definitions)
+                matches += 1
+            except StudioError:
+                pass
+        if matches != 1:
+            raise StudioError("INVALID_TOOL_CALL", "Argument must match one declared check or view shape")
+        return
     kind = definition.get("type")
     valid = {"object": lambda: isinstance(value, dict), "array": lambda: isinstance(value, list),
              "string": lambda: isinstance(value, str), "integer": lambda: type(value) is int,
-             "number": lambda: type(value) in (int, float) and math.isfinite(value)}
+             "number": lambda: type(value) in (int, float) and math.isfinite(value),
+             "boolean": lambda: type(value) is bool, "null": lambda: value is None}
     if (kind in valid and not valid[kind]()) or ("enum" in definition and value not in definition["enum"]):
         raise StudioError("INVALID_TOOL_CALL", "Tool argument type or value does not match the schema")
     if kind == "object":
@@ -150,16 +203,19 @@ def validate_schema(value, definition):
                 set(definition.get("required", [])) - set(value)):
             raise StudioError("INVALID_TOOL_CALL", "Tool arguments do not match the schema")
         for key in value.keys() & properties.keys():
-            validate_schema(value[key], properties[key])
+            validate_schema(value[key], properties[key], definitions)
     if kind == "array":
         if not definition.get("minItems", 0) <= len(value) <= definition.get("maxItems", MAX_BODY):
             raise StudioError("INVALID_TOOL_CALL", "Invalid array length")
         for item in value:
-            validate_schema(item, definition.get("items", {}))
-    if kind == "string" and len(value) > definition.get("maxLength", MAX_BODY):
-        raise StudioError("INVALID_TOOL_CALL", "String is too long")
-    if kind in {"number", "integer"} and value < definition.get("minimum", -math.inf):
-        raise StudioError("INVALID_TOOL_CALL", "Number is below the minimum")
+            validate_schema(item, definition.get("items", {}), definitions)
+    if kind == "string":
+        if not definition.get("minLength", 0) <= len(value) <= definition.get("maxLength", MAX_BODY):
+            raise StudioError("INVALID_TOOL_CALL", "Invalid string length")
+        if "pattern" in definition and re.search(definition["pattern"], value) is None:
+            raise StudioError("INVALID_TOOL_CALL", "Node paths must be absolute")
+    if kind in {"number", "integer"} and not definition.get("minimum", -math.inf) <= value <= definition.get("maximum", math.inf):
+        raise StudioError("INVALID_TOOL_CALL", "Number is outside the permitted range")
 
 
 def serve_stdio(adapter, source, output, token=""):
