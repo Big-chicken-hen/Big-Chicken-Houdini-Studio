@@ -73,7 +73,8 @@ def validate_view(view):
         raise StudioError("INVALID_ARGUMENTS", "A view must be an object")
     kind = view.get("view", "node")
     fields = {"node": set(), "parms": {"names"}, "children": {"limit"},
-              "geometry": set(), "checks": {"checks"}}
+              "parameters": {"pattern", "offset", "limit"},
+              "geometry": {"owners", "attributes", "samples"}, "checks": {"checks"}}
     if not isinstance(kind, str) or kind not in fields or set(view) - ({"view", "path"} | fields[kind]):
         raise StudioError("INVALID_ARGUMENTS", "Invalid inspection view")
     node_path(view.get("path", "/obj"))
@@ -83,6 +84,26 @@ def validate_view(view):
             raise StudioError("INVALID_ARGUMENTS", "Supply 1 to 64 parameter names")
     if kind == "children" and (type(view.get("limit", 64)) is not int or not 1 <= view.get("limit", 64) <= 200):
         raise StudioError("INVALID_ARGUMENTS", "Child limit must be between 1 and 200")
+    if kind == "parameters":
+        if not isinstance(view.get("pattern", "*"), str) or not 1 <= len(view.get("pattern", "*")) <= 128:
+            raise StudioError("INVALID_ARGUMENTS", "Supply a parameter name pattern of 1 to 128 characters")
+        if type(view.get("offset", 0)) is not int or not 0 <= view.get("offset", 0) <= 1000000:
+            raise StudioError("INVALID_ARGUMENTS", "Parameter offset must be an integer from 0 to 1000000")
+        if type(view.get("limit", 64)) is not int or not 1 <= view.get("limit", 64) <= 128:
+            raise StudioError("INVALID_ARGUMENTS", "Parameter page size must be between 1 and 128")
+    if kind == "geometry":
+        owners = view.get("owners", ["point", "primitive"])
+        if (not isinstance(owners, list) or not 1 <= len(owners) <= 4 or
+                any(not isinstance(v, str) or v not in {"point", "primitive", "vertex", "detail"} for v in owners) or
+                len(set(owners)) != len(owners)):
+            raise StudioError("INVALID_ARGUMENTS", "Supply unique geometry attribute owners")
+        if "attributes" in view:
+            names = view["attributes"]
+            if (not isinstance(names, list) or not 1 <= len(names) <= 16 or
+                    any(not isinstance(n, str) or not 1 <= len(n) <= 128 for n in names)):
+                raise StudioError("INVALID_ARGUMENTS", "Supply 1 to 16 attribute names")
+        if type(view.get("samples", 0)) is not int or not 0 <= view.get("samples", 0) <= 16:
+            raise StudioError("INVALID_ARGUMENTS", "Geometry samples must be between 0 and 16")
     if kind == "checks":
         validate_checks(view.get("checks", []))
 
@@ -232,14 +253,12 @@ class HoudiniScene:
                                        "inputs": [x.path() if x else None for x in n.inputs()],
                                        "position": list(n.position())} for n in children[:limit]],
                     "total": len(children), "truncated": len(children) > limit}
+        if kind == "parameters":
+            from .inspection import parameter_instances
+            return {**base, **parameter_instances(node, view)}
         if kind == "geometry":
-            geo = node.geometry()
-            box = geo.boundingBox()
-            return {**base, "points": geo.intrinsicValue("pointcount"),
-                    "primitives": geo.intrinsicValue("primitivecount"),
-                    "bounds": {"min": list(box.minvec()), "max": list(box.maxvec())},
-                    "point_attributes": [a.name() for a in geo.pointAttribs()],
-                    "primitive_attributes": [a.name() for a in geo.primAttribs()]}
+            from .inspection import geometry_facts
+            return {**base, **geometry_facts(node, view)}
         if kind == "checks":
             return {**base, "checks": self.checks(view.get("checks", []))}
         raise StudioError("INVALID_ARGUMENTS", "Unknown inspection view")
