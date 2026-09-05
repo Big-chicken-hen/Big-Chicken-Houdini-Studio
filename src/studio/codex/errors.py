@@ -6,7 +6,9 @@ from dataclasses import dataclass
 from typing import Any
 
 
-@dataclass(frozen=True)
+# Exceptions must permit Python to update __traceback__, __cause__, and
+# __context__. A frozen dataclass masks the original error in contextlib.
+@dataclass
 class BridgeError(Exception):
     """A safe, JSON-serializable error with an HTTP status."""
 
