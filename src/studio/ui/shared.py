@@ -92,6 +92,14 @@ def clear_layout(layout):
             item.widget().deleteLater()
 
 
+class ApiFailure(str):
+    """A displayable error that preserves the server's submission classification."""
+    def __new__(cls, message, *, code=None, status=None, submission_state=None):
+        value = super().__new__(cls, message)
+        value.code, value.status, value.submission_state = code, status, submission_state
+        return value
+
+
 class Api(QtCore.QObject):
     def __init__(self, url, token, parent=None):
         super().__init__(parent)
@@ -128,16 +136,19 @@ class Api(QtCore.QObject):
                 if not isinstance(value, dict):
                     raise ValueError("Bridge returned an invalid response")
                 status = reply.attribute(QtNetwork.QNetworkRequest.HttpStatusCodeAttribute)
-                if reply.error() != QtNetwork.QNetworkReply.NoError or "error" in value or (status and status >= 300):
+                # A receipt can contain an execution error while its HTTP query succeeds.
+                if reply.error() != QtNetwork.QNetworkReply.NoError or not (isinstance(status, int) and 200 <= status < 300):
                     error = value.get("error")
                     message = error.get("message", "Request failed") if isinstance(error, dict) else reply.errorString()
                     if failed:
-                        failed(message)
+                        failed(ApiFailure(message, code=error.get("code") if isinstance(error, dict) else None,
+                                          status=status, submission_state=error.get("submission_state")
+                                          if isinstance(error, dict) else None))
                 elif done:
                     done(value)
             except (ValueError, TypeError) as exc:
                 if failed:
-                    failed(str(exc))
+                    failed(ApiFailure(str(exc)))
             finally:
                 reply.deleteLater()
         reply.finished.connect(finished)

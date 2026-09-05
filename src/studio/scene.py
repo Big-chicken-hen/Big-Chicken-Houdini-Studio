@@ -11,6 +11,8 @@ from pathlib import Path
 
 from .common import StudioError, new_id, now
 
+SCRIPT_FILENAME = "<Big-Chicken HOM batch>"
+
 
 @dataclass
 class ExecutionResult:
@@ -268,7 +270,9 @@ class HoudiniScene:
                     else:
                         record["passed"] = bool(parm) and record["actual"] == expected
                 elif kind == "input_equals":
-                    inputs = node.inputs() if node else ()
+                    if node is None:
+                        raise StudioError("NODE_NOT_FOUND", "Input target node does not exist")
+                    inputs = node.inputs()
                     index = int(check.get("index", 0))
                     record["actual"] = inputs[index].path() if 0 <= index < len(inputs) and inputs[index] else None
                     record["passed"] = record["actual"] == check["expected"]
@@ -283,7 +287,9 @@ class HoudiniScene:
                 else:
                     raise StudioError("INVALID_ARGUMENTS", "Unknown check kind: " + str(kind))
             except Exception as exc:
-                record["error"] = self.redact(str(exc))[:400]
+                diagnostic = self.error(exc, "CHECK_FAILED")
+                record["error"] = diagnostic["message"][:400]
+                record["error_code"] = diagnostic["code"]
             records.append(record)
         return records
 
@@ -299,9 +305,11 @@ class HoudiniScene:
             try:
                 validate_arguments("execute", args)
                 try:
-                    code = compile(args["script"], "<Big-Chicken HOM batch>", "exec")
+                    code = compile(args["script"], SCRIPT_FILENAME, "exec")
                 except (SyntaxError, ValueError) as exc:
-                    raise StudioError("COMPILE_FAILED", "The HOM script did not compile") from exc
+                    outcome.state = "rejected"
+                    outcome.error = self.error(exc, "COMPILE_FAILED")
+                    return outcome
                 preconditions = self.checks(args.get("preconditions", []))
                 if any(not item["passed"] for item in preconditions):
                     outcome.detail["preconditions"] = preconditions
@@ -339,10 +347,32 @@ class HoudiniScene:
 
     def error(self, exc, fallback):
         try:
-            message = self.redact(str(exc))[:1600]
+            # SyntaxError.__str__ adds filename/source context; only its reason is needed.
+            message = self.redact(str(exc.msg) if isinstance(exc, SyntaxError) else str(exc))
+            if re.search(r"\benviron\s*\(|['\"](?:PATH|Path|USERPROFILE|SYSTEMROOT)['\"]\s*:", message):
+                message = "Environment details omitted from exception message"
+            else:
+                # Exception reasons may contain filenames. Never emit absolute OS paths,
+                # traceback source lines, frame locals or environment values collected here.
+                message = re.sub(r"(?i)\b(?:[A-Z][A-Z0-9_]*_)?(?:TOKEN|SECRET|PASSWORD|API_KEY)\b\s*[:=]\s*\S+",
+                                 "[credential omitted]", message)
+                message = re.sub(r"(?i)(?:[a-z]:[\\/]|\\\\)[^\r\n'\"<>|]*", "[path omitted]", message)
+                message = re.sub(r"(?<![\w:])/(?:[^\s'\"<>:,;\)\]]+/?)+", "[path omitted]", message)
+            message = message[:1200]
         except BaseException:
             message = "Exception message unavailable"
-        return {"code": self.redact(exc.code) if isinstance(exc, StudioError) else fallback, "message": message}
+        code = exc.code if isinstance(exc, StudioError) and isinstance(exc.code, str) else fallback
+        diagnostic = {"code": self.redact(code)[:80], "message": message,
+                      "exception_type": self.redact(type(exc).__name__)[:80]}
+        if isinstance(exc, SyntaxError) and exc.filename == SCRIPT_FILENAME:
+            diagnostic.update(script_line=exc.lineno, script_column=exc.offset)
+        else:
+            frame = exc.__traceback__
+            while frame is not None:
+                if frame.tb_frame.f_code.co_filename == SCRIPT_FILENAME:
+                    diagnostic["script_line"] = frame.tb_lineno
+                frame = frame.tb_next
+        return diagnostic
 
     def lookup(self, args):
         if args.get("source", "metadata") == "hom":
@@ -397,8 +427,13 @@ class HoudiniScene:
         pattern = self.artifact_root / (artifact_id + "-$F4.png")
         output = self.artifact_root / (artifact_id + f"-{int(round(frame)):04d}.png")
         try:
-            self.hou.setFrame(frame)
             settings = viewer.flipbookSettings().stash()
+            # A still capture must not inherit simulation resets, subframe blur or
+            # keyframe-only/multiple-viewport playback from an earlier flipbook.
+            settings.initializeSimulations(False)
+            settings.useMotionBlur(False)
+            settings.scopeChannelKeyframesOnly(False)
+            settings.renderAllViewports(False)
             settings.frameRange((frame, frame))
             settings.output(str(pattern))
             settings.resolution((width, height))
@@ -406,6 +441,7 @@ class HoudiniScene:
             settings.outputZoom(100)
             settings.useSheetSize(False)
             settings.outputToMPlay(False)
+            self.hou.setFrame(frame)
             viewer.flipbook(viewport, settings, open_dialog=False)
             if not output.is_file() or output.stat().st_size == 0:
                 raise StudioError("CAPTURE_MISSING", "Houdini did not produce the requested PNG")

@@ -73,4 +73,4 @@ Houdini 的 package、用户偏好与临时目录只由子进程环境设置。�
 
 `scripts/check.py` 跑一次 Ruff 正确性检查（含未定义变量）和小型 unittest；`--pattern test_launcher.py` 可只跑启动边界。`scripts/smoke.py` 验证标准库后端可导入及 SQLite FTS5 能力，`--codex <path>` 可显式追加版本检查，`--ui` 只检查 PySide6 可导入。它们不启动 Houdini、不发 AI 请求、不读写用户 home 配置。
 
-native Qt 离屏截图可审查布局，但不等于真实 Houdini GUI 验收。最终交付还需真实验证所选 Houdini 构建、Python Panel 加载、UI 主线程调度、Codex 登录/推理、已有 HIP、cook、图片回传和渲染输出。当前不宣称这些任务已经完成，也不承诺未经测量的速度提升。
+native Qt 离屏截图用于审查布局。Houdini 22.0.368 中已实测 Python Panel 注册、主线程节点批次、几何与参数回读，以及原生 Codex 登录和 Box 自然语言任务；具体证据见 [阶段验收记录](stage-readiness-results.md)。已有 HIP 场景切换、长 cook 中断、图片回传和渲染输出仍待验证，不承诺未经测量的速度提升。

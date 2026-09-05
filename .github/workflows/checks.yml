@@ -6,6 +6,9 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   backend:
     strategy:
@@ -23,16 +26,68 @@ jobs:
       PIP_DISABLE_PIP_VERSION_CHECK: '1'
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
       - name: Explicit backend setup (no Qt or Houdini download)
         run: python scripts/setup.py --backend-only --dev
-      - name: Static check, small unittest set, and offline smoke
+      - name: Static check and backend tests without Qt
         shell: pwsh
         run: |
           $studioPython = if ($IsWindows) { '.runtime/venv/Scripts/python.exe' } else { '.runtime/venv/bin/python' }
-          & $studioPython scripts/check.py
+          & $studioPython -c "import importlib.util; assert importlib.util.find_spec('PySide6') is None, 'Backend environment must not install Qt'"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $studioPython scripts/check.py --suite backend
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & $studioPython scripts/smoke.py
           exit $LASTEXITCODE
+  native-ui:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      HIA_PROJECT_ROOT: ${{ github.workspace }}
+      PYTHONPATH: ${{ github.workspace }}/src
+      QT_QPA_PLATFORM: offscreen
+      PIP_CACHE_DIR: ${{ github.workspace }}/.runtime/cache/pip
+      PIP_DISABLE_PIP_VERSION_CHECK: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Explicit native Qt installation
+        run: python scripts/setup.py
+      - name: Record UI environment and source commit
+        run: >-
+          .runtime/venv/Scripts/python.exe -c
+          "import json, os, platform; from pathlib import Path; import PySide6; from PySide6 import QtCore;
+          output=Path('.runtime/review'); output.mkdir(parents=True, exist_ok=True);
+          (output/'environment.json').write_text(json.dumps({'commit': os.environ['GITHUB_SHA'],
+          'python': platform.python_version(), 'pyside6': PySide6.__version__, 'qt': QtCore.qVersion(),
+          'mode': 'Qt offscreen; no Houdini or Codex inference'}, indent=2), encoding='utf-8')"
+      - name: Run native Qt tests (missing Qt is a failure)
+        run: .runtime/venv/Scripts/python.exe scripts/check.py --suite ui --tests-only
+      - name: Render native UI review fixtures
+        run: .runtime/venv/Scripts/python.exe scripts/preview_ui.py
+      - name: Render launcher states
+        run: .runtime/venv/Scripts/python.exe scripts/preview_launcher.py --out .runtime/previews/launcher
+      - name: Render launcher at high DPI
+        run: .runtime/venv/Scripts/python.exe scripts/preview_launcher.py --case high-dpi --scale 2 --out .runtime/previews/launcher
+      - name: Upload UI evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-ui-review
+          retention-days: 7
+          path: |
+            .runtime/review/environment.json
+            .runtime/previews/*.png
+            .runtime/previews/preview-report.json
+            .runtime/previews/launcher/*.png
+            .runtime/previews/launcher/report-*.json
+          if-no-files-found: error

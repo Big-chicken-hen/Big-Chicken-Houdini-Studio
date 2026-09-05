@@ -1,8 +1,8 @@
 # 2026-09-05 集成验收记录
 
-本记录覆盖 Big-Chicken Houdini Studio 0.1.0 开发预览的启动安装、界面、执行协议及集成检查。架构审查原文保留在 `docs/pro-diagnosis.md`。
+本记录保留 Big-Chicken Houdini Studio 0.1.0 初次集成的检查历史。后续修复、真实 Houdini 与原生 Codex 任务、CI 和新启动器结果见 [阶段验收记录](stage-readiness-results.md)。架构审查原文保留在 `docs/pro-diagnosis.md`。
 
-## 已实际验证
+## 初次集成检查（历史记录）
 
 - 新主目录中执行显式 setup，安装到 `.runtime/venv`，使用 Python 3.10.11、PySide6-Essentials 6.8.3 和 Ruff 0.12.12。Qt 使用已下载的完整 wheel，没有重复下载 Addons。
 - 主线执行一次 `scripts/check.py`：Ruff 正确性检查通过，42 项 unittest 全部通过。覆盖 Bridge 延迟/丢失响应与原生终态、工作空间边界、Stop、队列容量、场景 epoch、收据失败、外部效果异常、操作 ID 重查、图片投影、启动进程归属和 Qt 非阻塞 HTTP 等。它们使用受控场景替身，不是假称真实 Houdini 任务。
@@ -12,8 +12,8 @@
 - 已从本机 Houdini 22.0.368 的只读 Python API 文件核对主线程调度入口、参数模板与 flipbook 所用方法存在。这只证明接口可用，不证明 GUI 行为。
 - 项目配置为 `model_context_window=400000`、`model_auto_compact_token_limit=350000`。Bridge 将这两个值显式传给新建/恢复的场景会话，原生 thread/start 接受了该配置。运行中会话的有效窗口尚未实测。
 
-## 尚未实测
+## 当前仍未实测
 
-真实 Houdini GUI 的 Panel 加载、已有 HIP 场景切换与主线程执行、实际 cook/viewport capture、Codex 登录与推理、跨启动的多轮历史恢复、模型看到原生 MCP 图片、真实进程崩溃及渲染交付端到端仍待真实会话验收。Windows 双击入口未以用户桌面操作测试。远端 CI 结果以仓库 Actions 记录为准。
+已有 HIP 场景切换、viewport capture、长 cook 中断、跨启动的多轮历史恢复、模型看到原生 MCP 图片、真实进程崩溃及渲染交付端到端仍待真实会话验收。Windows 双击入口未以用户桌面操作测试。已验证的节点闭环、登录推理和 Panel 重建后的历史恢复，以及远端 CI 链接，均见阶段验收记录。
 
 原生协议字段和已知空会话边界见 `contracts/codex/0.153.4/README.md`。启动入口为根目录的 `Start Studio.vbs`，安装及命令行替代入口见 `docs/installation.md`。既有用户 HIP、旧仓库和全局 Houdini/Codex 设置均不是本次修改目标。

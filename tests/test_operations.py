@@ -17,7 +17,7 @@ from unittest.mock import patch
 from studio.common import StudioError, encoded, new_id
 from studio.http import MAX_BODY, Client, serve
 from studio.ledger import Ledger
-from studio.mcp import Adapter, serve_stdio
+from studio.mcp import Adapter, serve_stdio, validate_schema
 from studio.runtime import OperationRuntime
 from studio.runtime_server import runtime_router
 from studio.scene import ExecutionResult, HoudiniScene
@@ -142,6 +142,134 @@ class OperationsTests(unittest.TestCase):
         with self.assertRaises(StudioError) as raised:
             call()
         self.assertEqual(raised.exception.code, code)
+
+    def test_readiness_input_equals_distinguishes_missing_disconnected_connected(self):
+        source = SimpleNamespace(path=lambda: "/obj/source")
+        nodes = {"/obj/disconnected": SimpleNamespace(inputs=lambda: (None,)),
+                 "/obj/connected": SimpleNamespace(inputs=lambda: (source,))}
+        cases = [("/obj/missing", None, False), ("/obj/disconnected", None, True),
+                 ("/obj/connected", "/obj/source", True)]
+        with patch.object(self.hou, "node", side_effect=nodes.get):
+            for path, expected, passed in cases:
+                with self.subTest(path=path):
+                    record = self.scene.checks([{"kind": "input_equals", "path": path, "expected": expected}])[0]
+                    self.assertEqual(record["passed"], passed)
+                    if not passed:
+                        self.assertEqual(record["error_code"], "NODE_NOT_FOUND")
+                    else:
+                        self.assertEqual(record["actual"], expected)
+            outcome = self.scene.execute({"script": "hou.mutate()", "preconditions": [
+                {"kind": "input_equals", "path": "/obj/missing", "expected": None}]}, lambda: False)
+        self.assertEqual((outcome.state, outcome.mutation_outcome), ("rejected", "not_run"))
+        self.assertEqual(self.hou.count, 0)
+
+    def test_readiness_tool_schema_declares_targeted_shapes(self):
+        output = io.StringIO()
+        serve_stdio(None, io.BytesIO(b'{"id":1,"method":"tools/list"}\n'), output)
+        exported = {tool["name"]: tool["inputSchema"] for tool in json.loads(output.getvalue())["result"]["tools"]}
+        execute = exported["hia_execute_hom"]
+        shapes = {s["properties"]["kind"]["enum"][0]: s for s in execute["$defs"]["check"]["oneOf"]}
+        self.assertEqual(set(shapes), {"node_exists", "node_type", "parm_equals", "input_equals", "cook", "geometry_nonempty"})
+        self.assertEqual(set(shapes["parm_equals"]["required"]), {"kind", "path", "parm", "expected"})
+        self.assertEqual(set(shapes["input_equals"]["required"]), {"kind", "path", "expected"})
+        checks = [{"kind": "node_exists", "path": "/obj"},
+                  {"kind": "node_type", "path": "/obj/geo", "expected": "geo"},
+                  {"kind": "parm_equals", "path": "/obj/geo", "parm": "tx", "expected": 2},
+                  {"kind": "input_equals", "path": "/obj/geo", "expected": None},
+                  {"kind": "cook", "path": "/obj/geo/out"},
+                  {"kind": "geometry_nonempty", "path": "/obj/geo/out"}]
+        views = [{"path": "/obj"}, {"view": "parms", "path": "/obj/geo", "names": ["tx"]},
+                 {"view": "children", "limit": 20}, {"view": "geometry", "path": "/obj/geo/out"},
+                 {"view": "checks", "checks": checks}]
+        validate_schema({"script": "pass", "checks": checks, "preconditions": checks, "observe": views}, execute)
+        validate_schema({"views": views}, exported["hia_inspect"])
+        self.assertIn("BEFORE and AFTER", execute["properties"]["observe"]["description"])
+        adapter = Adapter(None, None, {}, "owner", runtime_loader=lambda: self.fail("Invalid schema reached runtime"))
+        bad = [{"checks": [{"kind": "parm_equals", "path": "/obj", "expected": 1}]},
+               {"checks": [{"kind": "input_equals", "path": "/obj"}]},
+               {"preconditions": [{"kind": "node_exists", "expected": True}]},
+               {"observe": [{"view": "parms", "names": []}]},
+               {"checks": [{"kind": "node_exists", "path": "/obj", "expected": "yes"}]}]
+        for arguments in bad:
+            with self.subTest(arguments=arguments):
+                self.assert_code("INVALID_TOOL_CALL", lambda: adapter.call("hia_execute_hom", {"script": "pass", **arguments}))
+        self.assert_code("INVALID_TOOL_CALL", lambda: adapter.call("hia_inspect", {"views": []}))
+
+    def test_readiness_script_diagnostics_preserve_location_without_sensitive_context(self):
+        self.start()
+        receipt = self.run_op("hou.mutate()\nif True print('broken')")
+        self.assertEqual((receipt["state"], receipt["mutation_outcome"]), ("rejected", "not_run"))
+        self.assertEqual(receipt["error"]["code"], "COMPILE_FAILED")
+        self.assertEqual(receipt["error"]["exception_type"], "SyntaxError")
+        self.assertEqual(receipt["error"]["script_line"], 2)
+        self.assertGreater(receipt["error"]["script_column"], 0)
+        self.assertNotIn("print('broken')", encoded(receipt["error"]))
+        self.assertEqual(self.hou.count, 0)
+        receipt = self.run_op("def build():\n hou.mutate()\n return missing_node_type\nbuild()")
+        self.assertEqual(receipt["mutation_outcome"], "partial")
+        self.assertEqual(receipt["error"]["exception_type"], "NameError")
+        self.assertEqual(receipt["error"]["script_line"], 3)
+        self.assertIn("missing_node_type", receipt["error"]["message"])
+        sensitive_path = str(self.root / "private file.png")
+        receipt = self.run_op(f"raise FileNotFoundError(2, 'Cannot open cache', {sensitive_path!r})")
+        self.assertNotIn(sensitive_path, encoded(receipt["error"]))
+        self.assertNotIn(str(self.root), receipt["error"]["message"])
+        self.assertIn("Cannot open cache", receipt["error"]["message"])
+        reason = f"Cannot use {TOKEN}; /private/user/cache.exr; TOKEN=unrelated-secret " + "x" * 2000
+        receipt = self.run_op(f"raise RuntimeError({reason!r})")
+        self.assertLessEqual(len(receipt["error"]["message"]), 1200)
+        for private in (TOKEN, "/private/user/cache.exr", "unrelated-secret"):
+            self.assertNotIn(private, encoded(receipt["error"]))
+        receipt = self.run_op("raise RuntimeError(\"environ({'PATH': '/private/bin'})\")")
+        self.assertEqual(receipt["error"]["message"], "Environment details omitted from exception message")
+
+    def test_readiness_observe_reads_both_sides_and_requires_existing_targets(self):
+        with patch.object(self.scene, "inspect", side_effect=lambda view: {"count": self.hou.count}):
+            outcome = self.scene.execute({"script": "hou.mutate()", "observe": [{"path": "/obj/existing"}]}, lambda: False)
+        self.assertEqual(outcome.detail["observations"], {"before": [{"count": 0}], "after": [{"count": 1}]})
+        outcome = self.scene.execute({"script": "hou.mutate()", "observe": [{"path": "/obj/not_created_yet"}]}, lambda: False)
+        self.assertEqual(outcome.mutation_outcome, "not_run")
+        self.assertEqual(outcome.error["code"], "NODE_NOT_FOUND")
+        self.assertEqual(self.hou.count, 1)
+
+    def test_readiness_capture_changes_only_stashed_settings_and_restores_frame(self):
+        class Settings:
+            def __init__(self, values):
+                self.values = dict(values)
+
+            def stash(self):
+                return Settings(self.values)
+
+            def __getattr__(self, name):
+                return lambda value: self.values.__setitem__(name, value)
+
+        expensive = {"initializeSimulations": True, "useMotionBlur": True,
+                     "scopeChannelKeyframesOnly": True, "renderAllViewports": True}
+        original = Settings(expensive)
+        used, current_frame = [], [7]
+        def flipbook(viewport, settings, open_dialog):
+            used.append(settings.values)
+            self.assertFalse(open_dialog)
+            self.assertEqual(viewport, "active-viewport")
+            for option in expensive:
+                self.assertIs(settings.values[option], False)
+            if len(used) == 2:
+                raise RuntimeError("simulated viewport failure")
+            frame = int(settings.values["frameRange"][0])
+            Path(settings.values["output"].replace("$F4", f"{frame:04d}")).write_bytes(b"fake PNG")
+        viewer = SimpleNamespace(flipbookSettings=lambda: original, curViewport=lambda: "active-viewport", flipbook=flipbook)
+        with patch.multiple(self.hou, create=True, frame=lambda: current_frame[0],
+                            setFrame=lambda value: current_frame.__setitem__(0, value),
+                            ui=SimpleNamespace(paneTabOfType=lambda kind: viewer),
+                            paneTabType=SimpleNamespace(SceneViewer="SceneViewer")):
+            result = self.scene.capture({"frame": 24})
+            self.assertEqual(result["restored_frame"], 7)
+            self.assertEqual(current_frame[0], 7)
+            self.assertEqual(original.values, expensive)
+            with self.assertRaisesRegex(RuntimeError, "simulated viewport failure"):
+                self.scene.capture({"frame": 30})
+            self.assertEqual(current_frame[0], 7)
+        self.assertEqual(original.values, expensive)
 
     def test_stale_after_queue_same_path_reload_and_cancel_capacity(self):
         runtime = self.start(capacity=2, gated=True)

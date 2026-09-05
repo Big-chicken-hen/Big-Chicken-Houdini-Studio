@@ -117,8 +117,9 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(self.bridge.codex_state, "completed")
 
     def test_invalid_attachment_never_resumes_owner_or_marks_starting(self):
-        with self.assertRaises(StudioError):
+        with self.assertRaises(StudioError) as error:
             self.bridge.start_turn({"text": "edit", "attachments": ["../other/image.png"]})
+        self.assertEqual(error.exception.details["submission_state"], "not_submitted")
         self.assertEqual(self.bridge.codex_state, "idle")
         self.assertEqual(self.runtime.calls, [])
         self.assertEqual(self.client.calls, [])

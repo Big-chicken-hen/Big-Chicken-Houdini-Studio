@@ -170,8 +170,13 @@ class Bridge:
         return result
 
     def start_turn(self, body):
-        with self.action():
-            return self._start_turn(body)
+        try:
+            with self.action():
+                return self._start_turn(body)
+        except StudioError as exc:
+            # These validation/owner-fence failures occur before turn/start.
+            raise StudioError(exc.code, exc.message, exc.status,
+                              **{**exc.details, "submission_state": "not_submitted"}) from exc
 
     def _start_turn(self, body):
         text = body.get("text", "")

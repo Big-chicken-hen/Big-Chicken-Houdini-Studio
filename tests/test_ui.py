@@ -19,7 +19,7 @@ from scripts.preview_ui import PreviewApi, configure_preview_fonts, fixture_imag
 from studio.common import AppPaths  # noqa: E402
 from studio.ui.launcher import StudioLauncher  # noqa: E402
 from studio.ui.panel import StudioPanel  # noqa: E402
-from studio.ui.shared import Api  # noqa: E402
+from studio.ui.shared import Api, ApiFailure  # noqa: E402
 
 
 class PanelTest(unittest.TestCase):
@@ -116,13 +116,63 @@ class PanelTest(unittest.TestCase):
         self.panel.send()
         self.assertEqual(sum(path == "/turn" for _, path, _ in self.api.calls), 1)
 
+    def test_history_buffers_inflight_events_and_resolves_snapshot_overlap(self):
+        self.api.hold["/thread"] = []
+        self.panel.load_history()
+        loaded = self.api.hold["/thread"].pop()[0]
+        self.panel.apply_events({"cursor": 3, "events": [
+            {"sequence": 1, "method": "item/agentMessage/delta", "params": {
+                "threadId": "preview_thread", "itemId": "agent_1", "delta": " overlapping"}},
+            {"sequence": 2, "method": "item/started", "params": {
+                "threadId": "preview_thread", "item": {"id": "new_item", "type": "agentMessage", "text": ""}}},
+            {"sequence": 3, "method": "item/agentMessage/delta", "params": {
+                "threadId": "preview_thread", "itemId": "new_item", "delta": "new text"}}]})
+        self.assertEqual(len(self.panel.history_events), 3)
+        snapshot = copy.deepcopy(self.api.thread)
+        snapshot["turns"][0]["items"][1]["text"] = "snapshot overlapping"
+        loaded({"thread": snapshot})
+        self.assertEqual(self.panel.transcript.cards["agent_1"].item["text"], "snapshot overlapping")
+        self.assertEqual(self.panel.transcript.cards["new_item"].item["text"], "new text")
+        self.assertTrue(self.panel.history_refresh.isActive())
+        self.panel.apply_events({"cursor": 4, "events": [{"sequence": 4, "method": "item/completed", "params": {
+            "threadId": "preview_thread", "item": {"id": "agent_1", "type": "agentMessage", "text": "final"}}}]})
+        self.assertEqual(self.panel.transcript.cards["agent_1"].item["text"], "final")
+
+    def test_late_history_callback_cannot_clear_new_thread_hydration(self):
+        self.api.hold["/thread"] = []
+        self.panel.load_history()
+        old_loaded, old_failed, _ = self.api.hold["/thread"].pop()
+        self.panel.thread_id = "new_thread"
+        self.panel.load_history()
+        new_loaded = self.api.hold["/thread"].pop()[0]
+        old_loaded({"thread": self.api.thread})
+        old_failed("old error")
+        self.assertTrue(self.panel.hydrating)
+        new_loaded({"thread": {"id": "new_thread", "turns": []}})
+        self.assertFalse(self.panel.hydrating)
+        self.assertEqual(self.panel.transcript.cards, {})
+
+    def test_definite_submission_rejection_preserves_editing_without_reconcile(self):
+        self.idle()
+        self.panel.input.setPlainText("Edit this input")
+        self.panel.submitting = True
+        self.panel.send_failed(ApiFailure("Missing attachment", code="ATTACHMENT_NOT_FOUND", status=400,
+                                          submission_state="not_submitted"))
+        self.assertFalse(self.panel.uncertain_send)
+        self.assertEqual(self.panel.input.toPlainText(), "Edit this input")
+        self.assertTrue(self.panel.send_button.isEnabled())
+
     def test_native_approval_and_question_require_explicit_action(self):
         approval = {"request_id": 7, "method": "item/commandExecution/requestApproval", "params": {
             "threadId": "preview_thread", "command": "echo preview", "availableDecisions": ["accept", "decline"]}}
         question = {"request_id": 8, "method": "item/tool/requestUserInput", "params": {"threadId": "preview_thread", "questions": [
             {"id": "finish", "header": "材质", "question": "选择表面处理", "isOther": True,
              "options": [{"label": "磨砂", "description": "柔和反射"}, {"label": "抛光", "description": "清晰反射"}]}]}}
-        self.api.state["pending_requests"] = [approval, question]
+        tool_approval = {"request_id": 9, "method": "mcpServer/elicitation/request", "params": {
+            "threadId": "preview_thread", "mode": "form", "message": "Allow scene observation?",
+            "_meta": {"codex_approval_kind": "mcp_tool_call"},
+            "requestedSchema": {"type": "object", "properties": {}}}}
+        self.api.state["pending_requests"] = [approval, question, tool_approval]
         self.panel.apply_state(copy.deepcopy(self.api.state))
         self.assertFalse(any(path == "/requests/respond" for _, path, _ in self.api.calls))
         card = self.panel.request_cards["8"]
@@ -135,6 +185,11 @@ class PanelTest(unittest.TestCase):
         self.panel.request_cards["7"].actions[1].click()
         payload = [body for _, path, body in self.api.calls if path == "/requests/respond"][-1]
         self.assertEqual(payload["result"], {"decision": "decline"})
+        card = self.panel.request_cards["9"]
+        self.assertEqual(card.actions[0].text(), "允许本次")
+        card.actions[0].click()
+        payload = [body for _, path, body in self.api.calls if path == "/requests/respond"][-1]
+        self.assertEqual(payload, {"request_id": 9, "result": {"action": "accept", "content": {}}})
 
     def test_operation_read_and_cancel_race_never_claims_cancellation(self):
         self.api.operation.update(state="queued", result_ref="preview_operation")
@@ -172,13 +227,21 @@ class PanelTest(unittest.TestCase):
     def test_real_qt_http_is_nonblocking_and_authenticates(self):
         token = secrets.token_urlsafe(32)
         observed = []
+        receipts = {
+            "/finished": {"operation_id": "finished-op", "state": "finished", "error": None},
+            "/failed": {"operation_id": "failed-op", "state": "failed",
+                        "error": {"code": "SCRIPT_ERROR", "message": "Script failed"}},
+        }
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
                 observed.append(self.headers.get("Authorization") == "Bearer " + token)
                 time.sleep(0.12)
-                data = json.dumps({"ready": True}).encode()
-                self.send_response(200)
+                rejected = self.path == "/reject"
+                data = json.dumps({"error": {"code": "INVALID_INPUT", "message": "Correct the input",
+                                             "submission_state": "not_submitted"}} if rejected else
+                                  receipts.get(self.path, {"ready": True})).encode()
+                self.send_response(400 if rejected else 200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
@@ -203,6 +266,17 @@ class PanelTest(unittest.TestCase):
             self.assertEqual(observed, [True])
             self.assertGreater(len(heartbeats), 2)
             self.assertEqual(result, [{"ready": True}])
+            failures = []
+            api.call("GET", "/reject", failed=failures.append)
+            process_until(lambda: bool(failures))
+            self.assertEqual(str(failures[0]), "Correct the input")
+            self.assertEqual(failures[0].submission_state, "not_submitted")
+            for path, receipt in receipts.items():
+                returned, errors = [], []
+                api.call("GET", path, done=returned.append, failed=errors.append)
+                process_until(lambda: bool(returned or errors))
+                self.assertEqual(errors, [])
+                self.assertEqual(returned, [receipt])
         finally:
             heartbeat.stop()
             api.close()

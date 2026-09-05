@@ -1,4 +1,4 @@
-"""One static correctness check and the repository's small unittest set."""
+"""Focused static, backend, and native Qt checks; no real Houdini execution."""
 import argparse
 import os
 from pathlib import Path
@@ -13,18 +13,41 @@ from studio.common import AppPaths  # noqa: E402
 from studio.launcher import helper_environment, hidden_flags  # noqa: E402
 
 
+_TEST_RUNNER = """
+import sys
+import unittest
+loader = unittest.TestLoader()
+suite = unittest.TestSuite()
+for pattern in sys.argv[1:]:
+    suite.addTests(loader.discover('tests', pattern=pattern))
+if not suite.countTestCases():
+    raise SystemExit('No tests selected')
+result = unittest.TextTestRunner(verbosity=2).run(suite)
+raise SystemExit(0 if result.wasSuccessful() else 1)
+"""
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tests-only", action="store_true", help="Skip Ruff when only the stdlib is installed")
-    parser.add_argument("--pattern", default="test_*.py", help="Select a focused unittest file")
+    parser.add_argument("--pattern", default="test_*.py", help="Select focused unittest files")
+    parser.add_argument("--suite", choices=("backend", "ui", "all"), default="backend",
+                        help="Default: backend. Native Qt files use test_ui*.py; excluded before import")
     args = parser.parse_args()
     paths = AppPaths(root)
     env = helper_environment(paths)
     env["RUFF_CACHE_DIR"] = str(paths.local("ruff"))
+    if args.suite in {"ui", "all"}:
+        env["QT_QPA_PLATFORM"] = "offscreen"
+    patterns = [p.name for p in sorted((root / "tests").glob(args.pattern))
+                if p.is_file() and (args.suite == "all" or
+                                   p.name.startswith("test_ui") == (args.suite == "ui"))]
+    if not patterns:
+        parser.error("No test files match the requested suite and pattern")
     commands = []
     if not args.tests_only:
         commands.append([sys.executable, "-m", "ruff", "check", "src", "scripts", "tests"])
-    commands.append([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", args.pattern, "-v"])
+    commands.append([sys.executable, "-c", _TEST_RUNNER, *patterns])
     for command in commands:
         result = subprocess.run(command, cwd=paths.root, env=env, creationflags=hidden_flags(),
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,

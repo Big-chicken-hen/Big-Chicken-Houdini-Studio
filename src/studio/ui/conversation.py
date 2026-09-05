@@ -280,7 +280,7 @@ class Transcript(QtWidgets.QScrollArea):
         elif method in {"item/agentMessage/delta", "item/plan/delta"}:
             item_id = params.get("itemId")
             if item_id in self.suppressed_deltas:
-                return
+                return True  # A native refresh must resolve overlap with the snapshot.
             card = self.cards.get(item_id)
             item = dict(card.item) if card else {"id": item_id, "type": "agentMessage", "text": ""}
             item["text"] = item.get("text", "") + params.get("delta", "")
@@ -288,7 +288,7 @@ class Transcript(QtWidgets.QScrollArea):
         elif method == "item/reasoning/summaryTextDelta":
             item_id = params.get("itemId")
             if item_id in self.suppressed_deltas:
-                return
+                return True
             card = self.cards.get(item_id)
             item = dict(card.item) if card else {"id": item_id, "type": "reasoning"}
             summary = list(item.get("summary", []))

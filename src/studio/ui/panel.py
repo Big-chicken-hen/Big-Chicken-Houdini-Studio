@@ -68,6 +68,10 @@ class StudioPanel(QtWidgets.QWidget):
         self.revision = 0
         self.hydrating = False
         self.history_again = False
+        self.history_request = None
+        self.history_thread = None
+        self.history_events = []
+        self.history_event_bytes = 0
         self.submitting = False
         self.switching = False
         self.uncertain_send = False
@@ -98,6 +102,10 @@ class StudioPanel(QtWidgets.QWidget):
         self.account_poll = QtCore.QTimer(self)
         self.account_poll.setInterval(8000)
         self.account_poll.timeout.connect(self.refresh_account)
+        self.history_refresh = QtCore.QTimer(self)
+        self.history_refresh.setSingleShot(True)
+        self.history_refresh.setInterval(750)
+        self.history_refresh.timeout.connect(self.load_history)
         self.update_controls()
         QtCore.QTimer.singleShot(0, self.connect_bridge)
 
@@ -352,7 +360,9 @@ class StudioPanel(QtWidgets.QWidget):
         self.call("GET", "/state", done=lambda v: self.apply_state(v) if revision == self.revision else None,
                   failed=self.connection_failed, unique=True)
         if not self.hydrating:
-            self.call("GET", "/events?after=" + str(self.cursor), done=self.apply_events, unique=True)
+            event_thread = self.thread_id
+            self.call("GET", "/events?after=" + str(self.cursor),
+                      done=lambda v: self.apply_events(v) if self.thread_id == event_thread else None, unique=True)
         if self.tabs.currentIndex() == 1:
             self.load_operations()
         if self.selection_pending:
@@ -598,13 +608,20 @@ class StudioPanel(QtWidgets.QWidget):
     def load_history(self):
         if not self.thread_id or not self.logged_in:
             return
-        if self.hydrating:
+        if self.hydrating and self.history_thread == self.thread_id:
             self.history_again = True
             return
         thread_id = self.thread_id
+        request = object()
+        self.history_request, self.history_thread = request, thread_id
+        self.history_events, self.history_event_bytes = [], 0
+        self.history_again = False
+        self.history_refresh.stop()
         self.hydrating = True
 
         def loaded(value):
+            if self.history_request is not request or self.thread_id != thread_id or self.closed:
+                return
             self.hydrating = False
             thread = value.get("thread")
             if value.get("history_available") is False:
@@ -614,21 +631,42 @@ class StudioPanel(QtWidgets.QWidget):
                     self.show_notice(value.get("history_message", "会话历史尚未物化，可继续当前对话。"))
             elif self.thread_id == thread_id and thread and thread.get("id") == thread_id:
                 self.transcript.hydrate(thread)
+            buffered, self.history_events = self.history_events, []
+            self.history_event_bytes = 0
+            for event in buffered:
+                if self.transcript.apply_event(event):
+                    self.history_again = True
             if self.history_again:
                 self.history_again = False
-                self.load_history()
+                self.schedule_history()
 
         def failed(message):
+            if self.history_request is not request or self.thread_id != thread_id or self.closed:
+                return
             self.hydrating = False
+            resync = self.history_again or bool(self.history_events)
             self.history_again = False
+            buffered, self.history_events = self.history_events, []
+            self.history_event_bytes = 0
+            for event in buffered:
+                self.transcript.apply_event(event)
             self.show_notice("原生历史读取失败：" + message)
+            if resync:
+                self.schedule_history()
         self.call("GET", "/thread", done=loaded, failed=failed)
+
+    def schedule_history(self):
+        if not self.closed and not self.history_refresh.isActive():
+            self.history_refresh.start()
 
     def apply_events(self, value):
         if value.get("resync_required") or value.get("cursor", self.cursor) < self.cursor:
             self.load_history()
+        previous_cursor = self.cursor
         self.cursor = value.get("cursor", self.cursor)
         for event in value.get("events", []):
+            if event.get("sequence", previous_cursor + 1) <= previous_cursor:
+                continue
             params = event.get("params", {})
             method = event.get("method", "")
             if method in {"account/updated", "account/login/completed"}:
@@ -637,10 +675,20 @@ class StudioPanel(QtWidgets.QWidget):
                 self.refresh_account()
             if params.get("threadId") != self.thread_id:
                 continue
-            if not self.hydrating:
-                self.transcript.apply_event(event)
+            if self.hydrating:
+                size = len(json.dumps(event, ensure_ascii=False).encode("utf-8"))
+                if len(self.history_events) < 256 and self.history_event_bytes + size <= 512 * 1024:
+                    self.history_events.append(event)
+                    self.history_event_bytes += size
+                else:
+                    self.history_again = True  # Native history recovers bounded buffer overflow.
+            elif self.transcript.apply_event(event):
+                self.schedule_history()
             if method == "turn/completed":
-                self.load_history()
+                if self.hydrating:
+                    self.history_again = True
+                else:
+                    self.schedule_history()
             if method in {"error", "warning"}:
                 error = params.get("error") or {}
                 self.show_notice(error.get("message") or params.get("message") or method)
@@ -685,9 +733,11 @@ class StudioPanel(QtWidgets.QWidget):
 
     def send_failed(self, message):
         self.submitting = False
-        self.uncertain_send = True
+        self.uncertain_send = getattr(message, "submission_state", None) != "not_submitted"
         self.revision += 1
-        self.show_notice("提交未确认，输入已保留。请先校正 Codex 状态，查看原生历史。\n" + message)
+        prefix = ("提交未确认，输入已保留。请先校正 Codex 状态，查看原生历史。\n" if self.uncertain_send else
+                  "提交被拒绝，输入已保留。修正后可以再次发送。\n")
+        self.show_notice(prefix + str(message))
         self.refresh()
         self.update_controls()
 
@@ -1030,6 +1080,7 @@ class StudioPanel(QtWidgets.QWidget):
         self.closed = True
         self.poll.stop()
         self.account_poll.stop()
+        self.history_refresh.stop()
         if self.owns_api and self.api:
             self.api.close()
         super().closeEvent(event)

@@ -2,7 +2,7 @@
 
 一个独立的 Houdini 创作工作室：原生 Qt 启动器与 Python Panel，Codex App Server 负责对话和推理，Houdini 主线程负责批量 HOM，runtime 保存场景身份与操作收据。它不依赖旧 HIA 安装目录。
 
-当前版本是 **0.1.0 开发预览**。标准库测试和离屏 Qt 预览只证明各自覆盖的行为；真实 Houdini GUI、渲染及 Codex 推理端到端任务尚未完成验收。不要把启动器显示“已连接”当作场景操作完成。
+当前版本是 **0.1.0 开发预览**。真实 Houdini 节点闭环，以及从 Panel 经 Codex 推理完成 Box 创建和参数回读的小任务已通过验收；渲染、场景切换和长 cook 中断仍待验证。实际证据和范围见 [阶段验收记录](docs/stage-readiness-results.md)。启动器显示“已连接”只代表 Runtime 注册成功。
 
 ## 在 Windows 开始
 
