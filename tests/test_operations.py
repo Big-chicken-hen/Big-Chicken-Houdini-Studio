@@ -348,6 +348,50 @@ class OperationsTests(unittest.TestCase):
         self.assertEqual(content[1], {"type": "image", "mimeType": "image/png", "data": base64.b64encode(png).decode()})
         self.assertEqual(self.hou.count, 0)
 
+    def test_context_binding_accepts_only_own_context_and_survives_missing_result(self):
+        class ContextClient:
+            def __init__(self):
+                self.receipts = {}
+                self.result = {"scene_epoch": "own-scene"}
+                self.lose_response = True
+
+            def call(self, method, path, payload=None):
+                if method == "POST":
+                    op_id = payload["operation_id"]
+                    self.receipts[op_id] = {**payload, "state": "finished", "result": self.result}
+                    if self.lose_response:
+                        raise StudioError("CONNECTION_LOST", "Lost context response", 503)
+                    return self.receipts[op_id]
+                return self.receipts[path.rsplit("/", 1)[-1]]
+
+        client = ContextClient()
+        adapter = Adapter(client, None, {"runtime_id": "runtime", "workspace_id": "workspace"}, "session")
+        adapter.scene_epoch = "prior-scene"
+        foreign = {"operation_id": "panel-context", "kind": "context", "state": "finished",
+                   "owner_id": "session", "runtime_id": "runtime", "result": {"scene_epoch": "panel-scene"}}
+        client.receipts["panel-context"] = foreign
+        adapter.call("hia_operation", {"action": "get", "operation_id": "panel-context"})
+        self.assertEqual(adapter.scene_epoch, "prior-scene")
+        adapter._receipt({key: value for key, value in foreign.items() if key != "operation_id"})
+        self.assertEqual(adapter.scene_epoch, "prior-scene")
+        adapter.call("hia_context", {})  # Lost POST recovers through a GET of its own ID.
+        self.assertEqual(adapter.scene_epoch, "own-scene")
+        own_id = adapter.context_operation_id
+        for missing in ({}, None, {"scene_epoch": None}, {"scene_epoch": ""}):
+            with self.subTest(result=missing):
+                client.receipts[own_id]["result"] = missing
+                adapter.call("hia_operation", {"action": "get", "operation_id": own_id})
+                self.assertEqual(adapter.scene_epoch, "own-scene")
+        client.receipts[own_id]["result"] = {"scene_epoch": "recovered-scene"}
+        adapter.call("hia_operation", {"action": "get", "operation_id": own_id})
+        self.assertEqual(adapter.scene_epoch, "recovered-scene")
+        adapter.call("hia_operation", {"action": "get", "operation_id": "panel-context"})
+        self.assertEqual(adapter.scene_epoch, "recovered-scene")
+        client.result = {"scene_epoch": "latest-scene"}
+        adapter.call("hia_context", {})
+        adapter.call("hia_operation", {"action": "get", "operation_id": own_id})
+        self.assertEqual(adapter.scene_epoch, "latest-scene")
+
     def test_stdio_bounded_lines_and_http_partial_response_are_uncertain(self):
         class BoundedSource(io.BytesIO):
             def readline(self, size=-1):

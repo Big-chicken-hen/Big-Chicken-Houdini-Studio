@@ -36,6 +36,7 @@ class Adapter:
         self.identity, self.owner_id = identity, owner_id
         self.wait_seconds = wait_seconds
         self.scene_epoch = None
+        self.context_operation_id = None
         self.lock = threading.Lock()
         self.runtime_loader = runtime_loader
 
@@ -44,11 +45,14 @@ class Adapter:
             self.runtime, self.identity = self.runtime_loader()
 
     def _receipt(self, value):
+        result = value.get("result")
+        epoch = result.get("scene_epoch") if isinstance(result, dict) else None
         if (value.get("kind") == "context" and value.get("state") == "finished" and
                 value.get("runtime_id") == self.identity["runtime_id"] and
-                value.get("owner_id") == self.owner_id):
+                value.get("owner_id") == self.owner_id and isinstance(epoch, str) and epoch):
             with self.lock:
-                self.scene_epoch = value["result"]["scene_epoch"]
+                if self.context_operation_id is not None and value.get("operation_id") == self.context_operation_id:
+                    self.scene_epoch = epoch
         content = [{"type": "text", "text": encoded(value)}]
         if value.get("kind") == "capture" and value.get("state") == "finished":
             artifact_id = value.get("result", {}).get("artifact_id")
@@ -102,6 +106,10 @@ class Adapter:
         if kind not in {"context", "lookup"} and not epoch:
             raise StudioError("OBSERVATION_REQUIRED", "Call hia_context before working on a scene", 409)
         op_id = new_id()  # Allocated before transmission and always returned after uncertainty.
+        if kind == "context":
+            with self.lock:
+                # Only the latest context requested by this adapter may bind its writes.
+                self.context_operation_id = op_id
         op = {"operation_id": op_id, "workspace_id": self.identity["workspace_id"],
               "runtime_id": self.identity["runtime_id"], "owner_id": self.owner_id,
               "scene_epoch": epoch, "kind": kind, "arguments": args, "label": args.get("label", kind)}
