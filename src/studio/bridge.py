@@ -6,12 +6,14 @@ import os
 import re
 import sys
 import threading
+import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from .codex.client import CodexStdioClient
 from .codex.errors import BridgeError
 from .codex.protocol import ProtocolPolicy
-from .common import StudioError, atomic_json, new_id, read_json
+from .common import TERMINAL, StudioError, atomic_json, new_id, read_json
 from .http import Client, serve
 from .instructions import SCENE_INSTRUCTIONS
 from .workspace import WorkspaceData, Workspaces
@@ -25,13 +27,15 @@ class Bridge:
         self.data = WorkspaceData(paths, workspace_id)
         self.cwd = paths.workspace(workspace_id) / "work"
         self.lock = threading.RLock()
+        self.action_lock = threading.Lock()
+        self.turn_revision = 0
         self.events = collections.deque(maxlen=1500)
         self.sequence = 0
         self.thread_id = None
         self.turn_id = None
         self.codex_state = "idle"
         self.stop_requested = False
-        self.completed_turns = set()
+        self.completed_turns = collections.deque(maxlen=256)
         self.pending_requests = {}
         self._runtime = None
         self.server = None
@@ -58,19 +62,30 @@ class Bridge:
     def on_event(self, event):
         with self.lock:
             method, params = event.get("method"), event.get("params", {})
+            event_thread = params.get("threadId")
+            # App Server may still emit events from previously loaded conversations.
+            if event_thread and event_thread != self.thread_id:
+                return
             if method == "turn/started":
                 turn = params.get("turn", {})
-                if params.get("threadId") == self.thread_id:
+                if turn.get("id") and turn["id"] not in self.completed_turns and self.turn_id in {None, turn["id"]}:
                     self.turn_id = turn.get("id")
                     self.codex_state = "stopping" if self.stop_requested else "running"
+                    self.turn_revision += 1
             elif method == "turn/completed":
                 turn = params.get("turn", {})
-                self.completed_turns.add(turn.get("id"))
-                if params.get("threadId") == self.thread_id:
+                turn_id = turn.get("id")
+                known = turn_id in self.completed_turns
+                if turn_id and not known:
+                    self.completed_turns.append(turn_id)
+                if turn_id and not known and self.turn_id in {None, turn_id}:
                     self.codex_state = turn.get("status", "unknown")
                     self.turn_id = None
+                    self.turn_revision += 1
             elif event.get("type") == "process_exit":
                 self.codex_state = "unavailable"
+                self.pending_requests.clear()
+                self.turn_revision += 1
             if event.get("type") == "server_request":
                 self.pending_requests[str(event["request_id"])] = event
             if method == "serverRequest/resolved":
@@ -101,21 +116,35 @@ class Bridge:
                     "pending_requests": list(self.pending_requests.values())}
 
     def thread_config(self):
+        executable = Path(os.environ.get("BCS_PYTHON_EXECUTABLE") or sys.executable)
+        if executable.name.lower() == "pythonw.exe":
+            executable = executable.with_name("python.exe")
         return {"cwd": str(self.cwd), "approvalPolicy": "on-request", "sandbox": "workspace-write",
                 "developerInstructions": SCENE_INSTRUCTIONS,
-                "config": {"mcp_servers": {"big_chicken": {
-                    "command": sys.executable, "args": ["-m", "studio.mcp"],
+                "config": {"project_doc_max_bytes": 0, "mcp_servers": {"big_chicken": {
+                    "command": str(executable), "args": ["-m", "studio.mcp"],
                     "env_vars": ["HIA_PROJECT_ROOT", "BCS_SESSION_ID", "BCS_WORKSPACE_ID", "BCS_SESSION_TOKEN",
-                                 "BCS_OWNER_ID", "PYTHONPATH", "TEMP", "TMP"],
+                                 "BCS_OWNER_ID", "BCS_PYTHON_EXECUTABLE", "HIA_RENDER_OUTPUT_DIR", "PYTHONPATH", "TEMP", "TMP"],
                     "startup_timeout_sec": 15, "tool_timeout_sec": 30}}}}
 
+    @contextmanager
+    def action(self):
+        if not self.action_lock.acquire(blocking=False):
+            raise StudioError("REQUEST_PENDING", "Wait for the pending conversation request", 409)
+        try:
+            yield
+        finally:
+            self.action_lock.release()
+
     def select_thread(self, thread_id=None):
+        with self.action():
+            return self._select_thread(thread_id)
+
+    def _select_thread(self, thread_id):
         with self.lock:
             if self.codex_state in {"running", "starting", "stopping", "unknown", "unavailable", "selecting"}:
                 raise StudioError("TURN_ACTIVE", "Finish or stop the current turn before switching conversations", 409)
         config = self.thread_config()
-        # Ensure native MCP startup can find a runtime; this does not observe or rebind a scene.
-        self.runtime().call("GET", "/health")
         if thread_id:
             item = self.client.request("thread/read", {"threadId": thread_id, "includeTurns": False})["thread"]
             if Path(item.get("cwd", "")).resolve() != self.cwd.resolve():
@@ -124,10 +153,18 @@ class Bridge:
         result = self.client.request("thread/resume" if thread_id else "thread/start", config)
         with self.lock:
             self.thread_id, self.turn_id = result["thread"]["id"], None
-            self.codex_state = "idle"
+            self.codex_state, self.stop_requested = "idle", False
+            self.pending_requests.clear()
+            self.completed_turns.clear()
+            self.turn_revision += 1
+            self._apply_native_state(result["thread"])
         return result
 
     def start_turn(self, body):
+        with self.action():
+            return self._start_turn(body)
+
+    def _start_turn(self, body):
         text = body.get("text", "")
         if not isinstance(text, str) or not text.strip() or len(text) > 64000:
             raise StudioError("INVALID_INPUT", "Enter a message of 1 to 64000 characters")
@@ -142,12 +179,19 @@ class Bridge:
             if not path.is_file() or path.parent != self.paths.workspace(self.workspace_id) / "attachments":
                 raise StudioError("ATTACHMENT_NOT_FOUND", "Reattach the missing image")
             inputs.append({"type": "localImage", "path": str(path)})
+        for key in ("model", "effort"):
+            if body.get(key) is not None and (not isinstance(body[key], str) or len(body[key]) > 160):
+                raise StudioError("INVALID_INPUT", "Model and effort must be native advertised strings")
         with self.lock:
             if self.codex_state in {"starting", "running", "stopping", "unknown", "unavailable", "selecting"}:
                 raise StudioError("TURN_ACTIVE", "Wait for native turn confirmation or reconcile the conversation", 409)
             if not self.thread_id:
                 raise StudioError("THREAD_REQUIRED", "Create or select a conversation first", 409)
-            self.runtime().call("POST", "/owner/resume", {"owner_id": self.owner_id})
+            try:
+                self.runtime().call("POST", "/owner/resume", {"owner_id": self.owner_id})
+            except StudioError as exc:
+                if exc.code not in {"HOUDINI_STARTING", "CONNECTION_LOST"}:
+                    raise
             self.codex_state, self.stop_requested = "starting", False
         params = {"threadId": self.thread_id, "input": inputs}
         for key in ("model", "effort"):
@@ -157,7 +201,8 @@ class Bridge:
             result = self.client.request("turn/start", params)
         except Exception:
             with self.lock:
-                self.codex_state = "unknown"  # A timed-out start may still have begun.
+                if self.codex_state in {"starting", "stopping"} and not self.turn_id:
+                    self.codex_state = "unknown"  # A timed-out start may still have begun.
             raise
         with self.lock:
             turn_id = result["turn"]["id"]
@@ -171,27 +216,38 @@ class Bridge:
 
     def reconcile(self):
         """Read native Codex state; this never infers a Houdini mutation outcome."""
-        if not self.thread_id:
-            return {"reconciled": False, "message": "Select a native conversation first"}
-        value = self.client.request("thread/read", {"threadId": self.thread_id, "includeTurns": True})
-        turns = value.get("thread", {}).get("turns", [])
-        if not turns:
+        with self.action():
             with self.lock:
-                self.codex_state, self.turn_id = "idle", None
+                thread_id, revision = self.thread_id, self.turn_revision
+            if not thread_id:
+                return {"reconciled": False, "message": "Select a native conversation first"}
+            value = self.client.request("thread/read", {"threadId": thread_id, "includeTurns": True})
+            with self.lock:
+                fresh = revision == self.turn_revision
+                if fresh:
+                    self._apply_native_state(value["thread"])
+                turn_id = self.turn_id if self.stop_requested else None
+            if turn_id:
+                self.client.request("turn/interrupt", {"threadId": thread_id, "turnId": turn_id})
+            return {"reconciled": fresh, "codex_state": self.codex_state, "thread": value.get("thread")}
+
+    def _apply_native_state(self, thread):
+        turns = thread.get("turns", [])
+        latest = turns[-1] if turns else {}
+        status = latest.get("status")
+        live = thread.get("status", {}).get("type")
+        if status == "inProgress":
+            self.codex_state = "stopping" if self.stop_requested else "running"
+            self.turn_id = latest.get("id")
+        elif live in {"active", "systemError"}:
+            self.codex_state, self.turn_id = "unknown", None
+        elif status in {"completed", "interrupted", "failed"}:
+            self.codex_state, self.turn_id = status, None
+            self.completed_turns.append(latest.get("id"))
+        elif not turns and live == "idle":
+            self.codex_state, self.turn_id = "idle", None
         else:
-            turn = turns[-1]
-            status = turn.get("status", "unknown")
-            with self.lock:
-                if status == "inProgress":
-                    self.codex_state = "stopping" if self.stop_requested else "running"
-                    self.turn_id = turn.get("id")
-                elif status in {"completed", "interrupted", "failed"}:
-                    self.codex_state, self.turn_id = status, None
-                else:
-                    self.codex_state = "unknown"
-        if self.stop_requested and self.turn_id:
-            self.client.request("turn/interrupt", {"threadId": self.thread_id, "turnId": self.turn_id})
-        return {"reconciled": True, "codex_state": self.codex_state, "thread": value.get("thread")}
+            self.codex_state, self.turn_id = "unknown", None
 
     def stop(self):
         with self.lock:
@@ -210,7 +266,30 @@ class Bridge:
             except BridgeError as exc:
                 error = str(exc)
         return {"codex_interrupt_requested": bool(turn_id), "codex_interrupt_error": error,
-                "scene": scene, "message": "Future operations are stopped; running HOM may still be finishing"}
+                "scene": scene, "message": "Stop requested; check the runtime receipt for current HOM work"}
+
+    def selection(self):
+        """An explicit Panel read, independent of the MCP observation binding."""
+        runtime = self.runtime()
+        identity = runtime.call("GET", "/health")
+        op_id = new_id()
+        operation = {"operation_id": op_id, "workspace_id": self.workspace_id,
+                     "runtime_id": identity["runtime_id"], "owner_id": self.owner_id,
+                     "scene_epoch": None, "kind": "context", "arguments": {}, "label": "Panel selection"}
+        deadline = time.monotonic() + 0.65
+        try:
+            value = runtime.call("POST", "/operations", operation, timeout=0.3)
+            while value.get("state") not in TERMINAL and time.monotonic() < deadline:
+                time.sleep(0.05)
+                value = runtime.call("GET", "/operations/" + op_id, timeout=0.2)
+        except StudioError as exc:
+            if exc.code != "CONNECTION_LOST":
+                raise
+            return {"operation_id": op_id, "state": "unknown"}
+        if value.get("state") == "finished":
+            return {"operation_id": op_id, "nodes": value.get("result", {}).get("selected", []),
+                    "scene_epoch": value.get("scene_epoch"), "state": "finished"}
+        return value
 
     def attach(self, source):
         path = Path(source).resolve()
@@ -261,6 +340,8 @@ class Bridge:
                 return self.client.request("thread/read", {"threadId": self.thread_id, "includeTurns": True})
             if method == "POST" and path == "/reconcile":
                 return self.reconcile()
+            if method == "POST" and path == "/selection":
+                return self.selection()
             if method == "POST" and path == "/turn":
                 return self.start_turn(body)
             if method == "POST" and path == "/stop":

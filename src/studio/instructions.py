@@ -12,7 +12,8 @@ Capture at useful visual milestones; structural checks do not establish appearan
 hia_execute_hom returns an operation receipt. queued/running means query that operation; never resubmit the script.
 Unknown or partial results are not safe to retry. Undo groups do not undo external Python effects.
 Do not bypass the runtime with shell commands, other processes or computer use to control Houdini.
-The working directory is a private workspace, not the plugin source. Keep temporary data and default outputs there.
+The working directory is a private workspace, not the plugin source. Keep temporary data there.
+Use HIA_RENDER_OUTPUT_DIR for default renders when supplied by the launcher; otherwise use the workspace.
 User-requested deliverables may use the directory they explicitly select. Report actual deliverable paths.
 Write stable project memory only when explicitly requested via hia_project_memory. Never produce automatic summaries.
 Use Codex's native thread history and automatic context compaction. Do not create a second agent or recovery planner.
