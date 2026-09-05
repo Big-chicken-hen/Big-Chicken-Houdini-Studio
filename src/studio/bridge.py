@@ -2,9 +2,8 @@
 from __future__ import annotations
 
 import collections
-import json
 import os
-import shutil
+import re
 import sys
 import threading
 from pathlib import Path
@@ -112,7 +111,7 @@ class Bridge:
 
     def select_thread(self, thread_id=None):
         with self.lock:
-            if self.codex_state in {"running", "starting", "stopping"}:
+            if self.codex_state in {"running", "starting", "stopping", "unknown", "unavailable", "selecting"}:
                 raise StudioError("TURN_ACTIVE", "Finish or stop the current turn before switching conversations", 409)
         config = self.thread_config()
         # Ensure native MCP startup can find a runtime; this does not observe or rebind a scene.
@@ -132,19 +131,24 @@ class Bridge:
         text = body.get("text", "")
         if not isinstance(text, str) or not text.strip() or len(text) > 64000:
             raise StudioError("INVALID_INPUT", "Enter a message of 1 to 64000 characters")
-        with self.lock:
-            if self.codex_state in {"starting", "running", "stopping"}:
-                raise StudioError("TURN_ACTIVE", "A turn is already active", 409)
-            if not self.thread_id:
-                raise StudioError("THREAD_REQUIRED", "Create or select a conversation first", 409)
-            self.runtime().call("POST", "/owner/resume", {"owner_id": self.owner_id})
-            self.codex_state, self.stop_requested = "starting", False
         inputs = [{"type": "text", "text": text}]
-        for attachment in body.get("attachments", [])[:8]:
+        attachments = body.get("attachments", [])
+        if not isinstance(attachments, list) or len(attachments) > 8:
+            raise StudioError("INVALID_ATTACHMENTS", "Attach at most eight images")
+        for attachment in attachments:
+            if not isinstance(attachment, str) or not re.fullmatch(r"[0-9a-f]{32}\.(png|jpg|jpeg|webp)", attachment):
+                raise StudioError("INVALID_ATTACHMENT", "Use an attachment returned by the image picker")
             path = self.paths.local("workspaces", self.workspace_id, "attachments", attachment)
             if not path.is_file() or path.parent != self.paths.workspace(self.workspace_id) / "attachments":
                 raise StudioError("ATTACHMENT_NOT_FOUND", "Reattach the missing image")
             inputs.append({"type": "localImage", "path": str(path)})
+        with self.lock:
+            if self.codex_state in {"starting", "running", "stopping", "unknown", "unavailable", "selecting"}:
+                raise StudioError("TURN_ACTIVE", "Wait for native turn confirmation or reconcile the conversation", 409)
+            if not self.thread_id:
+                raise StudioError("THREAD_REQUIRED", "Create or select a conversation first", 409)
+            self.runtime().call("POST", "/owner/resume", {"owner_id": self.owner_id})
+            self.codex_state, self.stop_requested = "starting", False
         params = {"threadId": self.thread_id, "input": inputs}
         for key in ("model", "effort"):
             if body.get(key):
@@ -164,6 +168,30 @@ class Bridge:
         if should_interrupt:
             self.client.request("turn/interrupt", {"threadId": self.thread_id, "turnId": turn_id})
         return result
+
+    def reconcile(self):
+        """Read native Codex state; this never infers a Houdini mutation outcome."""
+        if not self.thread_id:
+            return {"reconciled": False, "message": "Select a native conversation first"}
+        value = self.client.request("thread/read", {"threadId": self.thread_id, "includeTurns": True})
+        turns = value.get("thread", {}).get("turns", [])
+        if not turns:
+            with self.lock:
+                self.codex_state, self.turn_id = "idle", None
+        else:
+            turn = turns[-1]
+            status = turn.get("status", "unknown")
+            with self.lock:
+                if status == "inProgress":
+                    self.codex_state = "stopping" if self.stop_requested else "running"
+                    self.turn_id = turn.get("id")
+                elif status in {"completed", "interrupted", "failed"}:
+                    self.codex_state, self.turn_id = status, None
+                else:
+                    self.codex_state = "unknown"
+        if self.stop_requested and self.turn_id:
+            self.client.request("turn/interrupt", {"threadId": self.thread_id, "turnId": self.turn_id})
+        return {"reconciled": True, "codex_state": self.codex_state, "thread": value.get("thread")}
 
     def stop(self):
         with self.lock:
@@ -231,6 +259,8 @@ class Bridge:
                 if not self.thread_id:
                     return {"thread": None}
                 return self.client.request("thread/read", {"threadId": self.thread_id, "includeTurns": True})
+            if method == "POST" and path == "/reconcile":
+                return self.reconcile()
             if method == "POST" and path == "/turn":
                 return self.start_turn(body)
             if method == "POST" and path == "/stop":
