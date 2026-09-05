@@ -7,7 +7,7 @@ from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from .shared import Task, button, clear_layout, label
+from .shared import Task, button, label
 
 
 class SafeBrowser(QtWidgets.QTextBrowser):
@@ -124,10 +124,15 @@ class MessageCard(QtWidgets.QFrame):
         self.setObjectName("messageCard")
         self.app_root = app_root
         self.item = {}
+        self.rendered_text = None
+        self.image_tiles = []
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(18, 13, 18, 14)
         self.title = label("", "messageAuthor")
         layout.addWidget(self.title)
+        self.sync_note = label("恢复中的消息：完整内容到达时更新，也可手动刷新连接。", "muted", True)
+        self.sync_note.hide()
+        layout.addWidget(self.sync_note)
         self.text = SafeBrowser()
         self.text.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         self.text.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
@@ -152,7 +157,8 @@ class MessageCard(QtWidgets.QFrame):
         self.update_item(item)
 
     def update_item(self, item):
-        previous = self.item
+        if self.item == item:
+            return False
         self.item = item
         kind = item.get("type", "item")
         status = item.get("status", "")
@@ -178,20 +184,38 @@ class MessageCard(QtWidgets.QFrame):
             text = "此会话由 Codex 自动压缩，可继续当前对话。"
         elif not text:
             text = status or "等待原生事件…"
-        self.text.setMarkdown(str(text))
+        text_changed = self.rendered_text != str(text)
+        if text_changed:
+            self.rendered_text = str(text)
+            self.text.setMarkdown(self.rendered_text)
         self.text.setVisible(bool(text))
         is_tool = kind not in {"userMessage", "agentMessage", "reasoning", "plan", "contextCompaction"}
         self.details_button.setVisible(is_tool)
         if self.details.isVisible():
             self.show_details()
-        # Text deltas don't decode the same image again.
-        if previous.get("content") != item.get("content") or previous.get("result") != item.get("result") or not previous:
-            clear_layout(self.images)
-            sources = image_sources(item, self.app_root)
-            for source in sources:
-                self.images.addWidget(ImageTile(source))
-            self.image_scroll.setVisible(bool(sources))
-        QtCore.QTimer.singleShot(0, self.fit_text)
+        sources = image_sources(item, self.app_root)
+        if sources != [source for source, _tile in self.image_tiles]:
+            unused = list(self.image_tiles)
+            self.image_tiles = []
+            for index, source in enumerate(sources):
+                match = next((pair for pair in unused if pair[0] == source), None)
+                if match is None:
+                    tile = ImageTile(source)
+                else:
+                    unused.remove(match)
+                    tile = match[1]
+                self.image_tiles.append((source, tile))
+                self.images.insertWidget(index, tile)
+            for _source, tile in unused:
+                self.images.removeWidget(tile)
+                tile.deleteLater()
+        self.image_scroll.setVisible(bool(sources))
+        if text_changed:
+            QtCore.QTimer.singleShot(0, self.fit_text)
+        return True
+
+    def set_recovering(self, recovering):
+        self.sync_note.setVisible(recovering)
 
     def fit_text(self):
         self.text.document().setTextWidth(max(100, self.text.viewport().width()))
@@ -229,46 +253,77 @@ class Transcript(QtWidgets.QScrollArea):
         self.layout.setSpacing(10)
         self.setWidget(self.body)
         self.cards = {}
+        self.thread_id = None
         self.suppressed_deltas = set()
+        self.completed_items = set()
+        self._scroll_target = None
+        self._scroll_restore = QtCore.QTimer(self)
+        self._scroll_restore.setSingleShot(True)
+        self._scroll_restore.timeout.connect(self.restore_scroll)
+        self.verticalScrollBar().actionTriggered.connect(self.cancel_scroll_restore)
+        self.verticalScrollBar().sliderPressed.connect(self.cancel_scroll_restore)
         self.empty = label("从一个想法开始。\n登录后新建对话，描述你想完成的 Houdini 工作。", "welcome", True)
         self.empty.setAlignment(QtCore.Qt.AlignCenter)
         self.empty.setMinimumHeight(170)
         self.layout.addWidget(self.empty)
         self.layout.addStretch()
 
-    def reset(self):
+    def reset(self, thread_id=None):
+        self.cancel_scroll_restore()
         for card in self.cards.values():
             self.layout.removeWidget(card)
             card.deleteLater()
         self.cards.clear()
+        self.thread_id = thread_id
         self.suppressed_deltas.clear()
+        self.completed_items.clear()
         self.empty.show()
 
     def hydrate(self, thread):
-        self.reset()
-        for turn in (thread or {}).get("turns", []):
+        if not thread:
+            return
+        if thread.get("id") != self.thread_id:
+            self.reset(thread.get("id"))
+        target = self.scroll_target()
+        position = 1  # The welcome widget stays at layout index zero.
+        for turn in thread.get("turns", []):
+            complete = turn.get("status") in {"completed", "interrupted", "failed"}
             for item in turn.get("items", []):
-                self.put(item)
+                item_id = item.get("id")
+                if not item_id:
+                    continue
+                item_complete = complete or item.get("status") in {"completed", "failed", "declined"}
+                if item_id not in self.completed_items or item_complete:
+                    self.put(item, preserve_scroll=False)
+                card = self.cards[item_id]
+                if self.layout.indexOf(card) != position:
+                    self.layout.insertWidget(position, card)
+                position += 1
                 # No atomic cursor accompanies thread/read. Never duplicate text by
                 # appending pre-snapshot deltas. item/completed replaces the snapshot.
-                self.suppressed_deltas.add(item.get("id"))
-        self.to_bottom()
+                self.suppressed_deltas.add(item_id)
+                if item_complete:
+                    self.completed_items.add(item_id)
+                card.set_recovering(item_id not in self.completed_items)
+        # Same-thread items newer than the read are retained until their native
+        # completion. A non-atomic snapshot is not evidence that they were removed.
+        self.queue_scroll_restore(target)
 
-    def put(self, item):
+    def put(self, item, *, preserve_scroll=True):
         item_id = item.get("id")
         if not item_id:
             return
-        bar = self.verticalScrollBar()
-        bottom = bar.maximum() - bar.value() < 45
+        target = self.scroll_target() if preserve_scroll else None
         if item_id in self.cards:
-            self.cards[item_id].update_item(item)
+            changed = self.cards[item_id].update_item(item)
         else:
             card = MessageCard(item, self.app_root)
             self.cards[item_id] = card
             self.layout.insertWidget(self.layout.count() - 1, card)
             self.empty.hide()
-        if bottom:
-            QtCore.QTimer.singleShot(0, self.to_bottom)
+            changed = True
+        if changed and preserve_scroll:
+            self.queue_scroll_restore(target)
 
     def apply_event(self, event):
         method, params = event.get("method", ""), event.get("params", {})
@@ -277,16 +332,27 @@ class Transcript(QtWidgets.QScrollArea):
             if method == "item/started" and item.get("id") in self.cards:
                 return
             self.put(item)
+            if method == "item/completed" and item.get("id") in self.cards:
+                target = self.scroll_target()
+                self.completed_items.add(item["id"])
+                self.suppressed_deltas.add(item["id"])
+                self.cards[item["id"]].set_recovering(False)
+                self.queue_scroll_restore(target)
         elif method in {"item/agentMessage/delta", "item/plan/delta"}:
             item_id = params.get("itemId")
+            if item_id in self.completed_items:
+                return
             if item_id in self.suppressed_deltas:
-                return True  # A native refresh must resolve overlap with the snapshot.
+                return True  # At most one automatic repair, then the native final item.
             card = self.cards.get(item_id)
-            item = dict(card.item) if card else {"id": item_id, "type": "agentMessage", "text": ""}
+            item = dict(card.item) if card else {"id": item_id,
+                "type": "plan" if method == "item/plan/delta" else "agentMessage", "text": ""}
             item["text"] = item.get("text", "") + params.get("delta", "")
             self.put(item)
         elif method == "item/reasoning/summaryTextDelta":
             item_id = params.get("itemId")
+            if item_id in self.completed_items:
+                return
             if item_id in self.suppressed_deltas:
                 return True
             card = self.cards.get(item_id)
@@ -299,5 +365,44 @@ class Transcript(QtWidgets.QScrollArea):
             item["summary"] = summary
             self.put(item)
 
+    def scroll_target(self):
+        if self._scroll_target is not None:
+            return self._scroll_target
+        bar = self.verticalScrollBar()
+        value = bar.value()
+        if bar.maximum() - value < 45:
+            return (True, None, 0, value)
+        anchor = min((card for card in self.cards.values() if card.y() + card.height() > value),
+                     key=lambda card: card.y(), default=None)
+        return (False, anchor.item["id"] if anchor else None,
+                value - anchor.y() if anchor else 0, value)
+
+    def queue_scroll_restore(self, target):
+        self._scroll_target = target
+        self._scroll_restore.start(0)
+
+    def cancel_scroll_restore(self, *_args):
+        self._scroll_restore.stop()
+        self._scroll_target = None
+
+    def restore_scroll(self):
+        target = self._scroll_target
+        if target is None:
+            return
+        self.layout.activate()
+
+        def after_layout():
+            if self._scroll_target is not target:
+                return
+            self._scroll_target = None
+            bottom, item_id, offset, value = target
+            anchor = self.cards.get(item_id)
+            bar = self.verticalScrollBar()
+            bar.setValue(bar.maximum() if bottom else anchor.y() + offset if anchor else value)
+        # QTextDocument height changes post another Qt LayoutRequest. Preserve
+        # the anchor through that pass, while allowing user scrolling to cancel.
+        QtCore.QTimer.singleShot(0, after_layout)
+
     def to_bottom(self):
+        self.cancel_scroll_restore()
         self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
