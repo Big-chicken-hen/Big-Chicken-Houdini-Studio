@@ -489,6 +489,10 @@ class HoudiniScene:
         return result
 
     def _capture_view(self, viewer, viewport, args, detail, restorers):
+        # Optional review metadata must not become a dependency of the default
+        # diagnostic capture, which uses the current view unchanged.
+        if args.get("purpose", "diagnostic") == "diagnostic":
+            return
         settings = viewport.settings()
         camera_path = viewport.cameraPath()
         detail["view"] = {"viewport": self.redact(viewport.name()), "type": str(viewport.type()),
@@ -499,9 +503,6 @@ class HoudiniScene:
                                 "images_enabled": bool(settings.displayBackgroundImage()),
                                 "environment_enabled": bool(settings.displayEnvironmentBackgroundImage()),
                                 "horizon": "unclassified", "policy": "preserved"}
-        if args.get("purpose", "diagnostic") == "diagnostic":
-            return
-
         framing = None
         if "bounds" in args:
             camera = viewport.camera()
