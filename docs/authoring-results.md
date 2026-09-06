@@ -4,8 +4,12 @@ Review baseline: `c2c63111c3a10ae3131e271a48dbacddae3570b7`.
 The execution/query foundation in [PR #3](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio/pull/3)
 closed at `9ad3e260775520a89350ec246eda8c20a7e26f01` and merged into main as
 `76e2292bf7609d5da6a3c4ada6c2954abdd1f57a`, preserving its commit ancestry.
-The user workflow belongs to [PR #4](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio/pull/4),
-which now targets main and remains a draft pending actual authoring acceptance.
+[PR #4](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio/pull/4)
+closes the implemented native input, scoped-consent and targeted authoring
+foundation. The subsequent scene-first UI brief moves its outstanding user
+workflow acceptance into `codex/ui-productization`; those checks remain pending,
+not passed. HIP onboarding, official sign-in, model-setting synchronization and
+the shared visual system are outside PR #4's bounded implementation scope.
 
 ## Implementation review
 
@@ -71,7 +75,7 @@ only; [PR #4 checks](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Stud
 track the current candidate against main. Automated and offscreen checks do not
 establish actual model consent delivery, Houdini capture or continuous authoring.
 
-## Product acceptance owned by PR #4
+## Product acceptance carried into the UI stage
 
 The archived Stop attempts do not establish button reachability during long HOM.
 Two native turns were interrupted before a long execution was admitted. A later
@@ -79,7 +83,7 @@ attempt completed its context read, but no long-execution receipt was present at
 that checkpoint. Computer Use was subsequently stopped by the user.
 Those historical input-helper focus failures did not establish a Composer defect.
 
-PR #4 owns real input and draft behavior, native consent grant/revoke, three
+The UI stage carries real input and draft behavior, native consent grant/revoke, three
 ordinary Panel requests that create and twice modify the same asset, native image
 feedback, and continuation in an existing HIP copy after a manual scene change.
 Review capture must preserve the original view, camera binding/lock and frame.
@@ -88,10 +92,12 @@ request can arrive, whether subsequent work stops, and the final original receip
 An honestly reported uninterruptible native call is a known limit; duplicate
 effects, lost receipts, wrong terminal states or camera pollution require fixes.
 
-These user workflow gates no longer hold PR #3 open. After PR #4 passes, the next
-short branch starts from main and uses the same asset for two simple MaterialX
-looks, limited lighting, one camera and one Karma frame plus one appearance edit.
-That delivery does not add a new prerequisite to PR #4 or a core redesign phase.
+These checks move with the explicit scope change; neither foundation PR claims
+they have been completed. The next short branch starts from main after PR #4
+closes and concentrates on scene entry, native account/model settings and editor
+interaction. MaterialX, Solaris, Karma, animation and simulation are outside this
+UI stage. Runtime ownership, receipts and the bounded main-thread queue remain
+the execution authority throughout.
 
 ## Repository cleanup
 
