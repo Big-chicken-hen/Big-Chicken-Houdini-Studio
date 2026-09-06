@@ -3,13 +3,17 @@ import copy
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from studio.accounts import NativeAccount
+from studio.bridge import Bridge
 from studio.codex.client import CodexStdioClient, _PendingResponse
 from studio.codex.errors import BridgeError, ProtocolRejected
 from studio.codex.protocol import ProtocolPolicy
 from studio.common import AppPaths, StudioError, encoded
+from studio.launcher import codex_app_server_command
 from studio.onboarding import Onboarding
+from studio.workspace import Workspaces
 
 
 AUTH_URL = "https://auth.openai.com/oauth/authorize?state=fixture-state&code_challenge=fixture-challenge"
@@ -106,6 +110,7 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(result["account"]["status"], "signed_in")
         self.assertFalse(self.clients[0].is_running)
         client = self.clients[-1]
+        self.assertEqual(client.command, codex_app_server_command("compatible"))
         policy = client.options["policy"]
         for method in ("thread/start", "turn/start", "model/list"):
             with self.assertRaises(ProtocolRejected):
@@ -117,6 +122,12 @@ class OnboardingTests(unittest.TestCase):
                                    "codex_home": str(self.paths.codex_home)})
         self.assertFalse(client.is_running)
         self.assertNotIn("workspace", encoded(result).lower())
+        workspace = Workspaces(self.paths).create("Handoff fixture")
+        with patch("studio.bridge.CodexStdioClient") as factory:
+            Bridge(self.paths, workspace["workspace_id"], "fixture-session", "fixture-token",
+                   handoff["codex_path"])
+        self.assertEqual(factory.call_args.args[0], client.command)
+        self.assertEqual(factory.call_args.kwargs["environment"]["CODEX_HOME"], handoff["codex_home"])
 
     def test_invalid_explicit_override_never_falls_back_and_is_remembered(self):
         value = self.make(["compatible"])

@@ -19,7 +19,7 @@ from .codex.trust import SessionTrust, STUDIO_TOOLS
 from .common import TERMINAL, StudioError, atomic_json, new_id, read_json
 from .http import Client, serve
 from .instructions import SCENE_INSTRUCTIONS
-from .launcher import helper_environment
+from .launcher import codex_app_server_command, helper_environment
 from .workspace import WorkspaceData, Workspaces
 
 
@@ -57,7 +57,7 @@ class Bridge:
                     "BCS_DATA_ROOT": str(paths.data_root), "BCS_CACHE_ROOT": str(paths.cache_root),
                     "CODEX_HOME": str(paths.codex_home), "PYTHONPATH": str(paths.root / "src"),
                     "TEMP": str(paths.cache("tmp")), "TMP": str(paths.cache("tmp"))})
-        self.client = client or CodexStdioClient([str(codex_path), "app-server"], cwd=self.cwd,
+        self.client = client or CodexStdioClient(codex_app_server_command(codex_path), cwd=self.cwd,
                                                 environment=env, policy=ProtocolPolicy(), event_sink=self.on_event)
         self.account = NativeAccount(self.client)
         self.models = ModelCatalog(self.client, lambda: self.account.revision)

@@ -70,6 +70,12 @@ class LauncherTests(unittest.TestCase):
         console.touch()
         self.assertEqual(launcher.console_python(pythonw), str(console))
 
+    def test_native_app_server_enables_system_proxy_only_on_windows(self):
+        for platform, flags in (("nt", ["--enable", "respect_system_proxy"]), ("posix", [])):
+            with self.subTest(platform=platform), patch.object(launcher.os, "name", platform):
+                self.assertEqual(launcher.codex_app_server_command(self.codex),
+                                 [str(self.codex), *flags, "app-server"])
+
     def test_version_check_uses_isolated_environment_and_rejects_unverified_codex(self):
         with patch.object(launcher.subprocess, "run", return_value=Mock(stdout="codex-cli 0.153.4\n")) as run:
             value = launcher.preflight(str(self.houdini), str(self.codex), self.paths)

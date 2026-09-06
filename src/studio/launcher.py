@@ -71,6 +71,14 @@ def helper_environment(paths):
     return env
 
 
+def codex_app_server_command(codex):
+    """Use Windows' existing system proxy despite Studio's isolated CODEX_HOME."""
+    command = [str(codex)]
+    if os.name == "nt":
+        command.extend(["--enable", "respect_system_proxy"])
+    return [*command, "app-server"]
+
+
 def discover_houdini():
     roots = []
     if os.environ.get("HFS"):

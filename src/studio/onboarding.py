@@ -13,7 +13,7 @@ from .accounts import NativeAccount
 from .codex.client import CodexStdioClient
 from .codex.protocol import ProtocolPolicy, SUPPORTED_CODEX_VERSION
 from .common import StudioError, atomic_json, read_json
-from .launcher import check_codex, discover_houdini, helper_environment
+from .launcher import check_codex, codex_app_server_command, discover_houdini, helper_environment
 
 
 ONBOARDING_POLICY = ProtocolPolicy(client_requests=frozenset({
@@ -178,7 +178,7 @@ class Onboarding:
                     with self.lock:
                         self.generation += 1
                         generation = self.generation
-                        client = self.client_factory([checked, "app-server"], cwd=cwd, environment=env,
+                        client = self.client_factory(codex_app_server_command(checked), cwd=cwd, environment=env,
                             policy=ONBOARDING_POLICY, request_timeout=6,
                             event_sink=lambda event, generation=generation: self._event(generation, event))
                         self.client, self.account = client, NativeAccount(client)
