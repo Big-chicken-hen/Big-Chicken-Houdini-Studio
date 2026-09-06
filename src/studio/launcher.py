@@ -149,15 +149,14 @@ def launch(paths, workspace_id, houdini, codex, hip=None):
     return _spawn_session(paths, workspace_id, checked, hip, session_id)
 
 
-def _spawn_session(paths, workspace_id, checked, hip, session_id, target=None, *, legacy_workspace_id=None):
+def _spawn_session(paths, workspace_id, checked, hip, session_id, target=None):
     token = secrets.token_urlsafe(48)
     folder = paths.session(session_id)
     env = child_environment(paths, workspace_id, session_id, token)
     output = env.get("HIA_RENDER_OUTPUT_DIR")
     atomic_json(folder / "launch.json", {**checked, "workspace_id": workspace_id,
                 "launcher_session_id": session_id, "hip": str(Path(hip).resolve()) if hip else None,
-                "render_output_directory": output, **({"request_id": session_id, "target": target} if target else {}),
-                **({"legacy_workspace_id": legacy_workspace_id} if legacy_workspace_id is not None else {})})
+                "render_output_directory": output, **({"request_id": session_id, "target": target} if target else {})})
     atomic_json(folder / "status.json", {"state": "starting", "process_may_exist": True})
     logs = paths.cache("logs", session_id)
     logs.mkdir(parents=True, exist_ok=True)
@@ -180,7 +179,7 @@ def _spawn_session(paths, workspace_id, checked, hip, session_id, target=None, *
             "render_output_directory": output}
 
 
-def launch_target(paths, target, houdini, codex, *, request_id, legacy_workspace_id=None):
+def launch_target(paths, target, houdini, codex, *, request_id):
     """Claim the UI's stable request ID once; an ambiguous reply never respawns it."""
     session_id = identifier(request_id)
     value = target.to_dict() if isinstance(target, SceneTarget) else target
@@ -191,9 +190,6 @@ def launch_target(paths, target, houdini, codex, *, request_id, legacy_workspace
         from .targets import hip_path
         value["path"] = str(hip_path(value.get("path"), must_exist=False))
     selected = {"houdini": str(Path(houdini).resolve()), "codex": str(Path(codex).resolve())}
-    if legacy_workspace_id is not None:
-        legacy_workspace_id = identifier(legacy_workspace_id)
-        selected["legacy_workspace_id"] = legacy_workspace_id
     folder = paths.session(session_id)
     try:
         folder.mkdir(parents=True, exist_ok=False)
@@ -202,7 +198,7 @@ def launch_target(paths, target, houdini, codex, *, request_id, legacy_workspace
             prior = read_json(folder / "launch.json")
         except (OSError, ValueError):
             return launch_status(paths, session_id)
-        if (prior.get("target") != value or prior.get("legacy_workspace_id") != legacy_workspace_id or
+        if (prior.get("target") != value or
                 any(prior.get(key) != item for key, item in selected.items())):
             raise StudioError("LAUNCH_ID_CONFLICT", "This launch ID already belongs to another request", 409)
         return launch_status(paths, session_id)
@@ -211,16 +207,8 @@ def launch_target(paths, target, houdini, codex, *, request_id, legacy_workspace
     atomic_json(folder / "status.json", {"state": "accepted", "process_may_exist": True})
     try:
         target = SceneTarget.from_dict(value)  # Revalidate the file at admission.
-        if legacy_workspace_id is not None:
-            if target.kind != "hip":
-                raise StudioError("LEGACY_HIP_REQUIRED", "Select an existing HIP explicitly for this previous context")
-            legacy = AppPaths.for_legacy(paths.root)
-            if (paths.data_root, paths.cache_root) != (legacy.data_root, legacy.cache_root):
-                raise StudioError("LEGACY_PROFILE_REQUIRED", "Select this installation's original data profile first")
-            workspace = Workspaces(paths).get(legacy_workspace_id)
         checked = preflight(houdini, codex, paths)
-        if legacy_workspace_id is None:
-            workspace = SceneCatalog(paths).admit(target)
+        workspace = SceneCatalog(paths).admit(target)
     except (StudioError, OSError) as exc:
         error = exc.payload()["error"] if isinstance(exc, StudioError) else {
             "code": "LAUNCH_FAILED", "message": "Could not prepare this launch; existing data was preserved"}
@@ -228,8 +216,7 @@ def launch_target(paths, target, houdini, codex, *, request_id, legacy_workspace
                                             "message": error["message"], "error": error})
         return launch_status(paths, session_id)
     try:
-        spawned = _spawn_session(paths, workspace["workspace_id"], checked, target.path, session_id, target.to_dict(),
-                                 legacy_workspace_id=legacy_workspace_id)
+        spawned = _spawn_session(paths, workspace["workspace_id"], checked, target.path, session_id, target.to_dict())
     except Exception:
         observed = launch_status(paths, session_id)
         if observed["state"] in {"rejected", "closed", "runtime_connected", "target_opened"}:
@@ -260,8 +247,7 @@ def launch_status(paths, request_id):
         return {**base, "message": "Launch state is not confirmed; query this launch again"}
     if config.get("launcher_session_id") != session_id:
         return {**base, "message": "Launch identity does not match its saved status"}
-    result = {**base, **status, "target": config.get("target"), "workspace_id": config.get("workspace_id"),
-              "legacy_workspace_id": config.get("legacy_workspace_id")}
+    result = {**base, **status, "target": config.get("target"), "workspace_id": config.get("workspace_id")}
     if result["state"] in {"closed", "rejected"}:
         result["process_may_exist"] = False
         return result
