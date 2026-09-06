@@ -99,7 +99,7 @@ interaction. MaterialX, Solaris, Karma, animation and simulation are outside thi
 UI stage. Runtime ownership, receipts and the bounded main-thread queue remain
 the execution authority throughout.
 
-## UI candidate verification, 2026-09-06
+## Earlier UI candidate verification, 2026-09-06
 
 The UI implementation at `55eeddc` replaces the ordinary workspace entrance with
 Recent HIP, Open HIP and Start Empty. Native onboarding checks the pinned Codex
@@ -138,6 +138,57 @@ ordinary end-to-end authoring, actual HIP Save/Save As events, native consent an
 model use, real input/clipboard behavior and cross-monitor DPI remain pending.
 Offscreen fixtures do not satisfy those acceptance conditions; this UI candidate
 is not approved for main on the strength of screenshots or CI alone.
+
+## Staged UI candidate verification, 2026-09-06
+
+The [approved presentation specification](ui-presentation-brief.md) supersedes the
+earlier Dashboard layout and Qt standard product icons. The reviewed UI source is
+`2e373d36eaac566d525f03491b326287269a01e8`. Launcher now projects Checking, Setup,
+Authentication, Home and Launching from the existing service facts. Open HIP and
+Empty activate through one launch guard; Recent single-click only selects. An
+uncertain launch retains its original request and cannot return to an action
+that creates a second process. Confirmed target opening minimizes once per
+request unless that preference is disabled or the user is viewing details.
+
+Panel has a compact scene/conversation header, one model/effort popup, one
+Composer frame and a fixed Send/Stop slot. Per-thread QTextDocuments, native
+settings revisions, attachment ownership and late-callback guards remain intact.
+Result images fit the available width and enlarge already decoded, approved
+image data. Consent presents operation, target and scope before its expandable
+native request. The model popup has one permanent next-turn footer; an image
+modality mismatch explains disabled Send in the existing work-status area.
+
+The only product icons are the 23 approved Lucide Outline 0.468.0 SVGs. Resource
+review compared original upstream bytes at the pinned commit and built an actual
+wheel: 23 SVGs, both license notices and their README were included; the old
+artwork was excluded. All 23 icons rendered from that wheel at DPR 1.5. Missing
+resources retain readable text and diagnostics. No graphic logo or Qt system-icon
+fallback is used in the product. Native window and file-dialog icons stay native.
+
+The integrated static check and all 67 native Qt tests passed on Python 3.10.11 /
+Qt 6.8.3 with process exit 0. After the final popup/status adjustment, the 12
+affected model/Composer tests and scoped Ruff passed again. The final Setup action
+correction also passed its targeted action-template test. These checks use
+checkout-local fixtures and do not access real account or scene state.
+
+Review generated all twelve required Launcher states, plus key compact states
+at 125%, 150% and 200%. Panel fixtures cover the nine required states at widths
+360, 440 and 720, with narrow working/popup cases at 150% and 200%. Final integrated
+source was rendered again at 100%, plus the narrow Panel at 200%; the popup fit
+the available screen. Reports distinguish local fixtures from real execution.
+CI publishes these bounded previews and their environment reports with the
+[current PR checks](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio/pull/5/checks).
+
+The presentation correction has no source changes to the existing backend
+onboarding, accounts, storage, native protocol, receipt or Houdini capability
+contracts. The formal installation and private user data were not changed.
+
+PR #5 remains Draft. Actual official browser sign-in, first-use and returning-user
+flows, Microsoft Pinyin and clipboard input in a real Panel, native model/consent
+use, a small scene edit followed by another turn, actual Save/Save As and the
+running-HOM Stop boundary remain pending. Real cross-monitor DPI is also pending.
+These checks are a merge gate of this PR and cannot be transferred to a later PR.
+Neither passing CI nor offscreen screenshots satisfy that gate.
 
 ## Repository cleanup
 

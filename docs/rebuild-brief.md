@@ -2,16 +2,16 @@
 
 Product: **Big-Chicken Houdini Studio**. New folder and new Git history; original HIA stays intact.
 Source diagnosis: [the user's complete Pro diagnosis](pro-diagnosis.md). Do not lose its execution semantics while redesigning the UI.
-The [authoring review](authoring-review.md) established the execution and input foundation. The current Pro UI scope is a HIP-oriented Launcher with native ChatGPT onboarding, shared restrained Qt styling, native model/effort settings, draft preservation and the storage/output changes those interactions require. PR #4 closed as the foundation; its pending real authoring acceptance continues in this UI stage.
+The [authoring review](authoring-review.md) established the execution and input foundation. PR #5 implemented native ChatGPT onboarding, HIP targets, native model/effort settings and the required storage/output boundaries. The [approved presentation specification](ui-presentation-brief.md) now requires a staged Launcher and integrated Panel while freezing those backend contracts. Continue in PR #5; its real official-login and Houdini user-flow acceptance cannot be transferred to a later PR.
 
-The user's latest UI constraints are binding: use official assets or Qt standard icons, never self-designed icons; no additional entries or workflows beyond the Pro requirements. In particular, remove the proposed legacy-context browser and profile-switching UI. Existing data remains preserved in place. Do not add rendering capabilities, new MCP tools, animation or simulation work.
+The approved Lucide Outline 0.468.0 subset is the only product icon source. Keep its original geometry and license notices; no graphic logo, QStyle product icons, emoji or substitute artwork. Use text for unapproved uses and missing resources. The specification fixes page actions, component layout and visual roles; do not invent alternatives or restore a legacy-context/profile-switching UI. Existing data remains preserved in place. No new rendering capabilities, MCP tools or Houdini animation/simulation features.
 
 ## Required outcomes
 
 1. Runtime alone owns scene identity, a bounded main-thread queue and durable operation receipts. HIP load/clear advances scene_epoch; check it inside the same main-thread callback that executes HOM. Query by operation_id never runs a script. Payload identity guards different scripts sharing one ID. Crashes between side effect and commit remain explicitly unknown.
 2. Ordinary edits take one meaningful batch with optional targeted observations/checks. No default full snapshots, mandatory knowledge search, repeated validations or automatic capture. Keep general HOM and installed metadata; do not invent a node allowlist or Python sandbox.
 3. Optional knowledge cannot block launcher, bridge or memory. FTS is opt-in, memory is workspace-scoped and explicitly written. No embedding installer or importer in the launch path.
-4. Completely new native launcher and Panel. Launcher: Recent HIP, Open HIP, Start Empty, environment/account status, one launch action and secondary settings/diagnostics. Panel: current HIP, conversation, visible native model/effort controls, local per-thread drafts, images, operation receipts and explicit decisions. Show Codex stop request/terminal separately from running or unknown Houdini work.
+4. Native Launcher stages: Checking, Setup, Authentication, Home and Launching/Attention. Each page has stable actions; Home directly opens HIP/Empty through one activation guard. Potentially active launches retain priority until authoritative state resolves them. Panel: compact scene/conversation header, a single Composer with visible model/effort popup, local per-thread documents, safe result images and a fixed Send/Stop position. Keep Codex stopping and running/unknown Houdini facts distinct, with raw technical information in details.
 5. Preserve Codex App Server, native Thread/Turn persistence, native MCP images, loopback authentication and user work. Separate installation resources, persistent user state and disposable cache, with containment per root and checkout-local development fixtures. No auto recovery/reload, no second reasoning service, no legacy B2/FX startup contracts.
 
 ## Current implementation map
@@ -21,7 +21,7 @@ The user's latest UI constraints are binding: use official assets or Qt standard
 - `mcp.py`: seven small decision tools; observation binding and result re-query.
 - `bridge.py`, `codex/`: native Codex integration and event projection. Stdio client/redaction reused from old HIA at 6d9a2d7b606d699fc85bf13586d31aa27455a63b; integration policy is new.
 - `launcher.py`: launch controller; `houdini/`: project-local package and runtime hooks.
-- `ui/shared.py`, `ui/launcher.py`, `ui/panel.py`, `ui/conversation.py`, `ui/requests.py`: new Qt launcher, native conversation projection, explicit requests and runtime receipts.
+- `ui/shared.py`, `ui/theme.py`, `ui/icons.py`, `ui/launcher.py`, `ui/panel.py`, `ui/conversation.py`, `ui/requests.py`: scoped Qt presentation, approved SVG resources, native conversation projection, explicit requests and runtime receipts.
 
 ## Integration/API contract for the Panel
 

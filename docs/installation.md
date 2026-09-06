@@ -27,9 +27,9 @@ setup 在 `.runtime/venv` 建 venv，pip 缓存在 `.runtime/cache/pip`，构建
 
 ## Codex 选择与版本
 
-本项目的协议契约固定为 **0.153.4**。Launcher 按高级 override、上次验证安装、安装内管理的工具链、PATH 与有限已知安装位置查找原生程序，验证版本和 App Server initialize。明确 override 无效时显示错误，不静默切换其他安装。高级设置可选择 `codex.exe` 本体；不会执行任意 `.cmd` / `.ps1` 包装器。也可设置 `BCS_CODEX_PATH`，或自行放置到 `.runtime/toolchains/codex/codex.exe`。没有默认下载或自动升级。
+本项目的协议契约固定为 **0.153.4**。Launcher 按明确 override、上次验证安装、安装内管理的工具链、PATH 与有限已知安装位置查找原生程序，验证版本和 App Server initialize。明确 override 无效时显示错误，不静默切换其他安装。环境缺失页可选择已有安装；路径覆盖选项在更多菜单的设置页中。选择 `codex.exe` 本体，不执行任意 `.cmd` / `.ps1` 包装器。也可设置 `BCS_CODEX_PATH`，或自行放置到 `.runtime/toolchains/codex/codex.exe`。没有默认下载或自动升级。
 
-官方 [Codex CLI 说明](https://learn.chatgpt.com/docs/codex/cli) 提供安装方式；从官方分发渠道取得所需版本。项目使用原生 [Codex App Server](https://learn.chatgpt.com/docs/app-server) 的会话与账户接口；当前官方文档不代替固定版本的实际协议核对。首次使用在 Launcher 点击“使用 ChatGPT 登录”，由官方返回的地址打开系统浏览器；等待期间可取消或重新打开当前登录页，只有原生账号查询确认后才显示已登录。网络失败显示尚未确认。setup 与 smoke 不登录、不发模型请求。
+官方 [Codex CLI 说明](https://learn.chatgpt.com/docs/codex/cli) 提供安装方式；从官方分发渠道取得所需版本。项目使用原生 [Codex App Server](https://learn.chatgpt.com/docs/app-server) 的会话与账户接口；当前官方文档不代替固定版本的实际协议核对。首次使用在 Launcher 点击“使用 ChatGPT 继续”，由官方返回的地址打开系统浏览器；等待期间可取消或重新打开当前登录页，只有原生账号查询确认后才进入首页。网络失败显示尚未确认。setup 与 smoke 不登录、不发模型请求。
 
 短生命周期 onboarding 只查询账号及处理官方登录，不创建 Thread、模型任务、MCP 或 Houdini。它在正式启动前关闭，生产进程使用同一个已验证的 Codex 程序和同一个用户持久数据根下 `codex-home`。此目录由 Codex 管理认证与历史；Studio 不复制 token 或编辑凭证。旧安装的 `.runtime/codex-home` 原地保留，不自动迁移；界面不提供旧上下文浏览或 profile 切换流程。
 
@@ -37,7 +37,9 @@ setup 在 `.runtime/venv` 建 venv，pip 缓存在 `.runtime/cache/pip`，构建
 
 双击 `Start Studio.vbs` 无控制台窗口。也可以运行：
 
-首页只需选择最近 HIP、打开一个本地 HIP 或空场景。目标选择不创建工作空间，实际启动接纳时才分配或复用内部身份。再次打开已知 HIP 保持其关联；每次实际启动空场景使用独立身份。最近文件记录只来自实际启动及成功 Load/Save；移除记录不删除文件。
+Launcher 依次投影检查、必要的环境设置、必要的登录、最近场景首页和启动状态。确认正常时直接进入首页，不再展示成功检查表。打开一个本地 HIP 或空场景会直接激活；最近文件单击只选择，双击、Enter 或行内打开才激活。纯选择不创建工作空间，实际启动接纳时才分配或复用内部身份。再次打开已知 HIP 保持其关联；每次实际启动空场景使用独立身份。最近文件记录只来自实际启动及成功 Load/Save，条目菜单的移除操作不删除文件。
+
+非首页拖入 HIP 只暂存一个待打开目标，完成登录后仍需明确激活。启动可能已经发生时页面保留原请求的查询动作，不能通过返回首页重新启动。目标场景确认打开后，默认约半秒最小化 Launcher，每个请求仅一次；用户正在查看详情时不抢走窗口。该偏好位于设置页。
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/launch.ps1

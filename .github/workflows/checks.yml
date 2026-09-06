@@ -74,8 +74,16 @@ jobs:
         run: .runtime/venv/Scripts/python.exe scripts/check.py --suite ui --tests-only
       - name: Render native UI review fixtures
         run: .runtime/venv/Scripts/python.exe scripts/preview_ui.py
+      - name: Render narrow Panel at 150 percent
+        run: .runtime/venv/Scripts/python.exe scripts/preview_ui.py --case high-dpi --scale 1.5 --out .runtime/previews/panel-productization/dpi-150
+      - name: Render narrow Panel at 200 percent
+        run: .runtime/venv/Scripts/python.exe scripts/preview_ui.py --case high-dpi --scale 2 --out .runtime/previews/panel-productization/dpi-200
       - name: Render launcher states
         run: .runtime/venv/Scripts/python.exe scripts/preview_launcher.py --out .runtime/previews/launcher/dpi-100
+      - name: Render launcher at 125 percent
+        run: .runtime/venv/Scripts/python.exe scripts/preview_launcher.py --case high-dpi --scale 1.25 --out .runtime/previews/launcher/dpi-125
+      - name: Render launcher at 150 percent
+        run: .runtime/venv/Scripts/python.exe scripts/preview_launcher.py --case high-dpi --scale 1.5 --out .runtime/previews/launcher/dpi-150
       - name: Render launcher at high DPI
         run: .runtime/venv/Scripts/python.exe scripts/preview_launcher.py --case high-dpi --scale 2 --out .runtime/previews/launcher/dpi-200
       - name: Upload UI evidence
@@ -86,10 +94,9 @@ jobs:
           retention-days: 7
           path: |
             .runtime/review/environment.json
-            .runtime/previews/*.png
-            .runtime/previews/preview-report.json
             .runtime/previews/launcher/**/*.png
             .runtime/previews/launcher/**/report.json
-            .runtime/previews/panel-productization/*.png
-            .runtime/previews/panel-productization/report-scale-*.json
+            .runtime/previews/panel-productization/**/*.png
+            .runtime/previews/panel-productization/**/preview-report.json
+            .runtime/previews/panel-productization/**/report-scale-*.json
           if-no-files-found: error

@@ -9,10 +9,12 @@
 1. 将整个项目放在可写目录。支持空格和中文路径；不要放进 Houdini 安装目录。
 2. 准备 Python 3.10+、带 PySide6 的 Houdini GUI 安装，以及本项目固定使用的 **Codex CLI 0.153.4 原生可执行文件**。Houdini Panel 使用 Houdini 自带的 PySide6，不向它安装 Qt。
 3. 双击 **`Setup Studio.cmd`**。这一步在本项目 `.runtime/venv` 安装产品和启动器的 PySide6；不会修改用户的 Houdini 或 Codex 配置，也不会启动 Houdini、登录或导入知识。
-4. 双击 **`Start Studio.vbs`**。启动器自动检查 Codex 与 Houdini，在官方浏览器流程中使用 ChatGPT 登录，再选择最近的 HIP、打开 HIP 或空场景并启动。程序路径覆盖选项在“高级”中。若系统禁用了 Windows Script Host，可运行 `scripts/launch.ps1`。
+4. 双击 **`Start Studio.vbs`**。启动器自动检查环境，只在需要时显示设置或官方 ChatGPT 登录页面；确认后自动进入最近场景首页。打开 HIP、空场景，或双击最近文件即可启动。程序路径设置位于右上角更多菜单中。若系统禁用了 Windows Script Host，可运行 `scripts/launch.ps1`。
 5. 在 Houdini 面板标签旁点击 **＋ → New Pane Tab Type → Big-Chicken Studio**，直接打开 Studio。已有 Python Panel 也可在其界面选择栏中选择 **Big-Chicken Studio**。账户、模型和会话通过原生 Codex App Server 处理。
 
 日常启动不安装依赖、不构建索引、不恢复 Goal。关闭启动器不会关闭已经打开的 Houdini；关闭这个 Houdini 后，其 supervisor 清理自己启动的 Codex/Bridge。已有的用户 Houdini 进程不参与管理。
+
+启动后显示独立进度页面；只有目标场景确认打开后，才默认最小化 Launcher。此偏好可在设置中关闭。Panel 将模型与 effort 放在 Composer 的常驻组合入口内，Send/Stop 使用同一位置；运行时仍可继续编辑下一段草稿。产品图标只使用固定版本的批准 Lucide SVG，品牌保留文字。
 
 新输出优先采用本次明确指定的位置，其次保留已有节点的输出设置。Studio 默认输出在已保存 HIP 同目录的 `BigChickenStudio/<场景名>/renders`、`exports` 或 `assets`；未保存场景使用用户缓存中的临时输出。默认位置在执行时解析，后续输出跟随成功的 Save As；历史文件不搬移。路径解析本身不代表已经完成渲染或导出。
 
