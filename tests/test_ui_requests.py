@@ -69,12 +69,16 @@ class RequestControlsTest(unittest.TestCase):
         self.assertIn("尚未确认", self.control.status.text())
         self.control.request_change(False)
         self.control.query.click()
-        self.assertEqual(len(self.api.calls), 1)
-        self.assertEqual(len(changed), 2)
-        # A fresh authoritative state can show the grant is still active.
+        self.assertEqual([call[:2] for call in self.api.calls], [("POST", "/scene-trust"), ("GET", "/state")])
+        # An old Panel poll cannot settle a write that lost its response.
         self.control.apply_state(trust_state(enabled=True))
+        self.assertTrue(self.control.uncertain)
+        # A read initiated after the failure can confirm the grant is still active.
+        self.api.calls[1][3](trust_state(enabled=True))
         self.assertFalse(self.control.uncertain)
         self.assertIn("已授权", self.control.status.text())
+        self.assertTrue(self.control.feedback.isHidden())
+        self.assertEqual(len(changed), 1)
 
     def test_late_grant_cannot_apply_to_another_conversation(self):
         self.control.request_change(True)

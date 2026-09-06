@@ -54,8 +54,8 @@ class RequestCard(QtWidgets.QFrame):
                 self.layout.addWidget(label("当前原生审批选项暂不受支持。", "warning", True))
         elif method == "item/permissions/requestApproval":
             self.layout.addWidget(label(json.dumps(params.get("permissions", {}), ensure_ascii=False, indent=2), wrap=True))
-            self.action("允许列出的权限 · 本轮", lambda: self.submit({"permissions": params.get("permissions", {}), "scope": "turn"}))
-            self.action("允许列出的权限 · 本会话", lambda: self.submit({"permissions": params.get("permissions", {}), "scope": "session"}))
+            self.action("允许本轮", lambda: self.submit({"permissions": params.get("permissions", {}), "scope": "turn"}))
+            self.action("允许本会话", lambda: self.submit({"permissions": params.get("permissions", {}), "scope": "session"}))
             self.action("拒绝", lambda: self.submit({"permissions": {}, "scope": "turn"}))
         elif method == "item/tool/requestUserInput":
             for question in params.get("questions", []):
@@ -166,6 +166,7 @@ class SessionTrustControl(QtWidgets.QFrame):
         self.trust = {}
         self.busy = False
         self.uncertain = False
+        self.querying = False
         self.request_revision = 0
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -174,7 +175,7 @@ class SessionTrustControl(QtWidgets.QFrame):
         self.status = label("场景操作：逐次确认", "muted", True)
         self.toggle = button("会话授权…", self.show_details, "quiet")
         self.revoke = button("撤销授权", lambda: self.request_change(False), "quiet")
-        self.query = button("查询授权状态", self.changed.emit, "quiet")
+        self.query = button("查询授权状态", self.query_state, "quiet")
         row.addWidget(self.status, 1)
         row.addWidget(self.toggle)
         row.addWidget(self.revoke)
@@ -187,7 +188,8 @@ class SessionTrustControl(QtWidgets.QFrame):
             "允许当前会话通过 Studio 读取、截图和修改 Houdini。授权包含本机 Python/HOM 执行，"
             "脚本可能产生场景外的影响；这项授权不会逐批审查全部副作用。"
             "清空场景、覆盖文件或大范围删除应先明确确认。其他工具和外部权限仍分别确认。"
-            "你可以撤销授权，切换会话或重新启动后需要重新选择。", "muted", True))
+            "撤销后恢复后续请求的逐次确认；已允许的请求和正在执行的修改不会被撤回。"
+            "切换会话或重新启动后需要重新选择。", "muted", True))
         self.grant = button("允许此会话操作 Houdini", lambda: self.request_change(True), "primary")
         details_layout.addWidget(self.grant, 0, QtCore.Qt.AlignLeft)
         layout.addWidget(self.details)
@@ -210,13 +212,11 @@ class SessionTrustControl(QtWidgets.QFrame):
             return
         if thread_id != self.thread_id:
             self.request_revision += 1
-            self.busy = self.uncertain = False
+            self.busy = self.uncertain = self.querying = False
             self.details.hide()
             self.feedback.hide()
         self.thread_id = thread_id
         self.trust = trust
-        if not self.busy and self.trust.get("thread_id") == self.thread_id and self.trust.get("available"):
-            self.uncertain = False
         self.render()
 
     def render(self):
@@ -240,7 +240,7 @@ class SessionTrustControl(QtWidgets.QFrame):
         self.revoke.setVisible(bool(enabled))
         self.revoke.setEnabled(can_change)
         self.query.setVisible(self.uncertain)
-        self.query.setEnabled(bool(self.api) and not self.busy)
+        self.query.setEnabled(bool(self.api) and not self.busy and not self.querying)
         reason = self.trust.get("reason") or ("请先建立会话连接。" if not known else "")
         for control in (self.toggle, self.grant, self.revoke):
             control.setToolTip(reason)
@@ -270,6 +270,7 @@ class SessionTrustControl(QtWidgets.QFrame):
             self.busy = False
             trust = value.get("scene_trust")
             if isinstance(trust, dict) and trust.get("thread_id") == thread_id:
+                self.uncertain = False
                 self.apply_state({"thread_id": thread_id, "scene_trust": trust})
                 if trust.get("enabled") is enabled and not trust.get("pending"):
                     self.details.hide()
@@ -286,11 +287,49 @@ class SessionTrustControl(QtWidgets.QFrame):
             self.feedback.setText(str(message))
             self.feedback.show()
             self.render()
-            self.changed.emit()
+            self.query_state()
 
         accepted = self.api.call("POST", "/scene-trust", {"enabled": enabled, "thread_id": thread_id,
                                                          "revision": self.trust["revision"]},
                                  done=done, failed=failed)
         if accepted is False and current():
             self.busy = False
+            self.render()
+
+    def query_state(self):
+        if self.api is None or self.busy or self.querying:
+            return
+        thread_id, revision = self.thread_id, self.request_revision
+        self.querying = True
+        self.render()
+
+        def current():
+            return thread_id == self.thread_id and revision == self.request_revision
+
+        def done(value):
+            if not current():
+                return
+            self.querying = False
+            trust = value.get("scene_trust") or {}
+            if value.get("thread_id") == thread_id and trust.get("thread_id") == thread_id:
+                self.apply_state(value)
+                if trust.get("available") and type(trust.get("enabled")) is bool and not trust.get("pending"):
+                    self.uncertain = False
+                    self.feedback.hide()
+            self.render()
+            self.changed.emit()
+
+        def failed(message):
+            if not current():
+                return
+            self.querying = False
+            self.feedback.setText(str(message))
+            self.feedback.show()
+            self.render()
+
+        # This read begins after the failed write response. An unrelated older
+        # Panel poll must not resolve uncertainty about that write.
+        accepted = self.api.call("GET", "/state", done=done, failed=failed)
+        if accepted is False and current():
+            self.querying = False
             self.render()
