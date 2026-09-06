@@ -12,6 +12,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
+from urllib.parse import urlsplit
 
 from .errors import BridgeError, CodexRPCError
 from .protocol import ProtocolPolicy
@@ -47,6 +48,7 @@ _SENSITIVE_FIELD_NAMES = frozenset(
         "secret",
         "setcookie",
         "token",
+        "authurl",
     }
 )
 _CURL_SENSITIVE_HEADER_PATTERN = re.compile(
@@ -78,6 +80,10 @@ _URL_USERINFO_PATTERN = re.compile(
     r"(?i)(https?://)[^/@\s:\"']+:[^/@\s\"']+@"
 )
 _OPENAI_KEY_PATTERN = re.compile(r"\bsk-[A-Za-z0-9_-]{16,}\b")
+_AUTH_FLOW_URL_PATTERN = re.compile(
+    r"(?i)((?:https://(?:auth\.openai\.com|chatgpt\.com)/|"
+    r"http://(?:localhost|127\.0\.0\.1):\d+/auth/)[^?\s\"'<>]*)\?[^\s\"'<>]+"
+)
 
 
 @dataclass
@@ -535,7 +541,20 @@ class CodexStdioClient:
         if "error" in message:
             pending.error = self._redact_value(message["error"])
         else:
-            pending.result = self._redact_value(message.get("result"))
+            raw = message.get("result")
+            pending.result = self._redact_value(raw)
+            # One official login response must reach its owning browser action
+            # intact. Generic projections, errors and stderr stay redacted.
+            if pending.method == "account/login/start" and isinstance(raw, dict) and raw.get("type") == "chatgpt":
+                auth_url = raw.get("authUrl")
+                if isinstance(auth_url, str):
+                    try:
+                        parsed = urlsplit(auth_url)
+                        valid_url = parsed.scheme == "https" and parsed.hostname and not parsed.username and not parsed.password
+                    except ValueError:
+                        valid_url = False
+                    if valid_url:
+                        pending.result["authUrl"] = auth_url
         pending.event.set()
 
     def _handle_server_request(self, message: dict[str, Any]) -> None:
@@ -659,6 +678,7 @@ class CodexStdioClient:
         redacted = _NAMED_CREDENTIAL_PATTERN.sub(r"\1[REDACTED]", redacted)
         redacted = _QUERY_CREDENTIAL_PATTERN.sub(r"\1[REDACTED]", redacted)
         redacted = _OPENAI_KEY_PATTERN.sub("[REDACTED]", redacted)
+        redacted = _AUTH_FLOW_URL_PATTERN.sub(r"\1?[REDACTED]", redacted)
         return redacted
 
     @staticmethod

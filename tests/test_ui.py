@@ -9,15 +9,16 @@ import time
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
-from PySide6 import QtCore, QtWidgets  # noqa: E402
+from PySide6 import QtCore, QtNetwork, QtWidgets  # noqa: E402
+from shiboken6 import delete as delete_qobject, isValid  # noqa: E402
 
 from scripts.preview_ui import PreviewApi, configure_preview_fonts, fixture_image, process_until  # noqa: E402
-from studio.common import AppPaths  # noqa: E402
-from studio.ui.launcher import StudioLauncher  # noqa: E402
+from scripts.preview_launcher import make_fixture_window  # noqa: E402
 from studio.ui.panel import StudioPanel  # noqa: E402
 from studio.ui.shared import Api, ApiFailure  # noqa: E402
 
@@ -32,14 +33,17 @@ class PanelTest(unittest.TestCase):
 
     def setUp(self):
         self.api = PreviewApi(self.root)
-        self.panel = StudioPanel(api=self.api, auto_poll=False)
+        self.panel = StudioPanel(api=self.api, auto_poll=False, image_roots=(self.root,))
         self.panel.show()
         process_until(lambda: len(self.panel.transcript.cards) == 3)
 
     def tearDown(self):
+        self.api.close()
         self.panel.close()
         self.panel.deleteLater()
+        self.app.sendPostedEvents(None, QtCore.QEvent.DeferredDelete)
         self.app.processEvents()
+        self.app.sendPostedEvents(None, QtCore.QEvent.DeferredDelete)
 
     def idle(self):
         self.api.state["codex"]["state"] = "idle"
@@ -68,7 +72,8 @@ class PanelTest(unittest.TestCase):
         self.api.state["runtime"] = {"connection": "connected", "main_thread_busy": False, "queue_depth": 1}
         self.panel.apply_state(copy.deepcopy(self.api.state))
         self.assertIn("等待主线程", self.panel.runtime_label.text())
-        self.assertTrue(self.panel.send_button.isEnabled())
+        self.assertFalse(self.panel.send_button.isEnabled())
+        self.assertIs(self.panel.action_slot.currentWidget(), self.panel.stop_button)
 
     def test_stop_keeps_runtime_fact_and_native_history_does_not_duplicate(self):
         self.assertIn("已中断", self.panel.codex_label.text())
@@ -159,8 +164,10 @@ class PanelTest(unittest.TestCase):
         self.idle()
         self.panel.input.setPlainText("Edit this input")
         self.panel.submitting = True
-        self.panel.send_failed(ApiFailure("Missing attachment", code="ATTACHMENT_NOT_FOUND", status=400,
-                                          submission_state="not_submitted"))
+        failure = ApiFailure("Missing attachment", code="ATTACHMENT_NOT_FOUND", status=400,
+                             submission_state="not_submitted", details={"attachment_id": "missing-image"})
+        self.panel.send_failed(failure)
+        self.assertIs(self.panel.error_details.failure, failure)
         self.assertFalse(self.panel.uncertain_send)
         self.assertEqual(self.panel.input.toPlainText(), "Edit this input")
         self.assertTrue(self.panel.send_button.isEnabled())
@@ -208,22 +215,37 @@ class PanelTest(unittest.TestCase):
         self.assertFalse(any(path == "/operations" and method == "POST" for method, path, _ in self.api.calls))
 
     def test_launcher_ready_remains_owned_and_busy_selection_cannot_relaunch(self):
-        with patch("studio.ui.launcher.discover_houdini", return_value=[]):
-            launcher = StudioLauncher(paths=AppPaths())
-        item = QtWidgets.QListWidgetItem("Preview only")
-        item.setData(QtCore.Qt.UserRole, "preview_workspace")
-        launcher.projects.clear()
-        launcher.projects.addItem(item)
-        launcher.projects.setCurrentRow(0)
-        launcher.busy = True
-        launcher.update_selection()
-        self.assertFalse(launcher.launch_button.isEnabled())
-        launcher.busy = False
-        launcher.sessions["preview_workspace"] = {"state": "ready", "directory": str(self.root)}
-        launcher.update_selection()
-        self.assertFalse(launcher.launch_button.isEnabled())
-        launcher.statuses_read({"preview_workspace": {"state": "closed", "directory": str(self.root)}})
-        self.assertTrue(launcher.launch_button.isEnabled())
+        launcher, services = make_fixture_window(records=[])
+        launcher.empty_button.click()
+        process_until(lambda: len(services.launches) == 1 and not launcher._pending)
+        self.assertEqual(launcher.current_page, "launching")
+        self.assertFalse(launcher.empty_button.isEnabled())
+        launcher.empty_button.click()
+        request_id = services.launches[0][1]
+        services.admissions[request_id].update(state="unknown")
+        launcher.query_launch()
+        process_until(lambda: not launcher._pending)
+        self.assertEqual(launcher.projection().mode, "unknown")
+        self.assertTrue(launcher.launch_query.isVisible())
+        launcher.launch_query.click()
+        process_until(lambda: not launcher._pending)
+        self.assertEqual(services.queries[-1], request_id)
+        launcher.apply_launch_status({**services.admissions[request_id], "state": "target_opened",
+                                      "runtime_connected": True, "target_opened": True})
+        process_until(lambda: not launcher._pending)
+        launcher.render()
+        self.assertEqual(launcher.projection().mode, "opened")
+        self.assertFalse(launcher.empty_button.isEnabled())
+        self.assertEqual(len(services.launches), 1)
+        launcher.apply_launch_status({**services.admissions[request_id], "state": "closed", "process_may_exist": False})
+        process_until(lambda: not launcher._pending)
+        launcher.render()
+        self.assertTrue(launcher.launch_back.isVisible())
+        launcher.launch_back.click()
+        process_until(lambda: not launcher._pending)
+        self.assertEqual(launcher.current_page, "home")
+        self.assertTrue(launcher.empty_button.isEnabled())
+        self.assertEqual(len(services.launches), 1)
         launcher.close()
         launcher.deleteLater()
 
@@ -242,7 +264,8 @@ class PanelTest(unittest.TestCase):
                 time.sleep(0.12)
                 rejected = self.path == "/reject"
                 data = json.dumps({"error": {"code": "INVALID_INPUT", "message": "Correct the input",
-                                             "submission_state": "not_submitted"}} if rejected else
+                                             "submission_state": "not_submitted",
+                                             "details": {"attachment_id": "missing-image"}}} if rejected else
                                   receipts.get(self.path, {"ready": True})).encode()
                 self.send_response(400 if rejected else 200)
                 self.send_header("Content-Type", "application/json")
@@ -274,12 +297,108 @@ class PanelTest(unittest.TestCase):
             process_until(lambda: bool(failures))
             self.assertEqual(str(failures[0]), "Correct the input")
             self.assertEqual(failures[0].submission_state, "not_submitted")
+            self.assertEqual(failures[0].details["details"], {"attachment_id": "missing-image"})
             for path, receipt in receipts.items():
                 returned, errors = [], []
                 api.call("GET", path, done=returned.append, failed=errors.append)
                 process_until(lambda: bool(returned or errors))
                 self.assertEqual(errors, [])
                 self.assertEqual(returned, [receipt])
+            for path in ("/slow", "/reject"):
+                with self.subTest(callback_destroys_owner=path):
+                    owner = QtCore.QObject()
+                    owned_api = Api(api.url, token, owner)
+                    received, unexpected, callback_errors = [], [], []
+
+                    def received_and_destroy(value):
+                        received.append(value)
+                        delete_qobject(owner)
+
+                    def capture_error(kind, value, _trace):
+                        callback_errors.append((kind.__name__, str(value)))
+
+                    try:
+                        with patch("sys.excepthook", capture_error):
+                            owned_api.call("GET", path,
+                                           done=received_and_destroy if path == "/slow" else unexpected.append,
+                                           failed=received_and_destroy if path == "/reject" else unexpected.append)
+                            process_until(lambda: bool(received or unexpected))
+                        self.assertEqual(unexpected, [])
+                        self.assertFalse(isValid(owner))
+                        self.assertFalse(isValid(owned_api))
+                        self.assertEqual(callback_errors, [])
+                        if path == "/slow":
+                            self.assertEqual(received, [{"ready": True}])
+                        else:
+                            self.assertEqual(received[0].code, "INVALID_INPUT")
+                            self.assertEqual(received[0].submission_state, "not_submitted")
+                    finally:
+                        if isValid(owner):
+                            owned_api.close()
+                            delete_qobject(owner)
+            for retired in ("owner", "reply", "closed"):
+                with self.subTest(queued_finished_after=retired):
+                    owner = QtCore.QObject()
+                    owned_api = Api(api.url, token, owner)
+                    received, failures, callback_errors = [], [], []
+                    completion = QtCore.QEventLoop()
+                    timeout = QtCore.QTimer()
+                    timeout.setSingleShot(True)
+                    timeout.timeout.connect(completion.quit)
+                    native_get = owned_api.manager.get
+
+                    def queued_get(request):
+                        reply = native_get(request)
+                        signal = reply.finished
+                        signal.connect(completion.quit)
+                        # Real HTTP and reply; only delay Python delivery so teardown
+                        # deterministically occurs after finished was posted.
+                        reply.finished = SimpleNamespace(connect=lambda callback:
+                            signal.connect(lambda: QtCore.QTimer.singleShot(0, callback)))
+                        return reply
+
+                    try:
+                        with patch.object(owned_api.manager, "get", queued_get):
+                            owned_api.call("GET", "/slow", done=received.append, failed=failures.append)
+                        reply = next(iter(owned_api.replies))
+                        self.assertIsInstance(reply, QtNetwork.QNetworkReply)
+                        timeout.start(3000)
+                        completion.exec()
+                        timeout.stop()
+                        self.assertTrue(reply.isFinished())
+                        self.assertEqual(received + failures, [])
+                        delete_qobject(owner if retired == "owner" else reply)
+                        if retired == "closed":
+                            owned_api.close()
+                        with patch("sys.excepthook", capture_error):
+                            self.app.sendPostedEvents(None, QtCore.QEvent.MetaCall)
+                            self.app.processEvents()
+                        self.assertEqual(callback_errors, [])
+                        self.assertEqual(received, [])
+                        self.assertEqual(owned_api.inflight, set())
+                        self.assertEqual(owned_api.replies, set())
+                        if retired == "reply":
+                            self.assertEqual(len(failures), 1)
+                            self.assertIsInstance(failures[0], ApiFailure)
+                            self.assertEqual(failures[0].code, "REPLY_UNAVAILABLE")
+                            self.assertEqual(failures[0].submission_state, "unknown")
+                        else:
+                            self.assertEqual(failures, [])
+                    finally:
+                        timeout.stop()
+                        if isValid(owner):
+                            owned_api.close()
+                            delete_qobject(owner)
+
+            callback_errors = []
+
+            def business_failure(_value):
+                raise RuntimeError("fixture business callback failure")
+
+            with patch("sys.excepthook", capture_error):
+                api.call("GET", "/reject", failed=business_failure)
+                process_until(lambda: bool(callback_errors))
+            self.assertEqual(callback_errors, [("RuntimeError", "fixture business callback failure")])
         finally:
             heartbeat.stop()
             api.close()

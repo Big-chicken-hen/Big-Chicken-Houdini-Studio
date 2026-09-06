@@ -2,68 +2,15 @@ from __future__ import annotations
 
 import json
 
-from PySide6 import QtCore, QtGui, QtNetwork, QtWidgets
+from PySide6 import QtCore, QtNetwork, QtWidgets
+from shiboken6 import isValid
+
+from .icons import icon_diagnostics, set_button_icon
+from .theme import studio_stylesheet
 
 FONT = "Microsoft YaHei UI"
-DARK = """
-QWidget { font-family: 'Microsoft YaHei UI'; font-size: 12px; color: #E7E8E2; }
-QWidget#studioPanel { background: #20231F; }
-QLabel#muted { color: #90998D; }
-QLabel#brand { color: #C8E889; font-weight: 800; font-size: 17px; }
-QLabel#heading { font-size: 22px; font-weight: 700; }
-QLabel#eyebrow { color: #A3AE99; font-size: 10px; letter-spacing: 2px; }
-QFrame#card { background: #2A2E27; border: 1px solid #3B4137; border-radius: 9px; }
-QFrame#status { background: #171A16; border-radius: 7px; }
-QPushButton { background: #30362C; border: 1px solid #46503E; padding: 7px 12px; border-radius: 6px; }
-QPushButton:hover { background: #414A39; }
-QPushButton:disabled { color: #777E70; border-color: #343B2E; background: #272D23; }
-QPushButton#primary { background: #C8E889; border-color: #C8E889; color: #20271A; font-weight: 700; }
-QPushButton#primary:hover { background: #D7F0AE; }
-QPushButton#primary:disabled { background: #475339; border-color: #475339; color: #8C9C7C; }
-QPushButton#quiet { background: transparent; border: none; color: #AEB9A4; padding: 4px; }
-QPushButton#stop { color: #E7B08B; background: #3A2C22; border-color: #604B38; }
-QComboBox, QLineEdit, QTextEdit, QPlainTextEdit { background: #191D17; border: 1px solid #3B4433; border-radius: 6px; padding: 8px; selection-background-color: #52643B; }
-QComboBox::drop-down { border: none; width: 18px; }
-QComboBox QAbstractItemView { background: #252B20; color: #E7E8E2; selection-background-color: #455438; }
-QTextBrowser { background: transparent; border: none; padding: 0; }
-QScrollArea { background: transparent; border: none; }
-QScrollBar:vertical { background: transparent; width: 7px; }
-QScrollBar::handle:vertical { background: #56614C; border-radius: 3px; min-height: 30px; }
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
-QTabWidget::pane { border: none; }
-QTabBar::tab { background: transparent; color: #97A18E; padding: 11px 12px; border-bottom: 2px solid transparent; }
-QTabBar::tab:selected { color: #D9EDB7; border-bottom: 2px solid #C8E889; }
-QListWidget { background: #22271E; border: none; border-radius: 8px; padding: 5px; }
-QListWidget::item { padding: 12px; border-bottom: 1px solid #363F2E; }
-QListWidget::item:selected { background: #3F4C33; }
-QToolTip { background: #D8E7C1; color: #22271E; border: 0; padding: 6px; }
-"""
-
-LIGHT = """
-QWidget { font-family: 'Microsoft YaHei UI'; font-size: 13px; color: #30382D; }
-QWidget#studioLauncher { background: #F2F1EB; }
-QFrame#rail { background: #252B23; }
-QFrame#rail QLabel { color: #B7C0AE; }
-QFrame#rail QLabel#brand { color: #D2EA9F; font-size: 20px; font-weight: 800; }
-QLabel#title { color: #283421; font-size: 34px; font-weight: 800; }
-QLabel#muted { color: #7D8775; }
-QLabel#eyebrow { color: #76826B; font-size: 11px; letter-spacing: 2px; }
-QFrame#sheet { background: #FCFCF8; border: 1px solid #DCDFD3; border-radius: 12px; }
-QFrame#well { background: #E8EDDC; border-radius: 10px; }
-QPushButton { background: #F9FAF4; border: 1px solid #C9D0BB; padding: 9px 15px; border-radius: 7px; }
-QPushButton:hover { background: #E9EEDC; }
-QPushButton#primary { background: #2E3B25; border: 0; color: #EBF3DC; padding: 14px 24px; font-weight: 700; }
-QPushButton#primary:hover { background: #465A36; }
-QPushButton:disabled { color: #959D8A; background: #E1E4D9; border-color: #E1E4D9; }
-QPushButton#primary:disabled { color: #8B957D; background: #DFE4D5; }
-QPushButton#railButton { color: #E6EBDF; background: #394331; border: 0; text-align: left; padding: 13px 16px; }
-QLineEdit, QComboBox { background: #FFFFFF; border: 1px solid #D6DBCD; border-radius: 6px; padding: 10px; }
-QComboBox::drop-down { border: none; width: 22px; }
-QComboBox QAbstractItemView { background: #FFFFFF; selection-background-color: #DBE5C8; color: #283421; }
-QListWidget { background: transparent; border: none; outline: none; }
-QListWidget::item { background: #F9FAF5; padding: 16px; border: 1px solid #DCE0D3; margin-bottom: 8px; border-radius: 8px; }
-QListWidget::item:selected { background: #E4EDCF; border-color: #A5B987; color: #24301E; }
-"""
+DARK = studio_stylesheet("studioPanel")
+LIGHT = studio_stylesheet("studioLauncher")
 
 
 def label(text, name=None, wrap=False):
@@ -78,6 +25,8 @@ def label(text, name=None, wrap=False):
 def button(text, callback=None, name=None):
     item = QtWidgets.QPushButton(text)
     item.setCursor(QtCore.Qt.PointingHandCursor)
+    item.setMinimumHeight(32)
+    item.setAccessibleName(text)
     if name:
         item.setObjectName(name)
     if callback:
@@ -94,11 +43,82 @@ def clear_layout(layout):
 
 class ApiFailure(str):
     """A displayable error that preserves the server's submission classification."""
-    def __new__(cls, message, *, code=None, status=None, submission_state=None):
+    def __new__(cls, message, *, code=None, status=None, submission_state=None, details=None):
         value = super().__new__(cls, message)
         value.code, value.status, value.submission_state = code, status, submission_state
+        value.details = details
         return value
 
+
+class ErrorDetails(QtWidgets.QFrame):
+    """A short plain-text reason and optional diagnostics, without a retry action."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("studioError")
+        self.failure = None
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
+        self.summary = label("", wrap=True)
+        self.summary.setProperty("tone", "error")
+        layout.addWidget(self.summary)
+        self.toggle = QtWidgets.QToolButton()
+        self.toggle.setObjectName("quiet")
+        self.toggle.setText("查看详情")
+        self.toggle.setCheckable(True)
+        self.toggle.setMinimumSize(32, 32)
+        self.toggle.setAccessibleName("展开错误详情")
+        set_button_icon(self.toggle, "chevron-right", text="查看详情", size=16)
+        layout.addWidget(self.toggle, 0, QtCore.Qt.AlignLeft)
+        self.body = QtWidgets.QWidget()
+        body = QtWidgets.QVBoxLayout(self.body)
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(4)
+        self.details = QtWidgets.QPlainTextEdit()
+        self.details.setObjectName("statusDetails")
+        self.details.setReadOnly(True)
+        self.details.setTabChangesFocus(True)
+        self.details.setMinimumHeight(64)
+        self.details.setMaximumHeight(144)
+        self.details.setAccessibleName("错误详情")
+        body.addWidget(self.details)
+        layout.addWidget(self.body)
+        self.toggle.toggled.connect(self.set_expanded)
+        self.set_failure(None)
+
+    def set_failure(self, failure, details=None):
+        self.failure = failure
+        if failure is None:
+            self.summary.clear()
+            self.details.clear()
+            self.toggle.setChecked(False)
+            self.body.hide()
+            self.hide()
+            return
+        if isinstance(failure, dict):
+            message = str(failure.get("message", "需要处理一个问题"))
+            record = dict(failure)
+        else:
+            message = str(failure)
+            record = {key: getattr(failure, key, None) for key in ("code", "status", "submission_state", "details")}
+            record = {key: value for key, value in record.items() if value is not None}
+        self.summary.setText(message.splitlines()[0] if message else "需要处理一个问题")
+        if details is not None:
+            record["details"] = details
+        resources = icon_diagnostics()
+        if resources:
+            record["ui_resources"] = resources
+        rendered = message + ("\n\n" + json.dumps(record, ensure_ascii=False, indent=2, default=str) if record else "")
+        if self.details.toPlainText() != rendered:
+            self.details.setPlainText(rendered)
+        self.show()
+        self.body.setVisible(self.toggle.isChecked())
+
+    def set_expanded(self, expanded):
+        self.body.setVisible(expanded and self.failure is not None)
+        set_button_icon(self.toggle, "chevron-down" if expanded else "chevron-right",
+                        text="收起详情" if expanded else "查看详情", size=16)
+        self.toggle.setAccessibleName("收起错误详情" if expanded else "展开错误详情")
 
 class Api(QtCore.QObject):
     def __init__(self, url, token, parent=None):
@@ -128,10 +148,19 @@ class Api(QtCore.QObject):
         def finished():
             self.inflight.discard(key)
             self.replies.discard(reply)
-            raw = bytes(reply.readAll())
+            # A posted Python callback can outlive its native owner/reply.
+            if self.closed or not isValid(self):
+                if isValid(reply):
+                    reply.deleteLater()
+                return
+            if not isValid(reply):
+                if failed:
+                    failed(ApiFailure("Network reply is no longer available; query the original request state.",
+                                      code="REPLY_UNAVAILABLE", submission_state="unknown"))
+                return
+            callback = None
             try:
-                if self.closed:
-                    return
+                raw = bytes(reply.readAll())
                 value = json.loads(raw) if raw else {}
                 if not isinstance(value, dict):
                     raise ValueError("Bridge returned an invalid response")
@@ -140,29 +169,35 @@ class Api(QtCore.QObject):
                 if reply.error() != QtNetwork.QNetworkReply.NoError or not (isinstance(status, int) and 200 <= status < 300):
                     error = value.get("error")
                     message = error.get("message", "Request failed") if isinstance(error, dict) else reply.errorString()
-                    if failed:
-                        failed(ApiFailure(message, code=error.get("code") if isinstance(error, dict) else None,
-                                          status=status, submission_state=error.get("submission_state")
-                                          if isinstance(error, dict) else None))
-                elif done:
-                    done(value)
+                    callback = failed
+                    value = ApiFailure(message, code=error.get("code") if isinstance(error, dict) else None,
+                                       status=status, submission_state=error.get("submission_state")
+                                       if isinstance(error, dict) else None,
+                                       details=error if isinstance(error, dict) else value)
+                else:
+                    callback = done
             except (ValueError, TypeError) as exc:
-                if failed:
-                    failed(ApiFailure(str(exc)))
+                callback, value = failed, ApiFailure(str(exc))
             finally:
-                reply.deleteLater()
+                # Delivery may destroy Api's owner and its replies. Finish Qt
+                # cleanup first; do not access the reply after the callback.
+                if isValid(reply):
+                    reply.deleteLater()
+            if callback:
+                callback(value)
         reply.finished.connect(finished)
         return True
 
     def close(self):
         self.closed = True
         for reply in tuple(self.replies):
-            reply.abort()
+            if isValid(reply):
+                reply.abort()
 
 
 class TaskSignals(QtCore.QObject):
     result = QtCore.Signal(object)
-    error = QtCore.Signal(str)
+    error = QtCore.Signal(object)
 
 
 class Task(QtCore.QRunnable):
@@ -173,34 +208,21 @@ class Task(QtCore.QRunnable):
 
     def run(self):
         try:
-            self.signals.result.emit(self.function())
+            value = self.function()
         except Exception as exc:
-            self.signals.error.emit(str(exc))
+            details = getattr(exc, "details", None)
+            self._emit("error", ApiFailure(str(exc), code=getattr(exc, "code", None),
+                status=getattr(exc, "status", None), details=details,
+                submission_state=details.get("submission_state") if isinstance(details, dict) else None))
+        else:
+            self._emit("result", value)
 
+    def _emit(self, channel, value):
+        try:
+            getattr(self.signals, channel).emit(value)
+        except RuntimeError:
+            # Application teardown may delete the QObject while a worker finishes
+            # its cleanup. Delivery failure is not failure of the completed work.
+            if isValid(self.signals):
+                raise
 
-class StudioGlyph(QtWidgets.QWidget):
-    """Code-drawn brand illustration, unrelated to the user's Houdini scene."""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setMinimumSize(160, 150)
-
-    def paintEvent(self, event):
-        painter = QtGui.QPainter(self)
-        painter.setRenderHint(QtGui.QPainter.Antialiasing)
-        painter.translate(self.width() / 2, self.height() / 2)
-        scale = min(self.width(), self.height()) / 170
-        painter.scale(scale, scale)
-        painter.setPen(QtGui.QPen(QtGui.QColor("#9CAB83"), 1))
-        painter.setBrush(QtGui.QColor("#E1EBCF"))
-        painter.drawEllipse(QtCore.QRectF(-60, -60, 120, 120))
-        painter.setBrush(QtCore.Qt.NoBrush)
-        for angle in (-55, -25, 5, 35, 65):
-            painter.save()
-            painter.rotate(angle)
-            painter.drawEllipse(QtCore.QRectF(-22, -60, 44, 120))
-            painter.restore()
-        painter.setPen(QtGui.QPen(QtGui.QColor("#34472A"), 2))
-        painter.drawLine(-74, 37, 68, -40)
-        for x, y in ((-74, 37), (68, -40), (-5, 0)):
-            painter.setBrush(QtGui.QColor("#34472A"))
-            painter.drawEllipse(QtCore.QPointF(x, y), 4, 4)

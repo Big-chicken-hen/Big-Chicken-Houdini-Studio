@@ -13,4 +13,5 @@ If Not files.FileExists(python) Then
 End If
 shell.CurrentDirectory = root
 processEnv("HIA_PROJECT_ROOT") = root
+processEnv("PYTHONDONTWRITEBYTECODE") = "1"
 shell.Run Chr(34) & python & Chr(34) & " " & Chr(34) & script & Chr(34), 0, False

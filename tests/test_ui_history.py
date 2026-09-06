@@ -35,7 +35,7 @@ class HistoryRecoveryTest(unittest.TestCase):
         api.thread = {"id": "preview_thread", "turns": [
             {"id": "old_turn", "status": "completed", "items": history},
             {"id": "live_turn", "status": "inProgress", "items": []}]}
-        panel = StudioPanel(paths=AppPaths(root), api=api, auto_poll=False)
+        panel = StudioPanel(paths=AppPaths(root), api=api, auto_poll=False, image_roots=(evidence,))
         self.addCleanup(panel.deleteLater)
         self.addCleanup(panel.close)
         panel.show()

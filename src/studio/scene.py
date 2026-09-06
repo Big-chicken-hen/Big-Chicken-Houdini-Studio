@@ -182,7 +182,7 @@ def json_value(value, depth=0, redact=lambda text: text):
 
 
 class HoudiniScene:
-    def __init__(self, hou, artifact_root, secrets=()):
+    def __init__(self, hou, artifact_root, secrets=(), paths=None, workspace_id=None, session_id=None):
         self.hou = hou
         self._artifacts = ArtifactStore(artifact_root)
         self.artifact_root = self._artifacts.root
@@ -190,23 +190,100 @@ class HoudiniScene:
         self.epoch = new_id()
         self.lock = threading.RLock()
         self._cached = {}
+        self.paths, self.workspace_id, self.session_id = paths, workspace_id, session_id
+        self.file_publisher = None
+        self._confirmed_hip_path = None
+        self._file_transition = False
+        self._file_event = {"kind": "initial", "old_path": None, "new_path": None, "autosave": False}
+        self._association = {"status": "unbound", "workspace_id": workspace_id}
         self.houdini_version = self.hou.applicationVersionString()
+        # At initial UI attachment isNewFile() is native evidence about the
+        # current scene. Subsequent name changes alone cannot confirm a save.
+        initial = self._file_state()
+        if initial["is_new_file"] is False and Path(initial["hip_path"]).is_file():
+            self._confirmed_hip_path = initial["hip_path"]
+        self._file_event["new_path"] = self.redact(initial["hip_path"])
         self.refresh_cached()
+        self._record_file_state()
         self.hou.hipFile.addEventCallback(self._hip_event)
 
-    def _hip_event(self, event, **_kwargs):
-        changes = {getattr(self.hou.hipFileEventType, name, None)
-                   for name in ("BeforeLoad", "BeforeClear")}
-        if event in changes:
-            with self.lock:
+    def _hip_event(self, event, **kwargs):
+        if kwargs.get("autosave"):
+            return
+        name = next((name for name in ("BeforeLoad", "BeforeClear", "AfterLoad", "AfterClear", "AfterSave")
+                     if getattr(self.hou.hipFileEventType, name, None) is not None and
+                     event == getattr(self.hou.hipFileEventType, name)), None)
+        if not name:
+            with contextlib.suppress(Exception):
+                self.refresh_cached()
+            return
+        with self.lock:
+            if name in {"BeforeLoad", "BeforeClear"}:
                 self.epoch = new_id()
+                self._file_transition = True
                 self._cached["scene_epoch"] = self.epoch
+            else:
+                self._file_transition = False
+            kind = {"BeforeLoad": "before_load", "BeforeClear": "before_clear", "AfterLoad": "load",
+                    "AfterClear": "clear", "AfterSave": "save"}[name]
+            self._file_event = {"kind": kind,
+                                "old_path": self.redact(kwargs["old_hip_file"]) if isinstance(kwargs.get("old_hip_file"), str) else None,
+                                "new_path": self.redact(kwargs["new_hip_file"]) if isinstance(kwargs.get("new_hip_file"), str) else None,
+                                "autosave": False}
+            if name == "AfterClear":
+                self._confirmed_hip_path = None
+            elif name in {"AfterLoad", "AfterSave"}:
+                state = self._file_state()
+                expected = kwargs.get("new_hip_file") or state["hip_path"]
+                from .targets import path_key
+                if (state["is_new_file"] is False and Path(state["hip_path"]).is_file() and
+                        path_key(expected) == path_key(state["hip_path"])):
+                    self._confirmed_hip_path = state["hip_path"]
+                else:
+                    self._confirmed_hip_path = None
         with contextlib.suppress(Exception):
             self.refresh_cached()
+            if name in {"AfterLoad", "AfterClear", "AfterSave"}:
+                self._record_file_state()
+            if self.file_publisher:
+                self.file_publisher(self.cached())
+
+    def _file_state(self):
+        path = self.hou.hipFile.path()
+        is_new = None
+        try:
+            if getattr(self.hou, "isUIAvailable", lambda: True)():
+                value = self.hou.hipFile.isNewFile()
+                is_new = value if type(value) is bool else None
+        except Exception:
+            pass
+        from .targets import path_key
+        saved = self._confirmed_hip_path
+        if self._file_transition or not saved or path_key(saved) != path_key(path):
+            saved = None
+        name = "未保存场景" if is_new is True else Path(path).name
+        if is_new is None or (is_new is False and not saved):
+            name += "（保存位置未确认）"
+        return {"hip_path": path, "is_new_file": is_new, "saved_hip_path": saved, "display_name": name}
+
+    def _record_file_state(self):
+        if self.paths is None or self.workspace_id is None:
+            return
+        from .targets import SceneCatalog
+        try:
+            self._association = SceneCatalog(self.paths).record_scene(self.workspace_id, self.cached(), self.session_id)
+        except Exception:
+            self._association = {"status": "unavailable", "workspace_id": self.workspace_id,
+                                 "message": "Scene history could not be updated; existing contexts were preserved"}
+        with self.lock:
+            self._cached["association"] = self._association
 
     def refresh_cached(self):
         with self.lock:
-            self._cached = {"scene_epoch": self.epoch, "hip_path": self.redact(self.hou.hipFile.path()),
+            file_state = self._file_state()
+            self._cached = {"scene_epoch": self.epoch,
+                            **{k: self.redact(v) if isinstance(v, str) else v for k, v in file_state.items()},
+                              "file_event": dict(self._file_event), "association": self._association,
                             "dirty": self.hou.hipFile.hasUnsavedChanges(), "frame": self.hou.frame(),
                             "observed_at": now()}
 
@@ -336,11 +413,29 @@ class HoudiniScene:
 
     def execute(self, args, cancelled):
         outcome = ExecutionResult()
+        def output_path(kind, filename, *, explicit=None, existing=None):
+            from .output import resolve_output
+            if self.paths is None or self.workspace_id is None:
+                raise StudioError("OUTPUT_CONTEXT_UNAVAILABLE", "Studio output context is unavailable")
+            # Called inside this already admitted main-thread HOM batch. A
+            # returned path is fixed; a later call reads a new Save As location.
+            resolved = resolve_output(self._file_state(), self.paths.cache("outputs", self.workspace_id),
+                                      kind, filename, explicit=explicit, existing=existing, expand=self.hou.expandString)
+            records = outcome.detail.setdefault("resolved_outputs", [])
+            if len(records) < 64:
+                records.append(resolved)
+            else:
+                outcome.detail["resolved_outputs_truncated"] = True
+            try:
+                Path(resolved["path"]).parent.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                raise StudioError("OUTPUT_DIRECTORY_UNWRITABLE", "Cannot create the output directory; choose another location") from exc
+            return resolved["path"]
         def checkpoint():
             if cancelled():
                 raise StudioError("COOPERATIVE_STOP", "Stopped at an explicit script checkpoint")
         namespace = {"hou": self.hou, "result": None, "checkpoint": checkpoint,
-                     "cancel_requested": cancelled, "__name__": "__studio_hom__"}
+                       "cancel_requested": cancelled, "output_path": output_path, "__name__": "__studio_hom__"}
         # Redirect only for this batch; no raw print/traceback reaches the host log.
         with contextlib.redirect_stdout(DiscardOutput()), contextlib.redirect_stderr(DiscardOutput()):
             try:

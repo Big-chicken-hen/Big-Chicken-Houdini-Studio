@@ -12,8 +12,9 @@ import time
 from pathlib import Path
 
 from .codex.protocol import SUPPORTED_CODEX_VERSION
-from .common import AppPaths, StudioError, atomic_json, new_id, read_json
+from .common import AppPaths, StudioError, atomic_json, identifier, new_id, read_json
 from .ownership import WorkspaceLock, execution_lock
+from .targets import SceneCatalog, SceneTarget, path_key
 from .workspace import Workspaces
 
 
@@ -32,23 +33,25 @@ def console_python(executable=None):
 
 
 def render_output_directory(paths):
+    """Legacy advanced override only; ordinary output is resolved in the scene."""
     value = os.environ.get("HIA_RENDER_OUTPUT_DIR")
-    path = Path(value) if value else paths.local("cache")
+    if not value:
+        return None
+    path = Path(value)
     return (path if path.is_absolute() else paths.root / path).resolve()
 
 
 def storage_environment(paths):
     """Child/process-local storage settings; never edit a user's global configuration."""
-    directories = {"CODEX_HOME": paths.local("codex-home"), "TEMP": paths.local("tmp"),
-                   "TMP": paths.local("tmp"), "TMPDIR": paths.local("tmp"),
-                   "PIP_CACHE_DIR": paths.local("cache", "pip"),
-                   "XDG_CACHE_HOME": paths.local("cache"),
-                   "XDG_CONFIG_HOME": paths.local("config"),
-                   "XDG_DATA_HOME": paths.local("data")}
+    directories = {"CODEX_HOME": paths.codex_home, "TEMP": paths.cache("tmp"),
+                   "TMP": paths.cache("tmp"), "TMPDIR": paths.cache("tmp"),
+                   "PIP_CACHE_DIR": paths.cache("pip"), "XDG_CACHE_HOME": paths.cache_root,
+                   "XDG_CONFIG_HOME": paths.data("config"), "XDG_DATA_HOME": paths.data("data")}
     for path in directories.values():
         path.mkdir(parents=True, exist_ok=True)
     return {**{key: str(value) for key, value in directories.items()},
-            "HIA_PROJECT_ROOT": str(paths.root), "PYTHONPATH": str(paths.root / "src"),
+            "HIA_PROJECT_ROOT": str(paths.root), "BCS_DATA_ROOT": str(paths.data_root),
+            "BCS_CACHE_ROOT": str(paths.cache_root), "PYTHONPATH": str(paths.install("src")),
             "PYTHONDONTWRITEBYTECODE": "1", "PYTHONNOUSERSITE": "1",
             "PIP_CONFIG_FILE": os.devnull, "PIP_DISABLE_PIP_VERSION_CHECK": "1"}
 
@@ -62,8 +65,18 @@ def helper_environment(paths):
                  "PIP_TARGET", "PIP_PREFIX", "PIP_ROOT", "PIP_USER"):
         env.pop(name, None)
     env.update(storage_environment(paths))
-    env["HIA_RENDER_OUTPUT_DIR"] = str(render_output_directory(paths))
+    output_override = render_output_directory(paths)
+    if output_override is not None:
+        env["HIA_RENDER_OUTPUT_DIR"] = str(output_override)
     return env
+
+
+def codex_app_server_command(codex):
+    """Use Windows' existing system proxy despite Studio's isolated CODEX_HOME."""
+    command = [str(codex)]
+    if os.name == "nt":
+        command.extend(["--enable", "respect_system_proxy"])
+    return [*command, "app-server"]
 
 
 def discover_houdini():
@@ -119,45 +132,163 @@ def preflight(houdini, codex, paths=None):
 
 def child_environment(paths, workspace_id, session_id, token):
     folder = paths.session(session_id)
-    for path in (folder, paths.local("tmp"), paths.local("houdini-prefs"), paths.local("cache")):
+    for path in (folder, paths.cache("tmp"), paths.data("houdini-prefs")):
         path.mkdir(parents=True, exist_ok=True)
     env = helper_environment(paths)
     env.update({"HIA_PROJECT_ROOT": str(paths.root), "BCS_WORKSPACE_ID": workspace_id,
                 "BCS_SESSION_ID": session_id, "BCS_SESSION_TOKEN": token, "BCS_AUTOSTART": "1",
                 "PYTHONPATH": str(paths.root / "src"), "HOUDINI_PACKAGE_DIR": str(paths.root / "houdini" / "packages"),
-                "HOUDINI_USER_PREF_DIR": str(paths.local("houdini-prefs", "__HVER__")),
-                "HOUDINI_TEMP_DIR": str(paths.local("tmp")), "TEMP": str(paths.local("tmp")),
-                "TMP": str(paths.local("tmp")), "PYTHONDONTWRITEBYTECODE": "1",
+                "HOUDINI_USER_PREF_DIR": str(paths.data("houdini-prefs", "__HVER__")),
+                "HOUDINI_TEMP_DIR": str(paths.cache("tmp")), "TEMP": str(paths.cache("tmp")),
+                "TMP": str(paths.cache("tmp")), "PYTHONDONTWRITEBYTECODE": "1",
                 "BCS_PYTHON_EXECUTABLE": console_python()})
     return env
 
 
 def launch(paths, workspace_id, houdini, codex, hip=None):
+    """Explicit legacy workspace entrance; normal UI uses launch_target."""
     Workspaces(paths).get(workspace_id)
     checked = preflight(houdini, codex, paths)
     if hip and (not Path(hip).is_file() or Path(hip).suffix.lower() not in {".hip", ".hiplc", ".hipnc"}):
         raise StudioError("HIP_INVALID", "Select an existing Houdini scene")
-    session_id, token = new_id(), secrets.token_urlsafe(48)
+    session_id = new_id()
     folder = paths.session(session_id)
     folder.mkdir(parents=True, exist_ok=False)
+    return _spawn_session(paths, workspace_id, checked, hip, session_id)
+
+
+def _spawn_session(paths, workspace_id, checked, hip, session_id, target=None):
+    token = secrets.token_urlsafe(48)
+    folder = paths.session(session_id)
     env = child_environment(paths, workspace_id, session_id, token)
-    output = env["HIA_RENDER_OUTPUT_DIR"]
+    output = env.get("HIA_RENDER_OUTPUT_DIR")
     atomic_json(folder / "launch.json", {**checked, "workspace_id": workspace_id,
                 "launcher_session_id": session_id, "hip": str(Path(hip).resolve()) if hip else None,
-                "render_output_directory": output})
-    atomic_json(folder / "status.json", {"state": "starting", "render_output_directory": output})
+                "render_output_directory": output, **({"request_id": session_id, "target": target} if target else {})})
+    atomic_json(folder / "status.json", {"state": "starting", "process_may_exist": True})
+    logs = paths.cache("logs", session_id)
+    logs.mkdir(parents=True, exist_ok=True)
+    process = None
     try:
-        with (folder / "supervisor.log").open("ab") as log:
+        with (logs / "supervisor.log").open("ab") as log:
             process = subprocess.Popen([env["BCS_PYTHON_EXECUTABLE"], "-m", "studio", "supervise",
                                         "--session", session_id],
                                        cwd=paths.root, env=env, stdout=log, stderr=log,
                                        stdin=subprocess.DEVNULL, creationflags=hidden_flags())
     except OSError as exc:
-        atomic_json(folder / "status.json", {"state": "failed", "message": "Supervisor could not start",
-                                            "render_output_directory": output})
-        raise StudioError("LAUNCH_FAILED", "Supervisor could not start; run setup and check the Python selection") from exc
+        if process is None:
+            atomic_json(folder / "status.json", {"state": "failed", "message": "Supervisor could not start",
+                                                "process_may_exist": False})
+            raise StudioError("LAUNCH_FAILED", "Supervisor could not start; run setup and check the Python selection") from exc
+        # Closing the log can fail after Popen returned. The supervisor now owns
+        # status.json; do not overwrite its process facts with a false rejection.
+        raise StudioError("LAUNCH_STATE_UNKNOWN", "A process may have started; query this launch again") from exc
     return {"session_id": session_id, "supervisor_pid": process.pid, "directory": str(folder),
             "render_output_directory": output}
+
+
+def launch_target(paths, target, houdini, codex, *, request_id):
+    """Claim the UI's stable request ID once; an ambiguous reply never respawns it."""
+    session_id = identifier(request_id)
+    value = target.to_dict() if isinstance(target, SceneTarget) else target
+    if not isinstance(value, dict) or set(value) - {"kind", "path"}:
+        raise StudioError("SCENE_TARGET_INVALID", "Choose one scene target")
+    value = dict(value)
+    if value.get("kind") == "hip":
+        from .targets import hip_path
+        value["path"] = str(hip_path(value.get("path"), must_exist=False))
+    selected = {"houdini": str(Path(houdini).resolve()), "codex": str(Path(codex).resolve())}
+    folder = paths.session(session_id)
+    try:
+        folder.mkdir(parents=True, exist_ok=False)
+    except FileExistsError:
+        try:
+            prior = read_json(folder / "launch.json")
+        except (OSError, ValueError):
+            return launch_status(paths, session_id)
+        if (prior.get("target") != value or
+                any(prior.get(key) != item for key, item in selected.items())):
+            raise StudioError("LAUNCH_ID_CONFLICT", "This launch ID already belongs to another request", 409)
+        return launch_status(paths, session_id)
+    atomic_json(folder / "launch.json", {**selected, "request_id": session_id,
+                "launcher_session_id": session_id, "target": value})
+    atomic_json(folder / "status.json", {"state": "accepted", "process_may_exist": True})
+    try:
+        target = SceneTarget.from_dict(value)  # Revalidate the file at admission.
+        checked = preflight(houdini, codex, paths)
+        workspace = SceneCatalog(paths).admit(target)
+    except (StudioError, OSError) as exc:
+        error = exc.payload()["error"] if isinstance(exc, StudioError) else {
+            "code": "LAUNCH_FAILED", "message": "Could not prepare this launch; existing data was preserved"}
+        atomic_json(folder / "status.json", {"state": "rejected", "process_may_exist": False,
+                                            "message": error["message"], "error": error})
+        return launch_status(paths, session_id)
+    try:
+        spawned = _spawn_session(paths, workspace["workspace_id"], checked, target.path, session_id, target.to_dict())
+    except Exception:
+        observed = launch_status(paths, session_id)
+        if observed["state"] in {"rejected", "closed", "runtime_connected", "target_opened"}:
+            return observed
+        # Preserve this uncertainty in the request, leaving supervisor status to
+        # its owner. The same ID remains query-only even if this write also fails.
+        with contextlib.suppress(OSError, ValueError):
+            config = read_json(folder / "launch.json")
+            atomic_json(folder / "launch.json", {**config, "launch_response_unknown": True})
+        return {**observed, "state": "unknown", "process_may_exist": True,
+                "message": "A process may have started; query this launch again"}
+    value = launch_status(paths, session_id)
+    value.setdefault("supervisor_pid", spawned["supervisor_pid"])
+    return value
+
+
+def launch_status(paths, request_id):
+    """Read supervisor status plus the Runtime's file-event cache; no HOM or replay."""
+    session_id = identifier(request_id)
+    folder = paths.session(session_id)
+    base = {"request_id": session_id, "session_id": session_id, "directory": str(folder),
+            "state": "unknown", "target": None, "runtime_connected": False,
+            "target_opened": False, "process_may_exist": True}
+    try:
+        config = read_json(folder / "launch.json")
+        status = read_json(folder / "status.json")
+    except (OSError, ValueError):
+        return {**base, "message": "Launch state is not confirmed; query this launch again"}
+    if config.get("launcher_session_id") != session_id:
+        return {**base, "message": "Launch identity does not match its saved status"}
+    result = {**base, **status, "target": config.get("target"), "workspace_id": config.get("workspace_id")}
+    if result["state"] in {"closed", "rejected"}:
+        result["process_may_exist"] = False
+        return result
+    if result["state"] == "failed":
+        possible = bool(status.get("houdini_left_running", status.get("process_may_exist", True)))
+        result.update(state="unknown" if possible else "rejected", process_may_exist=possible)
+        return result
+    if result["state"] in {"accepted", "starting"} and config.get("launch_response_unknown"):
+        result.update(state="unknown", process_may_exist=True,
+                      message="A process may have started; query this launch again")
+    try:
+        descriptor = read_json(folder / "runtime.json")
+    except (OSError, ValueError):
+        return result
+    if (descriptor.get("launcher_session_id") != session_id or
+            descriptor.get("workspace_id") != config.get("workspace_id") or
+            not status.get("houdini_pid") or descriptor.get("houdini_pid") != status["houdini_pid"]):
+        return result
+    result.update(state="runtime_connected", runtime_connected=True, process_may_exist=True)
+    scene, target = descriptor.get("scene", {}), config.get("target") or {}
+    if target.get("kind") == "empty":
+        opened = scene.get("is_new_file") is True and not scene.get("saved_hip_path")
+    else:
+        saved = scene.get("saved_hip_path")
+        opened = bool(target.get("path") and saved and scene.get("is_new_file") is False and
+                      path_key(saved) == path_key(target["path"]) and path_key(scene.get("hip_path", "")) == path_key(saved))
+    if scene.get("file_event", {}).get("kind") in {"before_load", "before_clear"}:
+        opened = False
+    if opened:
+        result.update(state="target_opened", target_opened=True)
+    else:
+        result["message"] = "Studio is connected, but the selected scene has not been confirmed open"
+    return result
 
 
 def supervise(paths, session_id):
@@ -168,7 +299,7 @@ def supervise(paths, session_id):
     bridge = None
     process = None
     token = os.environ.get("BCS_SESSION_TOKEN", "")
-    status = {"supervisor_pid": os.getpid(), "render_output_directory": str(render_output_directory(paths))}
+    status = {"supervisor_pid": os.getpid()}
     try:
         config = read_json(folder / "launch.json")
         if (not token or os.environ.get("BCS_SESSION_ID") != session_id or
@@ -183,7 +314,9 @@ def supervise(paths, session_id):
         bridge = Bridge(paths, config["workspace_id"], session_id, token, config["codex"])
         bridge.start()
         command = [config["houdini"]] + ([config["hip"]] if config.get("hip") else [])
-        with (folder / "houdini.log").open("ab") as log:
+        logs = paths.cache("logs", session_id)
+        logs.mkdir(parents=True, exist_ok=True)
+        with (logs / "houdini.log").open("ab") as log:
             process = subprocess.Popen(command, env=dict(os.environ),
                                        cwd=paths.workspace(config["workspace_id"]) / "work",
                                        stdin=subprocess.DEVNULL, stdout=log, stderr=log)
@@ -201,7 +334,8 @@ def supervise(paths, session_id):
                             descriptor.get("workspace_id") == config["workspace_id"] and
                             descriptor.get("houdini_pid") == process.pid):
                         # Connection registration only; no claim about a scene operation completing.
-                        atomic_json(folder / "status.json", {**status, "state": "ready"})
+                        atomic_json(folder / "status.json", {**status,
+                            "state": "runtime_connected" if config.get("target") else "ready"})
                         break
                 time.sleep(0.25)
             process.wait()
