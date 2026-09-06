@@ -42,8 +42,9 @@ class PreviewTarget:
 
 
 class PreviewOnboarding:
-    def __init__(self, services):
+    def __init__(self, services, paths):
         self.services = services
+        self.paths = paths
         self.closed = False
 
     def probe(self, **overrides):
@@ -77,12 +78,14 @@ class PreviewOnboarding:
             raise StudioError("CHATGPT_REQUIRED", "请先确认 ChatGPT 登录")
         self.close()
         return {"codex_path": "C:/fixture/codex.exe", "houdini_path": "C:/fixture/houdini.exe",
-                "codex_home": "C:/fixture/native-profile"}
+                "codex_home": str(self.paths.codex_home)}
 
     def remember_houdini(self, path):
         self.services.remembered.append(path)
 
     def close(self):
+        if not self.closed:
+            self.services.lifecycle.append(("closed", self.paths))
         self.closed = True
 
 
@@ -103,9 +106,16 @@ class PreviewServices:
         self.lose_launch = False
         self.probe_gate = None
         self.launch_gate = None
+        self.paths = AppPaths(APP_ROOT)
+        self.legacy_records, self.legacy_reads = [], 0
+        self.lifecycle, self.launch_profiles = [], []
 
     def factory(self):
-        backend = PreviewOnboarding(self)
+        return self.for_paths(self.paths)
+
+    def for_paths(self, paths):
+        self.lifecycle.append(("created", paths))
+        backend = PreviewOnboarding(self, paths)
         self.backends.append(backend)
         return backend
 
@@ -125,6 +135,10 @@ class PreviewServices:
     def recent(self, limit=20):
         return copy.deepcopy(self.records[:limit])
 
+    def legacy_workspaces(self):
+        self.legacy_reads += 1
+        return copy.deepcopy(self.legacy_records)
+
     def remove_recent(self, path):
         self.records = [r for r in self.records if r["path"] != path]
 
@@ -135,8 +149,9 @@ class PreviewServices:
                 record.update(path=target.path, name=Path(target.path).name,
                               directory=str(Path(target.path).parent), missing=False)
 
-    def launch(self, paths, target, houdini, codex, *, request_id):
+    def launch(self, paths, target, houdini, codex, *, request_id, legacy_workspace_id=None):
         self.launches.append((target.to_dict(), request_id, houdini, codex))
+        self.launch_profiles.append((paths, legacy_workspace_id))
         if self.launch_gate:
             self.launch_gate.wait(2)
         self.admissions[request_id] = {"request_id": request_id, "session_id": request_id,
@@ -178,7 +193,8 @@ def process_until(predicate, timeout=2500):
 
 def make_fixture_window(paths=None, state="ready", records=None, services=None):
     services = services or PreviewServices(state, records)
-    window = StudioLauncher(paths=paths or AppPaths(APP_ROOT), onboarding_factory=services.factory,
+    services.paths = paths or AppPaths(APP_ROOT)
+    window = StudioLauncher(paths=services.paths, onboarding_factory=services.factory, onboarding_for_paths=services.for_paths,
                             catalog=services, target_factory=PreviewTarget, launch_function=services.launch,
                             status_function=services.query, browser_open=services.open_browser)
     window.show()
@@ -189,7 +205,7 @@ def make_fixture_window(paths=None, state="ready", records=None, services=None):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--scale", default="1")
-    parser.add_argument("--case", choices=("all", "high-dpi", "first-use"), default="all")
+    parser.add_argument("--case", choices=("all", "high-dpi", "first-use", "legacy"), default="all")
     parser.add_argument("--out", type=Path)
     args = parser.parse_args()
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
@@ -216,13 +232,42 @@ def main():
         corner = window.launch_button.mapTo(window, QtCore.QPoint(window.launch_button.width(), window.launch_button.height()))
         if corner.x() > window.width() or corner.y() > window.height():
             raise AssertionError("Main action extends outside Launcher")
+        readiness_rows = []
+        for row in (window.account_row, window.codex_row, window.houdini_row):
+            # Scrollable content can be offscreen, but its own rows must never be
+            # clipped by the readiness frame or shrink below wrapped text height.
+            if not row.parentWidget().rect().contains(row.geometry()):
+                raise AssertionError("Readiness row extends outside its frame")
+            if row.text.height() < row.text.heightForWidth(row.text.width()):
+                raise AssertionError("Readiness status text is clipped")
+            readiness_rows.append({"title": row.title.text(), "rect": list(row.geometry().getRect()),
+                                   "text_rect": list(row.text.geometry().getRect())})
         cases.append({"file": target.name, "logical_size": [window.width(), window.height()],
-                      "device_pixel_ratio": window.devicePixelRatioF()})
+                      "device_pixel_ratio": window.devicePixelRatioF(), "readiness_rows": readiness_rows})
 
     first_use = args.case == "first-use"
     window, services = make_fixture_window(state="signed_out" if first_use else "ready",
                                           records=[] if first_use else None)
     capture(window, "00-first-use" if first_use else "01-ready")
+    if args.case == "legacy":
+        from unittest.mock import patch
+        services.legacy_records = [{"workspace_id": "fixture-original-context", "name": "旧书柜上下文",
+                                    "created_at": 1788670800}]
+        window.advanced_toggle.click()
+        window.load_legacy.click()
+        process_until(lambda: not window._pending)
+        window.legacy_list.setCurrentRow(0)
+        for _ in range(3):
+            app.processEvents()
+        window.scroll.ensureWidgetVisible(window.enter_legacy)
+        capture(window, "09-legacy-records")
+        with patch("studio.ui.launcher.QtWidgets.QFileDialog.getOpenFileName",
+                   return_value=("D:/fixture/user-selected-bookcase.hip", "")):
+            window.enter_legacy.click()
+        process_until(lambda: not window._pending)
+        window.advanced_toggle.click()
+        window.scroll.verticalScrollBar().setValue(0)
+        capture(window, "10-legacy-hip-selected")
     if args.case == "all":
         for state, name in (("signed_out", "02-sign-in"), ("missing_codex", "03-codex-missing"),
                             ("missing_houdini", "04-houdini-missing"), ("waiting", "05-browser-waiting")):

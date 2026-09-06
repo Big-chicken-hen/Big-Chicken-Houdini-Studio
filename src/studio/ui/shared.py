@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 
-from PySide6 import QtCore, QtGui, QtNetwork, QtWidgets
+from PySide6 import QtCore, QtNetwork, QtWidgets
 from shiboken6 import isValid
 
-from .theme import COLORS, studio_stylesheet
+from .theme import studio_stylesheet
 
 FONT = "Microsoft YaHei UI"
 DARK = studio_stylesheet("studioPanel")
@@ -215,21 +215,20 @@ class Task(QtCore.QRunnable):
                 raise
 
 
-class StudioGlyph(QtWidgets.QWidget):
-    """A small native brand mark; no illustration or scene rendering."""
+class StudioGlyph(QtWidgets.QLabel):
+    """Qt's standard computer icon; not a custom product logo."""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedSize(36, 36)
         self.setAccessibleName("Big-Chicken Studio")
+        self.setAlignment(QtCore.Qt.AlignCenter)
+        self.refresh_icon()
 
-    def paintEvent(self, event):
-        painter = QtGui.QPainter(self)
-        painter.setRenderHint(QtGui.QPainter.Antialiasing)
-        painter.translate(self.width() / 2, self.height() / 2)
-        painter.setPen(QtGui.QPen(QtGui.QColor(COLORS["primary_pink"]), 1.5))
-        painter.setBrush(QtGui.QColor(COLORS["selected_surface"]))
-        painter.drawRoundedRect(QtCore.QRectF(-15, -15, 30, 30), 8, 8)
-        for point in ((-6, 5), (0, -6), (7, 4)):
-            painter.drawLine(QtCore.QPointF(*point), QtCore.QPointF(0, 2))
-            painter.setBrush(QtGui.QColor(COLORS["primary_pink"]))
-            painter.drawEllipse(QtCore.QPointF(*point), 2, 2)
+    def refresh_icon(self):
+        icon = self.style().standardIcon(QtWidgets.QStyle.SP_ComputerIcon)
+        self.setPixmap(icon.pixmap(QtCore.QSize(32, 32), self.devicePixelRatioF()))
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() in {QtCore.QEvent.StyleChange, QtCore.QEvent.DevicePixelRatioChange}:
+            self.refresh_icon()

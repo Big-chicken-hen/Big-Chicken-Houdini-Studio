@@ -281,6 +281,137 @@ class LauncherTests(unittest.TestCase):
         self.assertTrue(window.launch_button.isVisible())
         self.assertEqual(services.launches, [])
 
+    def test_first_use_keeps_all_three_readiness_rows_visible(self):
+        window, _services = self.window(state="signed_out", records=[])
+        for width, height in ((780, 740), (560, 600)):
+            window.resize(width, height)
+            for _ in range(3):
+                self.app.processEvents()
+            previous_bottom = -1
+            for row in (window.account_row, window.codex_row, window.houdini_row):
+                with self.subTest(width=width, row=row.title.text()):
+                    self.assertTrue(row.parentWidget().rect().contains(row.geometry()))
+                    self.assertGreater(row.y(), previous_bottom)
+                    self.assertGreaterEqual(row.text.height(), row.text.heightForWidth(row.text.width()))
+                    self.assertEqual(row.text.visibleRegion().boundingRect(), row.text.rect())
+                    previous_bottom = row.geometry().bottom()
+
+    def legacy_window(self, state="ready"):
+        paths = AppPaths(self.paths.root, data_root=self.paths.local("ui-profile-fixture", "user-state"),
+                         cache_root=self.paths.local("ui-profile-fixture", "cache"))
+        services = PreviewServices(state=state, records=[])
+        services.legacy_records = [{"workspace_id": "11111111-1111-4111-8111-111111111111",
+                                    "name": "旧记录 untitled.hip", "created_at": 1}]
+        window, services = make_fixture_window(paths, services=services)
+        self.addCleanup(window.deleteLater)
+        self.addCleanup(window.close)
+        return window, services
+
+    def select_legacy_hip(self, window, path="D:/fixture/explicit-existing.hip"):
+        window.advanced_toggle.setChecked(True)
+        window.toggle_advanced()
+        window.load_legacy.click()
+        process_until(lambda: "legacy" not in window._pending)
+        window.legacy_list.setCurrentRow(0)
+        with patch("studio.ui.launcher.QtWidgets.QFileDialog.getOpenFileName", return_value=(path, "")):
+            window.enter_legacy.click()
+
+    def test_legacy_entry_is_explicit_and_binds_profile_and_original_identity_to_one_request(self):
+        window, services = self.legacy_window()
+        self.assertEqual(services.legacy_reads, 0)
+        initial = services.backends[0]
+        self.select_legacy_hip(window)
+        process_until(lambda: not window._pending)
+        self.assertIn("未确认", window.legacy_details.text())
+        self.assertEqual(services.launches, [])
+        self.assertEqual(window._target.path, "D:/fixture/explicit-existing.hip")
+        self.assertEqual(window.paths.codex_home, AppPaths.for_legacy(self.paths.root).codex_home)
+        self.assertTrue(initial.closed)
+        self.assertEqual([event for event, _paths in services.lifecycle], ["created", "closed", "created"])
+        self.assertEqual(services.backends[-1].paths.codex_home, window.paths.codex_home)
+        services.lose_launch = True
+        window.start_session()
+        request = window._request_id
+        process_until(lambda: window._launch_phase is None)
+        window.query_launch()
+        process_until(lambda: "status" not in window._pending)
+        self.assertEqual(len(services.launches), 1)
+        self.assertEqual(services.queries, [request])
+        self.assertEqual(services.launch_profiles, [(window.paths, services.legacy_records[0]["workspace_id"])])
+        selected_paths = window.paths
+        window.empty_button.click()
+        self.assertIs(window.paths, selected_paths)  # unknown process keeps its context frozen
+
+    def test_legacy_switch_closes_old_login_and_empty_returns_to_normal_profile(self):
+        window, services = self.legacy_window(state="signed_out")
+        gate, entered = threading.Event(), threading.Event()
+        self.addCleanup(gate.set)
+        original = services.backends[0]
+        def delayed_login():
+            entered.set()
+            gate.wait(2)
+            return {**services.snapshot(), "auth_url": "https://example.invalid/late-login"}
+        original.login_start = delayed_login
+        window.launch_button.click()
+        process_until(entered.is_set)
+        self.select_legacy_hip(window)
+        process_until(lambda: window._legacy_context is not None)
+        self.assertEqual(len(services.backends), 1)
+        services.state = "ready"
+        gate.set()
+        process_until(lambda: not window._pending)
+        self.assertTrue(original.closed)
+        self.assertEqual(services.opened_urls, [])
+        old_profile = services.backends[-1]
+        window.empty_button.click()
+        process_until(lambda: not window._pending)
+        self.assertTrue(old_profile.closed)
+        self.assertIs(window.paths, window._normal_paths)
+        self.assertIsNone(window._legacy_context)
+        self.assertEqual(window._target.kind, "empty")
+        self.assertEqual(services.launches, [])
+        window.start_session()
+        process_until(lambda: window._launch_phase is None)
+        self.assertEqual(services.launch_profiles, [(window._normal_paths, None)])
+
+    def test_invalid_legacy_hip_and_mismatched_account_profile_never_launch(self):
+        window, services = self.legacy_window()
+        self.select_legacy_hip(window, "D:/fixture/missing.hip")
+        process_until(lambda: not window._pending)
+        self.assertIsNone(window._legacy_context)
+        self.assertEqual(len(services.backends), 1)
+        self.assertEqual(services.launches, [])
+        window.select_empty()
+        backend = services.backends[0]
+        prepare = backend.prepare_launch
+        backend.prepare_launch = lambda: {**prepare(), "codex_home": str(self.paths.local("different-profile"))}
+        window.start_session()
+        process_until(lambda: not window._pending)
+        self.assertEqual(window.error_details.failure.code, "PROFILE_MISMATCH")
+        self.assertIsNone(window._request_id)
+        self.assertEqual(services.launches, [])
+
+    def test_failed_old_profile_close_is_retained_until_a_successful_explicit_recheck(self):
+        window, services = self.legacy_window()
+        backend = services.backends[0]
+        close = backend.close
+        def fail_close():
+            raise StudioError("ONBOARDING_CLOSE_FAILED", "旧账号连接尚未关闭", 503)
+        backend.close = fail_close
+        self.addCleanup(setattr, backend, "close", close)
+        self.select_legacy_hip(window)
+        process_until(lambda: not window._pending)
+        self.assertEqual(len(services.backends), 1)
+        self.assertFalse(backend.closed)
+        self.assertEqual(window._snapshot["account"]["status"], "unknown")
+        self.assertEqual(services.launches, [])
+        backend.close = close
+        window.probe()
+        process_until(lambda: not window._pending)
+        self.assertTrue(backend.closed)
+        self.assertEqual(len(services.backends), 2)
+        self.assertEqual([event for event, _paths in services.lifecycle], ["created", "closed", "created"])
+
 
 if __name__ == "__main__":
     unittest.main()
