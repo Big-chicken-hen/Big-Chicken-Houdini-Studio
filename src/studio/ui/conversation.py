@@ -45,11 +45,11 @@ class ImageTile(QtWidgets.QFrame):
         self.picture.setFixedSize(116, 68) if compact else self.picture.setFixedSize(244, 148)
         layout.addWidget(self.picture)
         row = QtWidgets.QHBoxLayout()
-        name = label(caption)
-        name.setToolTip(caption)
-        name.setMinimumWidth(0)
-        name.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
-        row.addWidget(name, 1)
+        self.caption = label(caption)
+        self.caption.setToolTip(caption)
+        self.caption.setMinimumWidth(0)
+        self.caption.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
+        row.addWidget(self.caption, 1)
         if removable:
             remove = button("×", self.removed.emit, "quiet")
             remove.setAccessibleName("移除图片 " + caption)
@@ -179,7 +179,9 @@ class MessageCard(QtWidgets.QFrame):
         elif kind == "fileChange":
             text = "\n".join(c.get("path", "") for c in item.get("changes", []))
         elif kind == "mcpToolCall":
-            text = "原生工具事件；场景结果请查看「执行记录」。"
+            text = ""  # The native tool payload stays behind the explicit details control.
+        elif kind == "imageView":
+            text = ""
         elif kind == "contextCompaction":
             text = "此会话由 Codex 自动压缩，可继续当前对话。"
         elif not text:
@@ -189,7 +191,7 @@ class MessageCard(QtWidgets.QFrame):
             self.rendered_text = str(text)
             self.text.setMarkdown(self.rendered_text)
         self.text.setVisible(bool(text))
-        is_tool = kind not in {"userMessage", "agentMessage", "reasoning", "plan", "contextCompaction"}
+        is_tool = kind not in {"userMessage", "agentMessage", "reasoning", "plan", "contextCompaction", "imageView"}
         self.details_button.setVisible(is_tool)
         if self.details.isVisible():
             self.show_details()
@@ -211,7 +213,7 @@ class MessageCard(QtWidgets.QFrame):
                 tile.deleteLater()
         self.image_scroll.setVisible(bool(sources))
         if text_changed:
-            QtCore.QTimer.singleShot(0, self.fit_text)
+            QtCore.QTimer.singleShot(0, self, self.fit_text)
         return True
 
     def set_recovering(self, recovering):
@@ -254,6 +256,10 @@ class Transcript(QtWidgets.QScrollArea):
         self.setWidget(self.body)
         self.cards = {}
         self.thread_id = None
+        self.history_known = False
+        self.last_turn_id = None
+        self.item_turns = {}
+        self.tool_groups = {}
         self.suppressed_deltas = set()
         self.completed_items = set()
         self._scroll_target = None
@@ -274,7 +280,14 @@ class Transcript(QtWidgets.QScrollArea):
             self.layout.removeWidget(card)
             card.deleteLater()
         self.cards.clear()
+        for control in self.tool_groups.values():
+            self.layout.removeWidget(control)
+            control.deleteLater()
+        self.tool_groups.clear()
+        self.item_turns.clear()
         self.thread_id = thread_id
+        self.history_known = False
+        self.last_turn_id = None
         self.suppressed_deltas.clear()
         self.completed_items.clear()
         self.empty.show()
@@ -284,9 +297,13 @@ class Transcript(QtWidgets.QScrollArea):
             return
         if thread.get("id") != self.thread_id:
             self.reset(thread.get("id"))
+        if "turns" in thread:
+            self.history_known = True
+            self.last_turn_id = (thread["turns"][-1].get("id") if thread["turns"] else None)
         target = self.scroll_target()
         position = 1  # The welcome widget stays at layout index zero.
         for turn in thread.get("turns", []):
+            group_placed = False
             complete = turn.get("status") in {"completed", "interrupted", "failed"}
             for item in turn.get("items", []):
                 item_id = item.get("id")
@@ -294,8 +311,13 @@ class Transcript(QtWidgets.QScrollArea):
                     continue
                 item_complete = complete or item.get("status") in {"completed", "failed", "declined"}
                 if item_id not in self.completed_items or item_complete:
-                    self.put(item, preserve_scroll=False)
+                    self.put(item, preserve_scroll=False, turn_id=turn.get("id"))
                 card = self.cards[item_id]
+                group = self.tool_groups.get(self.item_turns.get(item_id)) if self.is_tool(item) else None
+                if group and not group_placed:
+                    self.layout.insertWidget(position, group)
+                    position += 1
+                    group_placed = True
                 if self.layout.indexOf(card) != position:
                     self.layout.insertWidget(position, card)
                 position += 1
@@ -309,7 +331,11 @@ class Transcript(QtWidgets.QScrollArea):
         # completion. A non-atomic snapshot is not evidence that they were removed.
         self.queue_scroll_restore(target)
 
-    def put(self, item, *, preserve_scroll=True):
+    @staticmethod
+    def is_tool(item):
+        return item.get("type") not in {"userMessage", "agentMessage", "reasoning", "plan", "contextCompaction", "imageView"}
+
+    def put(self, item, *, preserve_scroll=True, turn_id=None):
         item_id = item.get("id")
         if not item_id:
             return
@@ -322,16 +348,38 @@ class Transcript(QtWidgets.QScrollArea):
             self.layout.insertWidget(self.layout.count() - 1, card)
             self.empty.hide()
             changed = True
+        if self.is_tool(item):
+            group_id = turn_id or self.item_turns.get(item_id) or self.last_turn_id or "current"
+            self.item_turns[item_id] = group_id
+            if group_id not in self.tool_groups:
+                control = QtWidgets.QToolButton()
+                control.setCheckable(True)
+                control.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+                control.toggled.connect(lambda _checked, group_id=group_id: self.update_tool_group(group_id))
+                self.tool_groups[group_id] = control
+                self.layout.insertWidget(self.layout.indexOf(self.cards[item_id]), control)
+            self.update_tool_group(group_id)
         if changed and preserve_scroll:
             self.queue_scroll_restore(target)
 
+    def update_tool_group(self, group_id):
+        control = self.tool_groups[group_id]
+        cards = [self.cards[key] for key, turn_id in self.item_turns.items() if turn_id == group_id]
+        control.setText("本轮执行详情 · " + str(len(cards)) + " 项")
+        control.setArrowType(QtCore.Qt.DownArrow if control.isChecked() else QtCore.Qt.RightArrow)
+        for card in cards:
+            # Native images remain in the conversation even when tool internals fold away.
+            card.setVisible(control.isChecked() or bool(card.image_tiles))
+
     def apply_event(self, event):
         method, params = event.get("method", ""), event.get("params", {})
+        if method == "turn/started":
+            self.last_turn_id = (params.get("turn") or {}).get("id") or params.get("turnId") or self.last_turn_id
         if method in {"item/started", "item/completed"}:
             item = params.get("item", {})
             if method == "item/started" and item.get("id") in self.cards:
                 return
-            self.put(item)
+            self.put(item, turn_id=params.get("turnId"))
             if method == "item/completed" and item.get("id") in self.cards:
                 target = self.scroll_target()
                 self.completed_items.add(item["id"])
@@ -372,7 +420,7 @@ class Transcript(QtWidgets.QScrollArea):
         value = bar.value()
         if bar.maximum() - value < 45:
             return (True, None, 0, value)
-        anchor = min((card for card in self.cards.values() if card.y() + card.height() > value),
+        anchor = min((card for card in self.cards.values() if not card.isHidden() and card.y() + card.height() > value),
                      key=lambda card: card.y(), default=None)
         return (False, anchor.item["id"] if anchor else None,
                 value - anchor.y() if anchor else 0, value)
@@ -401,7 +449,7 @@ class Transcript(QtWidgets.QScrollArea):
             bar.setValue(bar.maximum() if bottom else anchor.y() + offset if anchor else value)
         # QTextDocument height changes post another Qt LayoutRequest. Preserve
         # the anchor through that pass, while allowing user scrolling to cancel.
-        QtCore.QTimer.singleShot(0, after_layout)
+        QtCore.QTimer.singleShot(0, self, after_layout)
 
     def to_bottom(self):
         self.cancel_scroll_restore()

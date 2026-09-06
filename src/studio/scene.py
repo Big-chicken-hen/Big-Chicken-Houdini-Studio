@@ -113,8 +113,9 @@ def validate_arguments(kind, args):
     """Pure validation: no node lookup, cook, observation or side effect."""
     allowed = {"context": set(), "inspect": {"views"},
                "execute": {"script", "label", "preconditions", "checks", "observe"},
-               "capture": {"frame", "resolution"},
-               "lookup": {"source", "query", "category", "type_name", "symbol", "version"}}
+               "capture": {"frame", "resolution", "purpose", "bounds"},
+               "lookup": {"source", "query", "category", "type_name", "symbol", "version",
+                          "members", "offset", "limit"}}
     if not isinstance(args, dict) or kind not in allowed or set(args) - allowed[kind]:
         raise StudioError("INVALID_ARGUMENTS", "Arguments do not match the operation")
     if kind == "execute":
@@ -138,9 +139,30 @@ def validate_arguments(kind, args):
             raise StudioError("INVALID_ARGUMENTS", "Frame must be finite")
         if not isinstance(resolution, list) or len(resolution) != 2 or any(type(v) is not int or not 64 <= v <= 2560 for v in resolution):
             raise StudioError("INVALID_ARGUMENTS", "Resolution requires two integers from 64 to 2560")
-    if kind == "lookup" and (any(not isinstance(v, str) for v in args.values()) or
-                             args.get("source", "metadata") not in {"metadata", "hom"}):
-        raise StudioError("INVALID_ARGUMENTS", "Use installed metadata or a public HOM symbol")
+        if args.get("purpose", "diagnostic") not in ("review", "diagnostic"):
+            raise StudioError("INVALID_ARGUMENTS", "Capture purpose must be review or diagnostic")
+        if "bounds" in args:
+            bounds = args["bounds"]
+            if (args.get("purpose", "diagnostic") != "review" or not isinstance(bounds, list) or
+                    len(bounds) != 6 or any(type(v) not in (int, float) or not math.isfinite(v) for v in bounds) or
+                    any(bounds[i] > bounds[i + 3] for i in range(3)) or
+                    all(bounds[i] == bounds[i + 3] for i in range(3))):
+                raise StudioError("INVALID_ARGUMENTS", "Review bounds require finite min XYZ then max XYZ with nonzero extent")
+    if kind == "lookup":
+        discovery = {"members", "offset", "limit"}
+        if (any(not isinstance(v, str) for k, v in args.items() if k not in discovery) or
+                args.get("source", "metadata") not in {"metadata", "hom"}):
+            raise StudioError("INVALID_ARGUMENTS", "Use installed metadata or a public HOM symbol")
+        if discovery.intersection(args) and args.get("source") != "hom":
+            raise StudioError("INVALID_ARGUMENTS", "Member discovery applies only to HOM symbols")
+        if type(args.get("members", False)) is not bool:
+            raise StudioError("INVALID_ARGUMENTS", "members must be boolean")
+        if (type(args.get("offset", 0)) is not int or not 0 <= args.get("offset", 0) <= 1000000 or
+                type(args.get("limit", 32)) is not int or not 1 <= args.get("limit", 32) <= 64 or
+                len(args.get("query", "")) > 128 and args.get("members", False)):
+            raise StudioError("INVALID_ARGUMENTS", "HOM member pages require offset 0..1000000, limit 1..64 and query up to 128 characters")
+        if {"offset", "limit"}.intersection(args) and not args.get("members", False):
+            raise StudioError("INVALID_ARGUMENTS", "Member pagination requires members=true")
 
 
 def json_value(value, depth=0, redact=lambda text: text):
@@ -394,6 +416,7 @@ class HoudiniScene:
         return diagnostic
 
     def lookup(self, args):
+        validate_arguments("lookup", args)
         if args.get("source", "metadata") == "hom":
             symbol = args.get("symbol", "")
             parts = symbol.removeprefix("hou.").split(".")
@@ -404,8 +427,26 @@ class HoudiniScene:
                 obj = inspect.getattr_static(obj, part, None)
                 if obj is None:
                     raise StudioError("SYMBOL_NOT_FOUND", "HOM symbol is absent in this installation", 404)
-            return {"symbol": symbol, "documentation": self.redact(getattr(obj, "__doc__", "") or "")[:18000],
-                    "houdini_version": self.houdini_version}
+            result = {"symbol": symbol, **self._hom_symbol_info(obj), "houdini_version": self.houdini_version}
+            if args.get("members", False):
+                # Static namespaces only: no instance getters, HOM calls, custom
+                # __dir__, recursive installation scan or descriptor evaluation.
+                if inspect.isclass(obj):
+                    namespaces = [vars(base) for base in inspect.getmro(obj)]
+                elif inspect.ismodule(obj):
+                    namespaces = [vars(obj)]
+                else:
+                    raise StudioError("INVALID_ARGUMENTS", "Discover members of a public HOM class or module")
+                query = args.get("query", "").casefold()
+                names = sorted({name for namespace in namespaces for name in namespace
+                                if not name.startswith("_") and query in name.casefold()})
+                offset, limit = args.get("offset", 0), args.get("limit", 32)
+                page = names[offset:offset + limit]
+                result.update(members=[{"name": name, **self._hom_symbol_info(
+                    inspect.getattr_static(obj, name), short=True)} for name in page],
+                    total=len(names), offset=offset,
+                    next_offset=offset + limit if offset + limit < len(names) else None)
+            return result
         category = args.get("category", "Sop")
         category_object = self.hou.nodeTypeCategories().get(category)
         if category_object is None:
@@ -432,14 +473,144 @@ class HoudiniScene:
         return {"name": name, "category": category, "parameters": templates[:300],
                 "houdini_version": self.hou.applicationVersionString()}
 
+    def _hom_symbol_info(self, obj, short=False):
+        kind = ("class" if inspect.isclass(obj) else "module" if inspect.ismodule(obj) else
+                "property" if isinstance(obj, property) else "callable" if inspect.isroutine(obj) else "value")
+        doc = getattr(obj, "__doc__", "") if kind != "value" else ""
+        result = {"kind": kind, "documentation": self.redact(doc or "")[:240 if short else 18000]}
+        if inspect.isroutine(obj):
+            # H22's setRotation has no docstring; its Matrix3 annotation is the
+            # authoritative installed type hint. Never evaluate string annotations.
+            try:
+                signature = inspect.signature(obj, follow_wrapped=False, eval_str=False)
+                result["signature"] = self.redact(str(signature))[:600 if short else 2000]
+            except (TypeError, ValueError):
+                result["signature"] = None
+        return result
+
+    def _capture_view(self, viewer, viewport, args, detail, restorers):
+        # Optional review metadata must not become a dependency of the default
+        # diagnostic capture, which uses the current view unchanged.
+        if args.get("purpose", "diagnostic") == "diagnostic":
+            return
+        settings = viewport.settings()
+        camera_path = viewport.cameraPath()
+        detail["view"] = {"viewport": self.redact(viewport.name()), "type": str(viewport.type()),
+                          "camera_path": self.redact(camera_path), "framing": "current"}
+        # These are settings, not a classification of pixels. An environment
+        # option being enabled does not prove that it caused a visible horizon.
+        detail["background"] = {"color_scheme": str(settings.colorScheme()),
+                                "images_enabled": bool(settings.displayBackgroundImage()),
+                                "environment_enabled": bool(settings.displayEnvironmentBackgroundImage()),
+                                "horizon": "unclassified", "policy": "preserved"}
+        framing = None
+        if "bounds" in args:
+            camera = viewport.camera()
+            if viewport.isViewingThroughExtraCamera() or (camera_path and camera is None):
+                raise StudioError("REVIEW_FRAMING_UNSUPPORTED", "Use diagnostic capture or a free/OBJ camera view for review bounds")
+            framing = (camera, viewport.defaultCamera().stash(), bool(viewport.isCameraLockedToView()),
+                       tuple(viewport.viewTransform().asTuple()))
+
+        # Only known decorations; CurrentGeometry/DisplayNodes/TemplateGeometry
+        # and other guides that actually show user geometry must stay untouched.
+        displays = []
+        for name in ("XYPlane", "XZPlane", "YZPlane", "OriginGnomon", "FloatingGnomon"):
+            guide = getattr(self.hou.viewportGuide, name)
+            displays.append((name, lambda guide=guide: settings.guideEnabled(guide),
+                             lambda value, guide=guide: settings.enableGuide(guide, value)))
+        plane = viewer.constructionPlane()
+        displays.extend([("ortho_grid", settings.displayOrthoGrid, settings.setDisplayOrthoGrid),
+                         ("construction_plane", plane.isVisible, plane.setIsVisible)])
+        saved = [(name, getter, setter, bool(getter())) for name, getter, setter in displays]
+        detail["display_adjustments"] = []
+        for name, getter, setter, previous in saved:
+            record = {"setting": name, "before": previous, "during": None, "restored": None}
+            detail["display_adjustments"].append(record)
+
+            def restore_display(getter=getter, setter=setter, previous=previous, record=record):
+                try:
+                    if bool(getter()) != previous:
+                        setter(previous)
+                finally:
+                    record["restored"] = bool(getter())
+                if record["restored"] != previous:
+                    raise StudioError("VIEW_RESTORE_MISMATCH", "A viewport decoration was not restored")
+
+            # Register before writing: even a setter that partially fails needs
+            # restoration. Other restorers still run if this one fails.
+            restorers.append((name, restore_display))
+            if previous:
+                setter(False)
+            record["during"] = bool(getter())
+            if record["during"]:
+                raise StudioError("REVIEW_DISPLAY_MISMATCH", "A requested viewport decoration remains enabled")
+
+        if framing is not None:
+            camera, saved_view, locked, transform = framing
+            free_view = {"saved": saved_view if camera is None else None}
+            restorers.append(("view", lambda: self._restore_capture_view(
+                viewport, camera, saved_view, free_view, locked, transform, camera_path, detail)))
+            # H22 defaultCamera() is live and can edit a locked camera node.
+            # Disconnect and verify before framing; never write camera parameters.
+            viewport.lockCameraToView(False)
+            if viewport.isCameraLockedToView():
+                raise StudioError("REVIEW_CAMERA_LOCKED", "Could not unlock the viewport for temporary framing")
+            viewport.useDefaultCamera()
+            if viewport.cameraPath() or viewport.isViewingThroughExtraCamera():
+                raise StudioError("REVIEW_CAMERA_BOUND", "Could not detach the viewport for temporary framing")
+            if camera is not None:
+                free_view["saved"] = viewport.defaultCamera().stash()
+            viewport.frameBoundingBox(self.hou.BoundingBox(*args["bounds"]))
+            detail["view"].update(framing="bounds", bounds=list(args["bounds"]), capture_camera_path="")
+        viewport.draw()
+
+    def _restore_capture_view(self, viewport, camera, saved_view, free_view, locked, transform, camera_path, detail):
+        def attempt(phase, action):
+            try:
+                action()
+                return True
+            except BaseException as exc:
+                detail["restore_errors"].append({"phase": phase, "error": self.error(exc, "VIEW_RESTORE_FAILED")})
+                return False
+
+        def detach():
+            viewport.lockCameraToView(False)
+            if viewport.isCameraLockedToView():
+                raise StudioError("VIEW_RESTORE_LOCKED", "Restoration cannot safely change a locked view")
+            viewport.useDefaultCamera()
+            if viewport.cameraPath() or viewport.isViewingThroughExtraCamera():
+                raise StudioError("VIEW_RESTORE_BOUND", "Restoration could not detach the viewport")
+
+        if attempt("detach_view", detach) and free_view["saved"] is not None:
+            attempt("default_view", lambda: viewport.setDefaultCamera(free_view["saved"]))
+        if camera is not None:
+            attempt("camera_binding", lambda: viewport.setCamera(camera))
+        attempt("camera_lock", lambda: viewport.lockCameraToView(locked))
+
+        def verify():
+            observed = tuple(viewport.viewTransform().asTuple())
+            restored_path, restored_lock = viewport.cameraPath(), bool(viewport.isCameraLockedToView())
+            matches = len(observed) == len(transform) and all(
+                math.isclose(a, b, rel_tol=0, abs_tol=1e-6) for a, b in zip(observed, transform))
+            width_matches = math.isclose(viewport.defaultCamera().orthoWidth(), saved_view.orthoWidth(),
+                                         rel_tol=0, abs_tol=1e-6)
+            detail["view"]["restored"] = {"camera_path": self.redact(restored_path), "locked": restored_lock,
+                                           "transform_matches": matches, "ortho_width_matches": width_matches}
+            if restored_path != camera_path or restored_lock != locked or not matches or not width_matches:
+                raise StudioError("VIEW_RESTORE_MISMATCH", "Original viewport or camera binding was not restored")
+
+        attempt("verify_view", verify)
+
     def capture(self, args):
-        # Adapted frame/restore separation from HIA 6d9a2d7; no camera switching,
-        # multi-frame orchestration or heuristic visual quality gate is inherited.
+        # Adapted frame/camera restore separation from HIA 6d9a2d7. No multi-frame
+        # orchestration, scene cleanup or heuristic visual quality gate.
         detail = {"capture_api": "SceneViewer.flipbook", "requested_frame": args.get("frame"),
+                  "purpose": args.get("purpose", "diagnostic"),
                   "configured_frame_range": None, "frame_before": None,
                   "frame_before_capture": None, "actual_frame": None,
                   "restored_frame": None, "capture_error": None, "restore_errors": []}
         previous_frame, artifact_id = None, None
+        restorers = []
         try:
             validate_arguments("capture", args)
             previous_frame = float(self.hou.frame())
@@ -453,6 +624,7 @@ class HoudiniScene:
             viewport = viewer.curViewport()
             width, height, source = capture_resolution(args, viewport)
             detail.update(requested_resolution=[width, height], resolution_source=source)
+            self._capture_view(viewer, viewport, args, detail, restorers)
             artifact_id, output = self._artifacts.allocate()
             settings = viewer.flipbookSettings().stash()
             # Mutate only the stash. Do not reset simulation or inherit costly
@@ -509,6 +681,11 @@ class HoudiniScene:
                         raise StudioError("FRAME_RESTORE_MISMATCH", "Original frame was not restored")
                 except BaseException as exc:
                     detail["restore_errors"].append({"phase": "verify_frame", "error": self.error(exc, "FRAME_RESTORE_FAILED")})
+            for phase, restore in reversed(restorers):
+                try:
+                    restore()
+                except BaseException as exc:
+                    detail["restore_errors"].append({"phase": phase, "error": self.error(exc, "VIEW_RESTORE_FAILED")})
         if detail["capture_error"] is None:
             try:
                 # Verify real PNG scanlines/dimensions before registering an immutable

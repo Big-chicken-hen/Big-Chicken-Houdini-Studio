@@ -262,6 +262,7 @@ class OperationsTests(unittest.TestCase):
             if len(used) == 2:
                 raise RuntimeError("simulated viewport failure")
             Path(settings.values["output"]).write_bytes(png_bytes(*settings.values["resolution"]))
+        # Diagnostic capture must work without optional review metadata APIs.
         active_viewport = SimpleNamespace(size=lambda: (0, 0, 320, 180))
         viewer = SimpleNamespace(flipbookSettings=lambda: original, curViewport=lambda: active_viewport, flipbook=flipbook)
         with patch.multiple(self.hou, create=True, frame=lambda: current_frame[0],
@@ -269,12 +270,12 @@ class OperationsTests(unittest.TestCase):
                             ui=SimpleNamespace(paneTabOfType=lambda kind: viewer),
                             paneTabType=SimpleNamespace(SceneViewer="SceneViewer")):
             result = self.scene.capture({"frame": 24})
-            self.assertEqual(result.state, "finished")
+            self.assertEqual(result.state, "finished", result.detail["capture_error"])
             self.assertEqual(result.detail["actual_resolution"], [320, 180])
             self.assertEqual(result.detail["restored_frame"], 7)
             self.assertEqual(current_frame[0], 7)
             self.assertEqual(original.values, expensive)
-            failed = self.scene.capture({"frame": 30})
+            failed = self.scene.capture({"frame": 30, "purpose": "diagnostic"})
             self.assertEqual(failed.state, "failed")
             self.assertIn("simulated viewport failure", failed.detail["capture_error"]["message"])
             self.assertEqual(failed.detail["restore_errors"], [])

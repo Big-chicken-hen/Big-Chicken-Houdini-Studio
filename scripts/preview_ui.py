@@ -23,6 +23,7 @@ class PreviewApi:
         self.calls = []
         self.hold = {}
         self.errors = {}
+        self.closed = False
         self.state = {
             "workspace": {"workspace_id": "preview_workspace", "name": "折光实验室  /  离屏预览"},
             "thread_id": "preview_thread", "turn_id": "preview_turn",
@@ -49,13 +50,15 @@ class PreviewApi:
         self.events = []
 
     def call(self, method, path, body=None, done=None, failed=None, unique=False):
+        if self.closed:
+            return False
         self.calls.append((method, path, copy.deepcopy(body)))
         if path in self.hold:
             self.hold[path].append((done, failed, copy.deepcopy(body)))
             return True
         if path in self.errors:
             if failed:
-                QtCore.QTimer.singleShot(0, lambda: failed(self.errors[path]))
+                QtCore.QTimer.singleShot(0, lambda: failed(self.errors[path]) if not self.closed else None)
             return True
         if path == "/state":
             result = self.state
@@ -105,8 +108,11 @@ class PreviewApi:
             raise AssertionError("Unexpected preview route: " + path)
         snapshot = copy.deepcopy(result)
         if done:
-            QtCore.QTimer.singleShot(0, lambda: done(snapshot))
+            QtCore.QTimer.singleShot(0, lambda: done(snapshot) if not self.closed else None)
         return True
+
+    def close(self):
+        self.closed = True
 
 
 def process_until(predicate, timeout=3000):
