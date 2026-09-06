@@ -283,7 +283,7 @@ def serve_stdio(adapter, source, output, token=""):
             send({"jsonrpc": "2.0", "id": None, "error": {"code": -32600, "message": "Request exceeds 2 MB"}})
             continue
         try:
-            message = json.loads(line, parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
+            message = json.loads(line.decode("utf-8"), parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
             if not isinstance(message, dict):
                 raise ValueError()
             process(message)
@@ -292,6 +292,8 @@ def serve_stdio(adapter, source, output, token=""):
 
 
 def main():
+    # MCP wire encoding is UTF-8 even when Windows or the launcher selects a legacy code page.
+    sys.stdout.reconfigure(encoding="utf-8", errors="strict", newline="\n")
     paths = AppPaths()
     directory = paths.session(os.environ["BCS_SESSION_ID"])
     token = os.environ["BCS_SESSION_TOKEN"]
