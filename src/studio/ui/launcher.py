@@ -9,6 +9,7 @@ import threading
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..common import AppPaths, StudioError, atomic_json, new_id, read_json
+from ..codex.protocol import SUPPORTED_CODEX_VERSION
 from .launcher_pages import project_page
 from .launcher_visuals import LAUNCHER_STYLE, RecentRow
 from .shared import ApiFailure, ErrorDetails, Task, button, label
@@ -459,15 +460,18 @@ class StudioLauncher(QtWidgets.QWidget):
         if view.name == "setup":
             modes = {
                 "codex_missing": ("需要 Codex", "安装 Codex 后即可继续。"),
-                "codex_incompatible": ("当前 Codex 版本不受支持", "请选择符合要求的兼容安装。"),
+                "codex_incompatible": ("当前 Codex 版本不受支持", f"需要 Codex {SUPPORTED_CODEX_VERSION}，请选择兼容安装。"),
                 "codex_error": ("无法启动 Codex", "尚未确认可用的 Codex 连接，请重新检查或选择其他安装。"),
-                "codex_unconfirmed": ("无法确认可用安装", "请选择已有 Codex，或查看当前要求。"),
+                "codex_unconfirmed": ("无法确认可用安装", f"需要 Codex {SUPPORTED_CODEX_VERSION}。请选择已有安装，或查看要求。"),
                 "houdini": ("需要 Houdini 安装", "请选择本机已有的 Houdini 安装。"),
             }
             title, message = modes[view.mode]
             self.setup_title.setText(title)
             self.setup_message.setText(message)
-            self.install_guide.setVisible(view.mode in {"codex_missing", "codex_incompatible", "codex_unconfirmed"})
+            self.install_guide.setVisible(view.mode == "codex_missing")
+            self.setup_details.setVisible(view.mode != "codex_missing")
+            self.setup_details.setText("查看要求" if view.mode in {"codex_incompatible", "codex_unconfirmed"} else "查看详情")
+            self.setup_details.setAccessibleName(self.setup_details.text())
             self.setup_codex.setVisible(view.mode != "houdini")
             self.setup_codex.setText("选择兼容安装" if view.mode == "codex_incompatible" else
                                     "选择其他安装" if view.mode == "codex_error" else "选择已有安装")
@@ -544,7 +548,8 @@ class StudioLauncher(QtWidgets.QWidget):
         self.settings_error.setVisible(bool(self._failure))
         self._sync_environment_controls()
         self.error_details.set_failure(self._failure)
-        details = {"environment": self._snapshot, "launch": self._launch_record,
+        details = {"requirements": {"codex_version": SUPPORTED_CODEX_VERSION},
+                   "environment": self._snapshot, "launch": self._launch_record,
                    "request_id": self._request_id, "icons": icon_diagnostics()}
         rendered = json.dumps(details, ensure_ascii=False, indent=2, default=str)
         if self.diagnostics_text.toPlainText() != rendered:

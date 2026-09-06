@@ -13,6 +13,7 @@ from PySide6 import QtCore, QtGui, QtWidgets  # noqa: E402
 
 from scripts.preview_launcher import PreviewServices, PreviewTarget, configure_fonts, make_fixture_window, process_until  # noqa: E402
 from studio.common import AppPaths  # noqa: E402
+from studio.codex.protocol import SUPPORTED_CODEX_VERSION  # noqa: E402
 from studio.ui.launcher import StudioLauncher, read_minimize_preference, write_minimize_preference
 from studio.ui.launcher_pages import project_page  # noqa: E402
 from studio.common import StudioError  # noqa: E402
@@ -192,6 +193,34 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(window.current_page, "home")
         self.assertEqual(window.size(), size)
         self.assertEqual(services.launches, [])
+
+    def test_setup_template_shows_only_the_specified_actions_and_existing_requirements(self):
+        window, services = self.window("missing_codex", records=[])
+        cases = (
+            ("missing_codex", ["查看安装步骤", "选择已有安装"]),
+            ("incompatible_codex", ["选择兼容安装", "查看要求"]),
+            ("codex_unconfirmed", ["选择已有安装", "查看要求"]),
+            ("codex_init_error", ["重新检查", "选择其他安装", "查看详情"]),
+            ("missing_houdini", ["选择 Houdini", "重新检查", "查看详情"]),
+        )
+        for state, expected in cases:
+            with self.subTest(state=state):
+                services.state = state
+                snapshot = services.snapshot()
+                if state == "codex_unconfirmed":
+                    snapshot["codex"].update(state="incompatible", attempts=[{"code": "CODEX_REQUIRED"}])
+                window.apply_snapshot(snapshot)
+                window.render()
+                visible = [window.setup_actions.itemAt(i).widget() for i in range(window.setup_actions.count())]
+                self.assertEqual([widget.text() for widget in visible if widget.isVisible()], expected)
+                if "查看要求" in expected:
+                    self.assertIn(SUPPORTED_CODEX_VERSION, window.setup_message.text())
+                    window.setup_details.click()
+                    self.assertEqual(window.current_page, "diagnostics")
+                    self.assertIn(SUPPORTED_CODEX_VERSION, window.diagnostics_text.toPlainText())
+                    window.back_secondary()
+        self.assertEqual(services.opened_urls, [])
+        self.assertEqual(len(services.probes), 1)
 
     def test_open_and_empty_are_direct_activations_but_selection_remains_pure(self):
         window, services = self.window(records=[])
