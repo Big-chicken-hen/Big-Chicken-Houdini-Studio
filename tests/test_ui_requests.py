@@ -104,6 +104,14 @@ class RequestControlsTest(unittest.TestCase):
         self.control.apply_state(trust_state())
         self.assertFalse(self.control.toggle.isEnabled())
 
+    def test_existing_trust_can_be_revoked_while_houdini_is_disconnected(self):
+        self.control.apply_state(trust_state(enabled=True, available=False, can_change=True,
+                                            reason="Houdini is disconnected"))
+        self.assertIn("已授权", self.control.status.text())
+        self.assertTrue(self.control.revoke.isEnabled())
+        self.control.revoke.click()
+        self.assertEqual(self.api.calls[0][2]["enabled"], False)
+
     def test_native_permission_session_choice_is_separate_and_explicit(self):
         permissions = {"fileSystem": {"write": ["C:/explicit-output"]}}
         card = RequestCard({"request_id": 71, "method": "item/permissions/requestApproval",
@@ -116,6 +124,26 @@ class RequestControlsTest(unittest.TestCase):
         self.assertEqual(self.api.calls, [])
         self.assertTrue(all(not button.isEnabled() for button in card.actions))
         card.deleteLater()
+
+    def test_ambiguous_native_response_cannot_be_sent_twice(self):
+        request = {"request_id": 72, "method": "mcpServer/elicitation/request", "params": {
+            "mode": "form", "_meta": {"codex_approval_kind": "mcp_tool_call"},
+            "requestedSchema": {"type": "object", "properties": {}}}}
+        card = RequestCard(request)
+        responses = []
+        card.respond.connect(lambda request_id, value: responses.append((request_id, value)))
+        card.actions[0].click()
+        card.failed("Response lost")
+        card.update_request(request)  # An old pending snapshot is not proof of non-delivery.
+        card.submit({"action": "accept", "content": {}})
+        self.assertEqual(len(responses), 1)
+        self.assertTrue(card.response_unknown)
+        self.assertTrue(all(not button.isEnabled() for button in card.actions))
+        card.deleteLater()
+        unknown_card = RequestCard({**request, "response_state": "unknown"})
+        self.assertTrue(unknown_card.response_unknown)
+        self.assertTrue(all(not button.isEnabled() for button in unknown_card.actions))
+        unknown_card.deleteLater()
 
 
 if __name__ == "__main__":

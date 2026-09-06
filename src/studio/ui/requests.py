@@ -21,6 +21,8 @@ class RequestCard(QtWidgets.QFrame):
         self.layout.setSpacing(10)
         self.inputs = {}
         self.actions = []
+        self.waiting_response = False
+        self.response_unknown = False
         self.error = label("", "warning", True)
         method, params = request.get("method"), request.get("params", {})
         self.layout.addWidget(label("需要你的回应", "messageAuthor"))
@@ -90,6 +92,7 @@ class RequestCard(QtWidgets.QFrame):
             self.layout.addWidget(label("此原生请求尚未支持。请求保持待处理，可停止当前 Codex 轮次。", "warning", True))
         self.row.addStretch()
         self.layout.addLayout(self.row)
+        self.update_request(request)
 
     def action(self, title, callback):
         control = button(title, lambda: callback())
@@ -142,16 +145,34 @@ class RequestCard(QtWidgets.QFrame):
         self.submit({"action": "accept", "content": content})
 
     def submit(self, result):
+        if self.waiting_response or self.response_unknown:
+            return
+        self.waiting_response = True
         self.error.hide()
         for control in self.actions:
             control.setEnabled(False)
         self.respond.emit(self.request_id, result)
 
     def failed(self, message):
+        if self.waiting_response or getattr(message, "code", None) == "APPROVAL_RESPONSE_UNKNOWN":
+            self.mark_response_unknown()
+            return
         self.error.setText(message)
         self.error.show()
         for control in self.actions:
             control.setEnabled(True)
+
+    def update_request(self, request):
+        self.request = request
+        if request.get("response_state") == "unknown":
+            self.mark_response_unknown()
+
+    def mark_response_unknown(self):
+        self.response_unknown = True
+        self.error.setText("本次回应是否送达尚未确认。请查询对话状态，确认前不能再次提交回应。")
+        self.error.show()
+        for control in self.actions:
+            control.setEnabled(False)
 
 
 class SessionTrustControl(QtWidgets.QFrame):
@@ -185,7 +206,8 @@ class SessionTrustControl(QtWidgets.QFrame):
         details_layout = QtWidgets.QVBoxLayout(self.details)
         details_layout.setContentsMargins(0, 3, 0, 3)
         details_layout.addWidget(label(
-            "允许当前会话通过 Studio 读取、截图和修改 Houdini。授权包含本机 Python/HOM 执行，"
+            "允许当前会话通过 Studio 读取、截图和修改 Houdini，对后续工具调用生效；"
+            "当前已出现的审批仍需处理。授权包含本机 Python/HOM 执行，"
             "脚本可能产生场景外的影响；这项授权不会逐批审查全部副作用。"
             "清空场景、覆盖文件或大范围删除应先明确确认。其他工具和外部权限仍分别确认。"
             "撤销后恢复后续请求的逐次确认；已允许的请求和正在执行的修改不会被撤回。"
@@ -221,13 +243,13 @@ class SessionTrustControl(QtWidgets.QFrame):
 
     def render(self):
         bound = bool(self.thread_id and self.trust.get("thread_id") == self.thread_id)
-        known = bound and self.trust.get("available") and not self.uncertain
+        known = bound and type(self.trust.get("enabled")) is bool and not self.uncertain
         pending = self.busy or self.trust.get("pending", False)
         enabled = known and self.trust.get("enabled") is True
         can_change = bool(self.api and known and type(self.trust.get("revision")) is int and
                           self.trust.get("can_change", False) and not pending)
         text = "场景操作：本会话已授权" if enabled else "场景操作：逐次确认"
-        if not bound or not self.trust.get("available"):
+        if not known:
             text = "场景授权状态不可用"
         if pending:
             text = "正在更新场景授权…"
@@ -235,8 +257,8 @@ class SessionTrustControl(QtWidgets.QFrame):
             text = "场景授权状态尚未确认"
         self.status.setText(text)
         self.toggle.setVisible(not enabled and not self.uncertain)
-        self.toggle.setEnabled(can_change)
-        self.grant.setEnabled(can_change and not enabled)
+        self.toggle.setEnabled(can_change and bool(self.trust.get("available")))
+        self.grant.setEnabled(can_change and bool(self.trust.get("available")) and not enabled)
         self.revoke.setVisible(bool(enabled))
         self.revoke.setEnabled(can_change)
         self.query.setVisible(self.uncertain)
@@ -250,7 +272,7 @@ class SessionTrustControl(QtWidgets.QFrame):
 
     def request_change(self, enabled):
         if (self.busy or self.uncertain or self.api is None or not self.thread_id or
-                self.trust.get("thread_id") != self.thread_id or not self.trust.get("available") or
+                self.trust.get("thread_id") != self.thread_id or enabled and not self.trust.get("available") or
                 type(self.trust.get("revision")) is not int or not self.trust.get("can_change") or
                 self.trust.get("pending")):
             return
@@ -313,7 +335,7 @@ class SessionTrustControl(QtWidgets.QFrame):
             trust = value.get("scene_trust") or {}
             if value.get("thread_id") == thread_id and trust.get("thread_id") == thread_id:
                 self.apply_state(value)
-                if trust.get("available") and type(trust.get("enabled")) is bool and not trust.get("pending"):
+                if type(trust.get("enabled")) is bool and not trust.get("pending"):
                     self.uncertain = False
                     self.feedback.hide()
             self.render()
