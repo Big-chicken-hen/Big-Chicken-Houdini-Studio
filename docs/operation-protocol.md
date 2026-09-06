@@ -56,6 +56,15 @@ A new runtime recovers old `running` entries as `unknown` and old `queued` entri
 
 ## Stop, queries and transport limits
 
+The supervisor holds `session.lock` as a launch reservation. Separately, the
+Houdini Runtime acquires `execution.lock` before constructing the scene or opening
+and recovering `operations.sqlite`. A competing Runtime is refused without
+touching the ledger. The execution worker releases this lock only after it
+actually finishes and closes SQLite; a timed-out `close()` does not release it.
+An abrupt supervisor exit therefore does not grant another Runtime execution
+rights while the old Houdini worker is still alive. A failed runtime acquisition
+is reported to its own launcher session without terminating Houdini.
+
 `POST /owner/stop` establishes an owner fence and requests cancellation of its pending operations. Queued operations cannot start after the fence. Already running HOM remains `running` with `cancel_requested: true` until it returns or reaches an explicit `checkpoint()`. Native blocking HOM cannot be forcibly interrupted by stopping Codex. `POST /owner/resume` requires the queue to drain and storage to be healthy.
 
 `GET /operations/<id>` and `GET /operations/<id>/detail?offset=N` never execute HOM. Detail offsets count Unicode characters, with a default 24,000-character page and `next_offset` cursor. Normal result summaries are at most 16,000 UTF-8 bytes; larger successful results remain successful and retain full paged details. Summary limits do not replace the final receipt with an execution error.
@@ -64,11 +73,27 @@ If submission returns an uncertain transport or server error, the adapter querie
 
 HTTP binds `127.0.0.1`, rejects redirects/cross-origin/chunked requests, authenticates with the environment-only session token, limits bodies to 2 MiB, and bounds concurrent handlers to 32. MCP stdio processes requests serially with pipe backpressure, bounded 2 MiB line reads, and no executor backlog. Oversized lines are discarded in bounded chunks. Seven decision tools remain; there is no new tool discovery or recovery system.
 
-Capture receipts retain an artifact ID. The adapter queries the artifact and emits a native MCP `image` content item, with no duplicate `structuredContent` payload. Image retrieval failures do not recapture the scene. Artifact bytes remain limited to 12 MiB and under the app's `.runtime` storage.
+Capture receipts retain an artifact ID. Verified images and their immutable manifests live under the workspace's `artifacts` directory, so a new Runtime for the same workspace can retrieve them by ID. Only newly registered persistent artifacts have this guarantee; old session-only images are not discovered or imported by arbitrary path. The adapter queries the artifact and emits a native MCP `image` content item, with no duplicate `structuredContent` payload. Image retrieval failures do not recapture the scene or alter the original receipt. Artifact bytes remain limited to 12 MiB and under the app's `.runtime` storage.
 
-A single-frame capture modifies only a stashed copy of the viewport flipbook settings. It explicitly disables simulation initialization, motion blur, keyframe-only scope and rendering all viewports, and still restores the previous frame on success or failure. SideFX documents that [flipbook simulation initialization resets simulations and motion blur renders extra subframes](https://www.sidefx.com/docs/houdini/hom/hou/FlipbookSettings.html); these options must not be inherited from a previous interactive flipbook. Moving to a requested frame can still cook, and this change does not promise simulation-cache rollback or bounded progressive-render time. Fake settings tests verify the calls and restoration, not actual viewport/cook behavior.
+A single-frame capture modifies only a stashed copy of the viewport flipbook settings. It explicitly disables simulation initialization, motion blur, keyframe-only scope and rendering all viewports. It attempts to restore the previous frame and records capture and restoration errors separately. A valid image can accompany failed restoration; the receipt remains failed and the adapter can still return that image. SideFX documents that [flipbook simulation initialization resets simulations and motion blur renders extra subframes](https://www.sidefx.com/docs/houdini/hom/hou/FlipbookSettings.html); these options must not be inherited from a previous interactive flipbook. Moving to a requested frame can still cook; this does not promise simulation-cache rollback or bounded progressive-render time. PNG structure, actual dimensions and observed frames are verified. Without explicit dimensions, capture uses the live viewport aspect, bounded to 2560 pixels. Fake settings tests alone do not establish actual viewport/cook behavior.
 
 ## Metadata, documents and output
+
+`hia_inspect` supports `view=parameters` for an existing node. `pattern` filters
+actual parameter names; `offset` and `limit` page their native metadata without
+evaluating parameter values. Records retain the name returned by
+`parm.parmTemplate()` (which can already be expanded) and native multiparm
+instance indices. Do not infer an index base or a real parameter name from a
+template suffix. Use `view=parms` with the discovered names to read values.
+
+`view=geometry` accepts selected attribute `owners` (point, primitive, vertex,
+detail), optional exact `attributes`, and `samples` from 0 to 16. Metadata reports
+data type, tuple size, native qualifier and array status, limited to 64 attributes
+per owner. Sampling uses direct element indices, at most 16 attributes per
+sample, rather than constructing all point/primitive/vertex handles. Array,
+dictionary and oversized tuple values remain metadata-only. String previews are
+truncated explicitly. Native attribute metadata enumeration and the requested
+node's cook can still cost work; the sample limit is not a cook-time guarantee.
 
 `hia_lookup(source=metadata)` queries live installed node types/parameter templates through the same bounded main-thread queue, without requiring a scene observation. It must not call HOM from HTTP workers. `POST /lookup` accepts only `source=hom`: public symbol resolution uses static Python attributes and returns docstrings with the version cached at scene construction. It does not evaluate properties, read scene nodes or cook. No whole-installation metadata snapshot blocks startup.
 

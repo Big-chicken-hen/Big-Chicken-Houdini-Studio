@@ -7,6 +7,7 @@ import os
 from .common import AppPaths, StudioError, atomic_json, identifier
 from .http import serve
 from .ledger import Ledger
+from .ownership import execution_lock
 from .runtime import OperationRuntime
 from .scene import HoudiniScene
 
@@ -53,14 +54,51 @@ def start():
     paths = AppPaths()
     workspace_id, session_id = os.environ["BCS_WORKSPACE_ID"], os.environ["BCS_SESSION_ID"]
     token = os.environ["BCS_SESSION_TOKEN"]
-    scene = HoudiniScene(hou, paths.session(session_id) / "captures", secrets=(token,))
-    ledger = Ledger(paths.workspace(workspace_id) / "operations.sqlite", redact=scene.redact)
-    runtime = OperationRuntime(ledger, scene, hdefereval.executeInMainThreadWithResult,
-                               workspace_id=workspace_id, session_id=session_id)
-    server = serve(runtime_router(runtime), token)
-    atomic_json(paths.session(session_id) / "runtime.json", {
-        "url": "http://127.0.0.1:" + str(server.server_port),
-        "runtime_id": runtime.runtime_id, "workspace_id": workspace_id,
-        "launcher_session_id": session_id, "houdini_pid": os.getpid()})
+    # Reject concurrent runtimes before opening/recovering the shared ledger.
+    try:
+        ownership = execution_lock(paths, workspace_id)
+    except StudioError as exc:
+        # A competing runtime can win after the supervisor's advisory probe.
+        # Publish only this session's startup refusal; do not open the ledger.
+        atomic_json(paths.session(session_id) / "runtime-error.json", {
+            "launcher_session_id": session_id, "workspace_id": workspace_id, "error": exc.payload()["error"]})
+        raise
+    scene = ledger = runtime = server = None
+    try:
+        scene = HoudiniScene(hou, paths.workspace(workspace_id) / "artifacts", secrets=(token,))
+        ledger = Ledger(paths.workspace(workspace_id) / "operations.sqlite", redact=scene.redact)
+        runtime = OperationRuntime(ledger, scene, hdefereval.executeInMainThreadWithResult,
+                                   workspace_id=workspace_id, session_id=session_id, ownership=ownership)
+        server = serve(runtime_router(runtime), token)
+        atomic_json(paths.session(session_id) / "runtime.json", {
+            "url": "http://127.0.0.1:" + str(server.server_port),
+            "runtime_id": runtime.runtime_id, "workspace_id": workspace_id,
+            "launcher_session_id": session_id, "houdini_pid": os.getpid()})
+    except BaseException:
+        try:
+            atomic_json(paths.session(session_id) / "runtime-error.json", {
+                "launcher_session_id": session_id, "workspace_id": workspace_id,
+                "error": {"code": "RUNTIME_START_FAILED",
+                          "message": "Houdini runtime startup failed. Close this session before reopening the workspace."}})
+        except BaseException:
+            # Diagnostic write failure must not bypass cleanup or replace the
+            # original startup exception. Never serialize exception text here.
+            pass
+        try:
+            if server is not None:
+                server.shutdown()
+                server.server_close()
+        finally:
+            if runtime is not None:
+                runtime.close()  # A running worker keeps ownership even if this times out.
+            else:
+                try:
+                    if ledger is not None:
+                        ledger.close()
+                finally:
+                    ownership.close()
+            if scene is not None:
+                scene.close()
+        raise
     _session = (runtime, server)
     return _session

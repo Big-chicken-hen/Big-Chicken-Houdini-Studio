@@ -1,0 +1,531 @@
+{
+  "schema_version": 1,
+  "evidence_date": "2026-09-05",
+  "scope": {
+    "developer_assisted": true,
+    "execution_mode": "Explicit GUI fault driver; no model inference for these cases.",
+    "coverage": "Selected case-level receipt and artifact evidence; not overall acceptance passed.",
+    "source_main_reports_status": "running",
+    "workflow_limit": "Developer-assisted evidence does not replace a cold user workflow.",
+    "executing_commit_sha": null,
+    "commit_limit": "The source reports do not record the executing commit SHA.",
+    "timing_units": {
+      "created_at": "Unix seconds",
+      "started_at": "Unix seconds",
+      "finished_at": "Unix seconds"
+    }
+  },
+  "workspace_id": "51da97e2b6fa4af3bc5cb1f0e1e8edc7",
+  "houdini_version": "22.0.368",
+  "source_reports": {
+    "ownership_and_epoch": {
+      "path": ".runtime/authoring-faults/572b33e670c946e1bd3071b6c39d9cac/report.json",
+      "status": "running",
+      "mode": "explicit GUI fault driver; no model inference",
+      "runtime_id": "d3570c1399e748e682841f720ef653d4"
+    },
+    "response_loss": {
+      "path": ".runtime/authoring-faults/572b33e670c946e1bd3071b6c39d9cac/response-loss.json",
+      "status": "passed",
+      "mode": "real runtime with deliberately discarded HTTP admission response; no model"
+    },
+    "capture_before_frame_followup": {
+      "path": ".runtime/authoring-faults/7b14a6dd75cb4c48a11028aa7768dd68/report.json",
+      "status": "running",
+      "mode": "explicit GUI fault driver; no model inference",
+      "runtime_id": "6cb68b5396f1477db349c9fdc432a565"
+    },
+    "restarted_runtime": {
+      "path": ".runtime/authoring-faults/3250b65a3ff849b4bbf2e5841a2cfb14/report.json",
+      "status": "running",
+      "mode": "explicit GUI fault driver; no model inference",
+      "runtime_id": "9b6ea5ab496949399c9502ff94147a8e"
+    },
+    "image_restart": {
+      "path": ".runtime/authoring-faults/3250b65a3ff849b4bbf2e5841a2cfb14/image-restart.json",
+      "status": "passed",
+      "mode": "new Houdini process reading old receipt and native MCP image"
+    }
+  },
+  "cases": {
+    "surviving_runtime_ownership": {
+      "source": "ownership_and_epoch",
+      "finding": "Cached health reports the original runtime busy after the termination annotation; a second launch is refused, and the original operation later finishes.",
+      "supervisor_exit_evidence_limit": "原始报告记录持有Popen句柄kill+wait、实际PID退出独立观察未包含",
+      "supervisor_method_note_source": "Lead-provided method description; the JSON event itself records only the terminated PID annotation.",
+      "termination_annotation": {
+        "owned_supervisor_terminated": 14268
+      },
+      "cached_runtime_health": {
+        "alive": true,
+        "runtime_id": "d3570c1399e748e682841f720ef653d4",
+        "workspace_id": "51da97e2b6fa4af3bc5cb1f0e1e8edc7",
+        "main_thread_busy": true,
+        "active_operation_id": "85eba0a5c3bb4b2aaf9385362bbff921",
+        "queue_depth": 2,
+        "capacity": 16,
+        "scene_epoch": "9ec97b18b8ac4893a416bc9812cd1697"
+      },
+      "second_launch": {
+        "attempt": {
+          "supervisor_pid": 9456
+        },
+        "reported_status": {
+          "supervisor_pid": 15060,
+          "state": "failed",
+          "message": "A Houdini runtime still owns this workspace; close that session before reopening it",
+          "houdini_left_running": false
+        }
+      },
+      "completed_operation": {
+        "operation_id": "85eba0a5c3bb4b2aaf9385362bbff921",
+        "workspace_id": "51da97e2b6fa4af3bc5cb1f0e1e8edc7",
+        "runtime_id": "d3570c1399e748e682841f720ef653d4",
+        "scene_epoch": "9ec97b18b8ac4893a416bc9812cd1697",
+        "kind": "execute",
+        "label": "Orphaned Runtime keeps ownership",
+        "state": "finished",
+        "mutation_outcome": "completed",
+        "checks_outcome": "not_run",
+        "automatic_retry_safe": false,
+        "cancel_requested": false,
+        "created_at": 1788610800.356889,
+        "started_at": 1788610800.41603,
+        "finished_at": 1788610820.4201949,
+        "timings": {
+          "queue_seconds": 0.059141,
+          "execution_seconds": 20.004265
+        },
+        "error": null,
+        "result": {
+          "value": {
+            "effects": "1"
+          }
+        }
+      }
+    },
+    "queued_cancellation": {
+      "source": "ownership_and_epoch",
+      "finding": "Queued operation is cancelled without started_at; the later targeted read reports its effect absent.",
+      "cancelled_operation": {
+        "operation_id": "fa103b005e0c4b76a6493fcd03c59a61",
+        "workspace_id": "51da97e2b6fa4af3bc5cb1f0e1e8edc7",
+        "runtime_id": "d3570c1399e748e682841f720ef653d4",
+        "scene_epoch": "9ec97b18b8ac4893a416bc9812cd1697",
+        "kind": "execute",
+        "label": "Queued cancellation",
+        "state": "cancelled",
+        "mutation_outcome": "not_run",
+        "checks_outcome": "not_run",
+        "automatic_retry_safe": false,
+        "cancel_requested": true,
+        "created_at": 1788610801.464671,
+        "finished_at": 1788610802.5688965,
+        "timings": {},
+        "error": null
+      },
+      "effect_observation": {
+        "operation_id": "ec21eba6be874c8093bc527ac4d54999",
+        "workspace_id": "51da97e2b6fa4af3bc5cb1f0e1e8edc7",
+        "runtime_id": "d3570c1399e748e682841f720ef653d4",
+        "scene_epoch": "9ec97b18b8ac4893a416bc9812cd1697",
+        "kind": "execute",
+        "label": "Confirm cancelled write never ran",
+        "state": "finished",
+        "mutation_outcome": "completed",
+        "checks_outcome": "not_run",
+        "automatic_retry_safe": false,
+        "cancel_requested": false,
+        "created_at": 1788610836.242769,
+        "started_at": 1788610836.297676,
+        "finished_at": 1788610836.3005517,
+        "timings": {
+          "queue_seconds": 0.054907,
+          "execution_seconds": 0.00294
+        },
+        "error": null,
+        "result": {
+          "value": {
+            "effects": "1",
+            "cancelled_effect_absent": true
+          }
+        }
+      }
+    },
+    "same_hip_reload_stale_epoch": {
+      "source": "ownership_and_epoch",
+      "finding": "Reloading the saved HIP changes the scene epoch; the operation bound to the old observation is rejected without starting.",
+      "observed_before_reload": {
+        "operation_id": "cbc1ef11855340c9bf4cd625101a6de4",
+        "runtime_id": "d3570c1399e748e682841f720ef653d4",
+        "scene_epoch": "9ec97b18b8ac4893a416bc9812cd1697"
+      },
+      "saved_scene": {
+        "operation_id": "cb9dbb6a651045f6a831c604a18d5813",
+        "hip_path": "<workspace>/fault-scene.hip"
+      },
+      "reload_operation": {
+        "operation_id": "915250b70af9433b8b0b7c95feb56dd3",
+        "workspace_id": "51da97e2b6fa4af3bc5cb1f0e1e8edc7",
+        "runtime_id": "d3570c1399e748e682841f720ef653d4",
+        "scene_epoch": "9ec97b18b8ac4893a416bc9812cd1697",
+        "kind": "execute",
+        "label": "Reload same owned HIP path",
+        "state": "finished",
+        "mutation_outcome": "completed",
+        "checks_outcome": "not_run",
+        "automatic_retry_safe": false,
+        "cancel_requested": false,
+        "created_at": 1788611040.0761282,
+        "started_at": 1788611040.1317873,
+        "finished_at": 1788611040.181012,
+        "timings": {
+          "queue_seconds": 0.055659,
+          "execution_seconds": 0.049323
+        },
+        "error": null,
+        "result": {
+          "value": {
+            "same_path": true
+          }
+        }
+      },
+      "stale_operation": {
+        "operation_id": "9e6878970ee24360b31771c151491842",
+        "workspace_id": "51da97e2b6fa4af3bc5cb1f0e1e8edc7",
+        "runtime_id": "d3570c1399e748e682841f720ef653d4",
+        "scene_epoch": "9ec97b18b8ac4893a416bc9812cd1697",
+        "kind": "execute",
+        "label": "Reject pre-reload observation",
+        "state": "rejected",
+        "mutation_outcome": "not_run",
+        "checks_outcome": "not_run",
+        "automatic_retry_safe": false,
+        "cancel_requested": false,
+        "created_at": 1788611041.2096906,
+        "finished_at": 1788611041.2644055,
+        "timings": {},
+        "error": {
+          "code": "STALE_SCENE",
+          "message": "The observed scene was replaced; read context again"
+        }
+      },
+      "observed_after_reload": {
+        "operation_id": "9f8f3bfa3b004b5287d7414deedd3bd5",
+        "runtime_id": "d3570c1399e748e682841f720ef653d4",
+        "scene_epoch": "b2653b2a59764aa1b0c49b5fda3858a7",
+        "hip_path": "<workspace>/fault-scene.hip"
+      },
+      "normalized_saved_and_observed_paths_equal": true
+    },
+    "discarded_admission_response": {
+      "source": "response_loss",
+      "source_status": "passed",
+      "finding": "The driver records one execute POST; querying the operation returns the same receipt with one reported effect.",
+      "limit": "Deliberately discarded admission response; this is not evidence of arbitrary network-fault coverage or general exactly-once execution.",
+      "execute_post_count": 1,
+      "receipt": {
+        "operation_id": "e772596fd5bd49d981c1c13239440628",
+        "workspace_id": "51da97e2b6fa4af3bc5cb1f0e1e8edc7",
+        "runtime_id": "d3570c1399e748e682841f720ef653d4",
+        "scene_epoch": "b2653b2a59764aa1b0c49b5fda3858a7",
+        "kind": "execute",
+        "label": "Discarded response: one effect",
+        "state": "finished",
+        "mutation_outcome": "completed",
+        "checks_outcome": "not_run",
+        "automatic_retry_safe": false,
+        "cancel_requested": false,
+        "created_at": 1788611091.099059,
+        "started_at": 1788611091.121662,
+        "finished_at": 1788611091.1236782,
+        "timings": {
+          "queue_seconds": 0.022603,
+          "execution_seconds": 0.002051
+        },
+        "error": null,
+        "result": {
+          "value": {
+            "effects": 1,
+            "stale_write_absent": true
+          }
+        }
+      },
+      "queried_operation_id": "e772596fd5bd49d981c1c13239440628",
+      "source_receipt_objects_equal": true
+    },
+    "original_native_capture": {
+      "source": "capture_before_frame_followup",
+      "capture_version_stage": "Before the frame-evidence follow-up.",
+      "receipt": {
+        "operation_id": "7e6a24b033f040419e1d1e6f0fe012a1",
+        "workspace_id": "51da97e2b6fa4af3bc5cb1f0e1e8edc7",
+        "runtime_id": "6cb68b5396f1477db349c9fdc432a565",
+        "scene_epoch": "8be804b7c23447b59e790afccbdcf0f2",
+        "kind": "capture",
+        "label": "Verify actual native PNG",
+        "state": "finished",
+        "mutation_outcome": "none",
+        "checks_outcome": "passed",
+        "automatic_retry_safe": false,
+        "cancel_requested": false,
+        "created_at": 1788611279.3235977,
+        "started_at": 1788611279.3817818,
+        "finished_at": 1788611279.5569787,
+        "timings": {
+          "queue_seconds": 0.058184,
+          "execution_seconds": 0.1753
+        },
+        "error": null,
+        "result": {
+          "capture_api": "SceneViewer.flipbook",
+          "requested_frame": 1.0,
+          "frame_before": 1.0,
+          "frame_before_capture": 1.0,
+          "actual_frame": 1.0,
+          "restored_frame": 1.0,
+          "requested_resolution": [
+            640,
+            480
+          ],
+          "resolution_source": "requested",
+          "artifact_id": "6d9da7b0740542f4a84999caba2a20a3",
+          "mime_type": "image/png",
+          "width": 640,
+          "height": 480,
+          "byte_length": 126934,
+          "frame": 1.0,
+          "actual_resolution": [
+            640,
+            480
+          ],
+          "capture_error": null,
+          "restore_errors": []
+        }
+      }
+    },
+    "fractional_frame_mismatch": {
+      "source": "capture_before_frame_followup",
+      "capture_version_stage": "Before the frame-evidence follow-up; do not attribute this fractional test to the later patch.",
+      "finding": "Requested frame 1.5 was observed as 2 after capture. The operation reports CAPTURE_FRAME_MISMATCH, restores frame 1, and publishes no artifact ID.",
+      "receipt": {
+        "operation_id": "5597ac0c47ac4b5b96e05e8bd223b444",
+        "workspace_id": "51da97e2b6fa4af3bc5cb1f0e1e8edc7",
+        "runtime_id": "6cb68b5396f1477db349c9fdc432a565",
+        "scene_epoch": "8be804b7c23447b59e790afccbdcf0f2",
+        "kind": "capture",
+        "label": "Verify viewport aspect and fractional frame",
+        "state": "failed",
+        "mutation_outcome": "none",
+        "checks_outcome": "failed",
+        "automatic_retry_safe": false,
+        "cancel_requested": false,
+        "created_at": 1788611298.081053,
+        "started_at": 1788611298.1410317,
+        "finished_at": 1788611298.2758124,
+        "timings": {
+          "queue_seconds": 0.059979,
+          "execution_seconds": 0.134905
+        },
+        "error": {
+          "code": "CAPTURE_FRAME_MISMATCH",
+          "message": "Observed frame changed during capture",
+          "exception_type": "StudioError"
+        },
+        "result": {
+          "capture_api": "SceneViewer.flipbook",
+          "requested_frame": 1.5,
+          "frame_before": 1.0,
+          "frame_before_capture": 1.5,
+          "actual_frame": 2.0,
+          "restored_frame": 1.0,
+          "requested_resolution": [
+            1674,
+            1145
+          ],
+          "resolution_source": "viewport",
+          "capture_error": {
+            "code": "CAPTURE_FRAME_MISMATCH",
+            "message": "Observed frame changed during capture",
+            "exception_type": "StudioError"
+          },
+          "restore_errors": []
+        }
+      },
+      "artifact_id_present": false
+    },
+    "default_viewport_resolution": {
+      "source": "capture_before_frame_followup",
+      "capture_version_stage": "Before the frame-evidence follow-up.",
+      "receipt": {
+        "operation_id": "609ff091c6514a22a160ed4f54c34bbf",
+        "workspace_id": "51da97e2b6fa4af3bc5cb1f0e1e8edc7",
+        "runtime_id": "6cb68b5396f1477db349c9fdc432a565",
+        "scene_epoch": "8be804b7c23447b59e790afccbdcf0f2",
+        "kind": "capture",
+        "label": "Verify default viewport dimensions",
+        "state": "finished",
+        "mutation_outcome": "none",
+        "checks_outcome": "passed",
+        "automatic_retry_safe": false,
+        "cancel_requested": false,
+        "created_at": 1788611354.5590246,
+        "started_at": 1788611354.6152148,
+        "finished_at": 1788611354.765973,
+        "timings": {
+          "queue_seconds": 0.05619,
+          "execution_seconds": 0.150857
+        },
+        "error": null,
+        "result": {
+          "capture_api": "SceneViewer.flipbook",
+          "requested_frame": 1.0,
+          "frame_before": 1.0,
+          "frame_before_capture": 1.0,
+          "actual_frame": 1.0,
+          "restored_frame": 1.0,
+          "requested_resolution": [
+            1674,
+            1145
+          ],
+          "resolution_source": "viewport",
+          "artifact_id": "2fa58df6390046b597866d52100a233f",
+          "mime_type": "image/png",
+          "width": 1674,
+          "height": 1145,
+          "byte_length": 325801,
+          "frame": 1.0,
+          "actual_resolution": [
+            1674,
+            1145
+          ],
+          "capture_error": null,
+          "restore_errors": []
+        }
+      }
+    },
+    "native_image_after_process_restart": {
+      "source": "image_restart",
+      "source_status": "passed",
+      "finding": "A different runtime reads the old capture receipt and obtains native MCP image content.",
+      "original_runtime_id": "6cb68b5396f1477db349c9fdc432a565",
+      "current_runtime_id": "9b6ea5ab496949399c9502ff94147a8e",
+      "original_capture_operation_id": "7e6a24b033f040419e1d1e6f0fe012a1",
+      "original_artifact_id": "6d9da7b0740542f4a84999caba2a20a3",
+      "source_capture_receipt_objects_equal": true,
+      "native_content": {
+        "content_types": [
+          "text",
+          "image"
+        ],
+        "mime_type": "image/png",
+        "encoded_image_length": 169248
+      },
+      "read_helper_receipt": {
+        "operation_id": "ba625fa8b3974269a7ddf166439056dd",
+        "workspace_id": "51da97e2b6fa4af3bc5cb1f0e1e8edc7",
+        "runtime_id": "9b6ea5ab496949399c9502ff94147a8e",
+        "scene_epoch": "c33cf93262914d3e89fb93a6089a569d",
+        "kind": "execute",
+        "label": "Read old native image after process restart",
+        "state": "finished",
+        "mutation_outcome": "completed",
+        "checks_outcome": "not_run",
+        "automatic_retry_safe": false,
+        "cancel_requested": false,
+        "created_at": 1788611704.3381248,
+        "started_at": 1788611704.3993745,
+        "finished_at": 1788611704.4253345,
+        "timings": {
+          "queue_seconds": 0.06125,
+          "execution_seconds": 0.026021
+        },
+        "error": null,
+        "result": {
+          "value": {
+            "status": "passed",
+            "current_runtime_id": "9b6ea5ab496949399c9502ff94147a8e",
+            "content_types": [
+              "text",
+              "image"
+            ],
+            "mime_type": "image/png",
+            "encoded_image_length": 169248
+          }
+        }
+      },
+      "read_limit": "The recorded helper execute reads the old artifact; it is not a repeat capture. The report records content metadata. The original PNG is excluded from the public bundle, so this bundle does not provide independent visual verification."
+    },
+    "later_frame_evidence_capture": {
+      "source": "restarted_runtime",
+      "capture_version_stage": "Separate later capture with the frame-evidence follow-up; configured_frame_range is recorded.",
+      "receipt": {
+        "operation_id": "948f187b0add4fd88f2a9944304b2642",
+        "workspace_id": "51da97e2b6fa4af3bc5cb1f0e1e8edc7",
+        "runtime_id": "9b6ea5ab496949399c9502ff94147a8e",
+        "scene_epoch": "c33cf93262914d3e89fb93a6089a569d",
+        "kind": "capture",
+        "label": "Verify final frame evidence settings",
+        "state": "finished",
+        "mutation_outcome": "none",
+        "checks_outcome": "passed",
+        "automatic_retry_safe": false,
+        "cancel_requested": false,
+        "created_at": 1788611705.456794,
+        "started_at": 1788611705.5153904,
+        "finished_at": 1788611705.602394,
+        "timings": {
+          "queue_seconds": 0.058596,
+          "execution_seconds": 0.087048
+        },
+        "error": null,
+        "result": {
+          "capture_api": "SceneViewer.flipbook",
+          "requested_frame": 1.0,
+          "configured_frame_range": [
+            1.0,
+            1.0
+          ],
+          "frame_before": 1.0,
+          "frame_before_capture": 1.0,
+          "actual_frame": 1.0,
+          "restored_frame": 1.0,
+          "requested_resolution": [
+            640,
+            480
+          ],
+          "resolution_source": "requested",
+          "artifact_id": "f54f8233a2e744b69d75fcff0872bd70",
+          "mime_type": "image/png",
+          "width": 640,
+          "height": 480,
+          "byte_length": 126839,
+          "frame": 1.0,
+          "actual_resolution": [
+            640,
+            480
+          ],
+          "capture_error": null,
+          "restore_errors": []
+        }
+      }
+    }
+  },
+  "artifact_reference": {
+    "included_in_public_bundle": false,
+    "source": "<workspace>/artifacts/6d9da7b0740542f4a84999caba2a20a3/image.png",
+    "exclusion_reason": "The original PNG contains local machine username metadata in its Artist field.",
+    "original_retention": "Original PNG remains in the private runtime artifact directory; it was not transformed or re-encoded.",
+    "evidence_limit": "The existing manifest summary is retained only for correlation. No public image is included for independent visual verification.",
+    "digest_source": "Existing original artifact manifest; no new digest was computed for this bundle.",
+    "manifest": {
+      "version": 1,
+      "artifact_id": "6d9da7b0740542f4a84999caba2a20a3",
+      "mime_type": "image/png",
+      "width": 640,
+      "height": 480,
+      "byte_length": 126934,
+      "sha256": "45930cd4a900e59ad1ee29bdcf27a1262db27b37101976ab09ede919473b3fdc"
+    }
+  }
+}

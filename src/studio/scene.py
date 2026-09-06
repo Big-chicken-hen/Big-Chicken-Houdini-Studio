@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .common import StudioError, new_id, now
+from .artifacts import ArtifactStore, capture_resolution
 
 SCRIPT_FILENAME = "<Big-Chicken HOM batch>"
 
@@ -73,7 +74,8 @@ def validate_view(view):
         raise StudioError("INVALID_ARGUMENTS", "A view must be an object")
     kind = view.get("view", "node")
     fields = {"node": set(), "parms": {"names"}, "children": {"limit"},
-              "geometry": set(), "checks": {"checks"}}
+              "parameters": {"pattern", "offset", "limit"},
+              "geometry": {"owners", "attributes", "samples"}, "checks": {"checks"}}
     if not isinstance(kind, str) or kind not in fields or set(view) - ({"view", "path"} | fields[kind]):
         raise StudioError("INVALID_ARGUMENTS", "Invalid inspection view")
     node_path(view.get("path", "/obj"))
@@ -83,6 +85,26 @@ def validate_view(view):
             raise StudioError("INVALID_ARGUMENTS", "Supply 1 to 64 parameter names")
     if kind == "children" and (type(view.get("limit", 64)) is not int or not 1 <= view.get("limit", 64) <= 200):
         raise StudioError("INVALID_ARGUMENTS", "Child limit must be between 1 and 200")
+    if kind == "parameters":
+        if not isinstance(view.get("pattern", "*"), str) or not 1 <= len(view.get("pattern", "*")) <= 128:
+            raise StudioError("INVALID_ARGUMENTS", "Supply a parameter name pattern of 1 to 128 characters")
+        if type(view.get("offset", 0)) is not int or not 0 <= view.get("offset", 0) <= 1000000:
+            raise StudioError("INVALID_ARGUMENTS", "Parameter offset must be an integer from 0 to 1000000")
+        if type(view.get("limit", 64)) is not int or not 1 <= view.get("limit", 64) <= 128:
+            raise StudioError("INVALID_ARGUMENTS", "Parameter page size must be between 1 and 128")
+    if kind == "geometry":
+        owners = view.get("owners", ["point", "primitive"])
+        if (not isinstance(owners, list) or not 1 <= len(owners) <= 4 or
+                any(not isinstance(v, str) or v not in {"point", "primitive", "vertex", "detail"} for v in owners) or
+                len(set(owners)) != len(owners)):
+            raise StudioError("INVALID_ARGUMENTS", "Supply unique geometry attribute owners")
+        if "attributes" in view:
+            names = view["attributes"]
+            if (not isinstance(names, list) or not 1 <= len(names) <= 16 or
+                    any(not isinstance(n, str) or not 1 <= len(n) <= 128 for n in names)):
+                raise StudioError("INVALID_ARGUMENTS", "Supply 1 to 16 attribute names")
+        if type(view.get("samples", 0)) is not int or not 0 <= view.get("samples", 0) <= 16:
+            raise StudioError("INVALID_ARGUMENTS", "Geometry samples must be between 0 and 16")
     if kind == "checks":
         validate_checks(view.get("checks", []))
 
@@ -140,13 +162,12 @@ def json_value(value, depth=0, redact=lambda text: text):
 class HoudiniScene:
     def __init__(self, hou, artifact_root, secrets=()):
         self.hou = hou
-        self.artifact_root = Path(artifact_root).resolve()
-        self.artifact_root.mkdir(parents=True, exist_ok=True)
+        self._artifacts = ArtifactStore(artifact_root)
+        self.artifact_root = self._artifacts.root
         self.secrets = tuple(value for value in secrets if value)
         self.epoch = new_id()
         self.lock = threading.RLock()
         self._cached = {}
-        self._artifacts = {}
         self.houdini_version = self.hou.applicationVersionString()
         self.refresh_cached()
         self.hou.hipFile.addEventCallback(self._hip_event)
@@ -232,14 +253,12 @@ class HoudiniScene:
                                        "inputs": [x.path() if x else None for x in n.inputs()],
                                        "position": list(n.position())} for n in children[:limit]],
                     "total": len(children), "truncated": len(children) > limit}
+        if kind == "parameters":
+            from .inspection import parameter_instances
+            return {**base, **parameter_instances(node, view, self.redact)}
         if kind == "geometry":
-            geo = node.geometry()
-            box = geo.boundingBox()
-            return {**base, "points": geo.intrinsicValue("pointcount"),
-                    "primitives": geo.intrinsicValue("primitivecount"),
-                    "bounds": {"min": list(box.minvec()), "max": list(box.maxvec())},
-                    "point_attributes": [a.name() for a in geo.pointAttribs()],
-                    "primitive_attributes": [a.name() for a in geo.primAttribs()]}
+            from .inspection import geometry_facts
+            return {**base, **geometry_facts(node, view, self.redact)}
         if kind == "checks":
             return {**base, "checks": self.checks(view.get("checks", []))}
         raise StudioError("INVALID_ARGUMENTS", "Unknown inspection view")
@@ -414,52 +433,100 @@ class HoudiniScene:
                 "houdini_version": self.hou.applicationVersionString()}
 
     def capture(self, args):
-        viewer = self.hou.ui.paneTabOfType(self.hou.paneTabType.SceneViewer)
-        if viewer is None:
-            raise StudioError("VIEWPORT_UNAVAILABLE", "Open a Scene Viewer pane before capturing")
-        frame = float(args.get("frame", self.hou.frame()))
-        if not math.isfinite(frame):
-            raise StudioError("INVALID_ARGUMENTS", "Frame must be finite")
-        width, height = [min(2560, max(64, int(v))) for v in args.get("resolution", [1280, 720])]
-        viewport = viewer.curViewport()
-        previous_frame = self.hou.frame()
-        artifact_id = new_id()
-        pattern = self.artifact_root / (artifact_id + "-$F4.png")
-        output = self.artifact_root / (artifact_id + f"-{int(round(frame)):04d}.png")
+        # Adapted frame/restore separation from HIA 6d9a2d7; no camera switching,
+        # multi-frame orchestration or heuristic visual quality gate is inherited.
+        detail = {"capture_api": "SceneViewer.flipbook", "requested_frame": args.get("frame"),
+                  "configured_frame_range": None, "frame_before": None,
+                  "frame_before_capture": None, "actual_frame": None,
+                  "restored_frame": None, "capture_error": None, "restore_errors": []}
+        previous_frame, artifact_id = None, None
         try:
+            validate_arguments("capture", args)
+            previous_frame = float(self.hou.frame())
+            if not math.isfinite(previous_frame):
+                raise StudioError("FRAME_UNAVAILABLE", "Current frame is not finite")
+            frame = float(args.get("frame", previous_frame))
+            detail.update(requested_frame=frame, frame_before=previous_frame)
+            viewer = self.hou.ui.paneTabOfType(self.hou.paneTabType.SceneViewer)
+            if viewer is None:
+                raise StudioError("VIEWPORT_UNAVAILABLE", "Open a Scene Viewer pane before capturing")
+            viewport = viewer.curViewport()
+            width, height, source = capture_resolution(args, viewport)
+            detail.update(requested_resolution=[width, height], resolution_source=source)
+            artifact_id, output = self._artifacts.allocate()
             settings = viewer.flipbookSettings().stash()
-            # A still capture must not inherit simulation resets, subframe blur or
-            # keyframe-only/multiple-viewport playback from an earlier flipbook.
+            # Mutate only the stash. Do not reset simulation or inherit costly
+            # subframe/keyframe/multiple-viewport options from a user's flipbook.
             settings.initializeSimulations(False)
             settings.useMotionBlur(False)
             settings.scopeChannelKeyframesOnly(False)
             settings.renderAllViewports(False)
+            # Observe the last rendered frame before our own finally restores the
+            # playbar; inherited flipbook auto-restoration could conceal rounding.
+            settings.leaveFrameAtEnd(True)
             settings.frameRange((frame, frame))
-            settings.output(str(pattern))
+            configured = settings.frameRange()
+            if not isinstance(configured, (tuple, list)) or len(configured) != 2:
+                raise StudioError("CAPTURE_FRAME_RANGE_UNAVAILABLE", "Flipbook frame range could not be verified")
+            detail["configured_frame_range"] = [
+                float(value) if type(value) in (int, float) and math.isfinite(value) else None
+                for value in configured]
+            if any(value is None or not math.isclose(value, frame, rel_tol=0, abs_tol=1e-6)
+                   for value in detail["configured_frame_range"]):
+                raise StudioError("CAPTURE_FRAME_MISMATCH", "Configured flipbook range does not match the requested frame")
+            # A single still uses a literal unique path, not guessed $F rounding.
+            settings.output(str(output))
             settings.resolution((width, height))
             settings.useResolution(True)
             settings.outputZoom(100)
             settings.useSheetSize(False)
             settings.outputToMPlay(False)
+            if callable(getattr(settings, "cropOutMaskOverlay", None)):
+                settings.cropOutMaskOverlay(False)
             self.hou.setFrame(frame)
+            observed = float(self.hou.frame())
+            detail["frame_before_capture"] = observed if math.isfinite(observed) else None
+            if not math.isclose(observed, frame, rel_tol=0, abs_tol=1e-6):
+                raise StudioError("CAPTURE_FRAME_MISMATCH", "Requested frame was not established before capture")
             viewer.flipbook(viewport, settings, open_dialog=False)
-            if not output.is_file() or output.stat().st_size == 0:
-                raise StudioError("CAPTURE_MISSING", "Houdini did not produce the requested PNG")
+            observed = float(self.hou.frame())
+            detail["actual_frame"] = observed if math.isfinite(observed) else None
+            if not math.isclose(observed, frame, rel_tol=0, abs_tol=1e-6):
+                raise StudioError("CAPTURE_FRAME_MISMATCH", "Observed frame changed during capture")
+        except BaseException as exc:
+            detail["capture_error"] = self.error(exc, "CAPTURE_FAILED")
         finally:
-            self.hou.setFrame(previous_frame)
-        with self.lock:
-            self._artifacts[artifact_id] = output
-        return {"artifact_id": artifact_id, "mime_type": "image/png", "frame": frame,
-                "restored_frame": self.hou.frame(), "path": str(output)}
+            if previous_frame is not None and math.isfinite(previous_frame):
+                try:
+                    self.hou.setFrame(previous_frame)
+                except BaseException as exc:
+                    detail["restore_errors"].append({"phase": "set_frame", "error": self.error(exc, "FRAME_RESTORE_FAILED")})
+                # Verify even if setFrame raised; do not replace the capture error.
+                try:
+                    restored = float(self.hou.frame())
+                    detail["restored_frame"] = restored if math.isfinite(restored) else None
+                    if not math.isclose(restored, previous_frame, rel_tol=0, abs_tol=1e-6):
+                        raise StudioError("FRAME_RESTORE_MISMATCH", "Original frame was not restored")
+                except BaseException as exc:
+                    detail["restore_errors"].append({"phase": "verify_frame", "error": self.error(exc, "FRAME_RESTORE_FAILED")})
+        if detail["capture_error"] is None:
+            try:
+                # Verify real PNG scanlines/dimensions before registering an immutable
+                # workspace reference. A restoration failure does not discard a valid image.
+                info = self._artifacts.commit(artifact_id, dict(detail), detail["requested_resolution"])
+                detail.update(info, frame=detail["actual_frame"], actual_resolution=[info["width"], info["height"]])
+            except BaseException as exc:
+                detail["capture_error"] = self.error(exc, "CAPTURE_FAILED")
+                if isinstance(exc, StudioError) and exc.code == "CAPTURE_RESOLUTION_MISMATCH":
+                    detail["actual_resolution"] = exc.details["actual_resolution"]
+        error = detail["capture_error"] or (detail["restore_errors"][0]["error"] if detail["restore_errors"] else None)
+        return ExecutionResult(detail=detail, state="failed" if error else "finished", error=error,
+                               mutation_outcome="unknown" if detail["restore_errors"] else "none",
+                               checks_outcome="failed" if error else "passed")
 
     def artifact(self, artifact_id):
-        with self.lock:
-            path = self._artifacts.get(artifact_id)
-        if path is None:
-            raise StudioError("ARTIFACT_NOT_FOUND", "Unknown capture", 404)
-        if path.stat().st_size > 12 * 1024 * 1024:
-            raise StudioError("IMAGE_TOO_LARGE", "Capture exceeds 12 MB; request a smaller resolution", 413)
-        return path.read_bytes()
+        # Pure bounded file read: survives a new Runtime without touching HOM.
+        return self._artifacts.read(artifact_id)
 
     def close(self):
         with contextlib.suppress(Exception):

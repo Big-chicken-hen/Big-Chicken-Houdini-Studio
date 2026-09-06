@@ -50,7 +50,16 @@ VIEW = {"oneOf": [
            ["view", "names"]),
     schema({"view": {"enum": ["children"]}, "path": VIEW_PATH,
             "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 64}}, ["view"]),
-    schema({"view": {"enum": ["geometry"]}, "path": VIEW_PATH}, ["view"]),
+    schema({"view": {"enum": ["parameters"]}, "path": VIEW_PATH,
+            "pattern": {"type": "string", "minLength": 1, "maxLength": 128, "default": "*"},
+            "offset": {"type": "integer", "minimum": 0, "maximum": 1000000, "default": 0},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 128, "default": 64}}, ["view"]),
+    schema({"view": {"enum": ["geometry"]}, "path": VIEW_PATH,
+            "owners": {"type": "array", "items": {"enum": ["point", "primitive", "vertex", "detail"]},
+                       "minItems": 1, "maxItems": 4},
+            "attributes": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 128},
+                           "minItems": 1, "maxItems": 16},
+            "samples": {"type": "integer", "minimum": 0, "maximum": 16, "default": 0}}, ["view"]),
     schema({"view": {"enum": ["checks"]}, "path": VIEW_PATH, "checks": CHECKS}, ["view"]),
 ]}
 SCENE_DEFINITIONS = {"check": CHECK, "view": VIEW}
@@ -59,10 +68,10 @@ OBSERVE = {"type": "array", "items": {"$ref": "#/$defs/view"}, "maxItems": 64,
            "description": "Reads BEFORE and AFTER the script. Targets must already exist. For nodes created by this batch use post-execution checks or result readback."}
 TOOLS = [
     {"name": "hia_context", "description": "Observe the current HIP, selection and network. Binds subsequent operations to this scene generation. Explicitly call again after a scene replacement.", "inputSchema": schema()},
-    {"name": "hia_inspect", "description": "Read targeted live facts in one batch. Views default to node at /obj; use explicit paths for task targets. Geometry/checks may cook; all views share the scene queue.", "inputSchema": schema({"views": VIEWS}, ["views"], SCENE_DEFINITIONS)},
+    {"name": "hia_inspect", "description": "Read targeted live facts in one batch. parameters discovers actual instance names, native template metadata and multiparm indices without evaluating values; parms reads named values. geometry reports owner/type/tuple metadata and optional bounded element samples (arrays/dicts metadata only); may cook. All views share the scene queue.", "inputSchema": schema({"views": VIEWS}, ["views"], SCENE_DEFINITIONS)},
     {"name": "hia_lookup", "description": "Look up installed node/parameter metadata, exact HOM documentation or imported versioned documents. Live metadata uses the HOM queue without requiring a scene observation. Docstrings and documents bypass it. No search is required for known deterministic edits.", "inputSchema": schema({"source": {"enum": ["metadata", "hom", "documents"]}, "query": STRING, "category": STRING, "type_name": STRING, "symbol": STRING, "version": STRING})},
     {"name": "hia_execute_hom", "description": "Run a semantic HOM batch against the observed scene. Set result to a JSON value. Preconditions run before the script; checks run after. observe reads BEFORE and AFTER, so targets must already exist; use checks/result readback for newly created nodes. General Python has unknown external effects; never blindly retry. checkpoint() cooperatively stops; Undo is not a filesystem transaction.", "inputSchema": schema({"script": {"type": "string", "minLength": 1, "maxLength": 256000}, "label": STRING, "preconditions": CHECKS, "checks": CHECKS, "observe": OBSERVE}, ["script"], SCENE_DEFINITIONS)},
-    {"name": "hia_capture", "description": "Capture the current viewport at a meaningful milestone. Returns native image content. Optional frame and resolution; restores the previous frame. Disables inherited simulation initialization and motion blur on copied flipbook settings. Uses the same scene queue.", "inputSchema": schema({"frame": {"type": "number"}, "resolution": {"type": "array", "items": {"type": "integer", "minimum": 64, "maximum": 2560}, "minItems": 2, "maxItems": 2}})},
+    {"name": "hia_capture", "description": "Capture the current viewport at a meaningful milestone. Returns a verified native image with persistent workspace artifact ID. Optional frame/resolution; defaults to viewport aspect bounded to 2560. Attempts frame restoration and reports capture/restore failures separately. Disables inherited simulation initialization and motion blur on copied settings. Uses the scene queue.", "inputSchema": schema({"frame": {"type": "number"}, "resolution": {"type": "array", "items": {"type": "integer", "minimum": 64, "maximum": 2560}, "minItems": 2, "maxItems": 2}})},
     {"name": "hia_operation", "description": "Retrieve the SAME operation receipt after a long operation or lost response, read paged details, or request cancellation. Query never reruns HOM. Queued work can be cancelled; running HOM stops only at cooperative boundaries.", "inputSchema": schema({"action": {"enum": ["get", "detail", "cancel", "list"]}, "operation_id": STRING, "offset": {"type": "integer", "minimum": 0}}, ["action"])},
     {"name": "hia_project_memory", "description": "Read workspace decisions or explicitly record, supersede or delete a decision ONLY when the user requests durable memory. Independent of live Houdini. No automatic summaries or embeddings.", "inputSchema": schema({"action": {"enum": ["list", "record", "supersede", "delete"]}, "body": STRING, "record_id": STRING}, ["action"])},
 ]
@@ -92,15 +101,20 @@ class Adapter:
                 if self.context_operation_id is not None and value.get("operation_id") == self.context_operation_id:
                     self.scene_epoch = epoch
         content = [{"type": "text", "text": encoded(value)}]
-        if value.get("kind") == "capture" and value.get("state") == "finished":
-            artifact_id = value.get("result", {}).get("artifact_id")
+        image_unavailable = False
+        if value.get("kind") == "capture" and isinstance(result, dict):
+            artifact_id = result.get("artifact_id")
             if artifact_id:
                 try:
-                    image = self.runtime.call("GET", "/artifacts/" + artifact_id)
+                    from .common import identifier
+                    image = self.runtime.call("GET", "/artifacts/" + identifier(artifact_id))
                     content.append({"type": "image", "mimeType": image["mime_type"], "data": image["data"]})
                 except StudioError as exc:
+                    image_unavailable = True
                     content.append({"type": "text", "text": encoded(exc.payload())})
-        return {"content": content, "isError": value.get("state") in {"failed", "rejected", "unknown"}}
+        # A valid image can accompany a failed restoration. Missing artifact bytes
+        # fail this retrieval without rewriting the original operation's receipt.
+        return {"content": content, "isError": image_unavailable or value.get("state") in {"failed", "rejected", "unknown"}}
 
     def call(self, name, args):
         tool = next((t for t in TOOLS if t["name"] == name), None)

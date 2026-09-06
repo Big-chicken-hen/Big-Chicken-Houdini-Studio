@@ -13,6 +13,7 @@ from pathlib import Path
 
 from .codex.protocol import SUPPORTED_CODEX_VERSION
 from .common import AppPaths, StudioError, atomic_json, new_id, read_json
+from .ownership import WorkspaceLock, execution_lock
 from .workspace import Workspaces
 
 
@@ -159,30 +160,6 @@ def launch(paths, workspace_id, houdini, codex, hip=None):
             "render_output_directory": output}
 
 
-class WorkspaceLock:
-    """One owned GUI session per workspace; lock release is handled by the OS on a crash."""
-    def __init__(self, path):
-        self.file = Path(path).open("a+b")
-        self.file.seek(0, 2)
-        if self.file.tell() == 0:
-            self.file.write(b"0")
-            self.file.flush()
-        self.file.seek(0)
-        try:
-            if os.name == "nt":
-                import msvcrt
-                msvcrt.locking(self.file.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
-                fcntl.flock(self.file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError as exc:
-            self.file.close()
-            raise StudioError("WORKSPACE_IN_USE", "This workspace already has a running Studio session", 409) from exc
-
-    def close(self):
-        self.file.close()
-
-
 def supervise(paths, session_id):
     from .bridge import Bridge
 
@@ -200,6 +177,9 @@ def supervise(paths, session_id):
             raise StudioError("SESSION_ENV_REQUIRED", "Supervisor requires the fresh environment from the launcher")
         Workspaces(paths).get(config["workspace_id"])
         lock = WorkspaceLock(paths.workspace(config["workspace_id"]) / "session.lock")
+        # Avoid opening another GUI while an orphaned runtime still owns execution.
+        # This probe is advisory; the runtime acquires its own lock before Ledger.
+        execution_lock(paths, config["workspace_id"]).close()
         bridge = Bridge(paths, config["workspace_id"], session_id, token, config["codex"])
         bridge.start()
         command = [config["houdini"]] + ([config["hip"]] if config.get("hip") else [])
@@ -210,6 +190,11 @@ def supervise(paths, session_id):
             status["houdini_pid"] = process.pid
             atomic_json(folder / "status.json", {**status, "state": "starting"})
             while process.poll() is None:
+                if (folder / "runtime-error.json").is_file():
+                    failure = read_json(folder / "runtime-error.json")
+                    if (failure.get("launcher_session_id") == session_id and
+                            failure.get("workspace_id") == config["workspace_id"]):
+                        raise StudioError("RUNTIME_START_FAILED", failure["error"]["message"], 503)
                 if (folder / "runtime.json").is_file():
                     descriptor = read_json(folder / "runtime.json")
                     if (descriptor.get("launcher_session_id") == session_id and

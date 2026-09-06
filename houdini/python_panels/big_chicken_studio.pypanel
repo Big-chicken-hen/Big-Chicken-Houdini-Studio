@@ -6,6 +6,7 @@ def onCreateInterface():
     from studio.ui.panel import StudioPanel
     return StudioPanel()
 ]]></script>
+    <includeInPaneTabMenu menu_position="210" create_separator="true"/>
     <includeInToolbarMenu menu_position="210" create_separator="true"/>
     <help><![CDATA[Big-Chicken Houdini Studio. Conversations, live scene status and durable execution receipts.]]></help>
   </interface>

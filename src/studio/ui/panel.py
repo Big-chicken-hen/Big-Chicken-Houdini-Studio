@@ -72,6 +72,8 @@ class StudioPanel(QtWidgets.QWidget):
         self.history_thread = None
         self.history_events = []
         self.history_event_bytes = 0
+        self.history_repairs_left = 1
+        self.history_terminal_pending = False
         self.submitting = False
         self.switching = False
         self.uncertain_send = False
@@ -105,7 +107,7 @@ class StudioPanel(QtWidgets.QWidget):
         self.history_refresh = QtCore.QTimer(self)
         self.history_refresh.setSingleShot(True)
         self.history_refresh.setInterval(750)
-        self.history_refresh.timeout.connect(self.load_history)
+        self.history_refresh.timeout.connect(lambda: self.load_history(automatic=True))
         self.update_controls()
         QtCore.QTimer.singleShot(0, self.connect_bridge)
 
@@ -237,11 +239,12 @@ class StudioPanel(QtWidgets.QWidget):
         actions.addWidget(self.attach_button)
         actions.addWidget(self.selection_button)
         actions.addStretch()
-        self.stop_button = button("停止", self.stop, "stop")
+        self.stop_button = button("请求停止", self.stop, "stop")
         self.send_button = button("发送   ↑", self.send, "primary")
         actions.addWidget(self.stop_button)
         actions.addWidget(self.send_button)
         controls.addLayout(actions)
+        controls.addWidget(label("长 HOM 占用主线程时，按钮可能延迟响应；操作是否停止以收据为准。", "muted", True))
         layout.addWidget(composer)
         self.tabs.addTab(page, "对话")
 
@@ -410,7 +413,7 @@ class StudioPanel(QtWidgets.QWidget):
         self.scene_label.setToolTip(json.dumps(scene, ensure_ascii=False, indent=2))
         if not self.switching and value.get("thread_id") != self.thread_id:
             self.thread_id = value.get("thread_id")
-            self.transcript.reset()
+            self.transcript.reset(self.thread_id)
             self.selection_reference = None
             self.load_history()
             if self.logged_in:
@@ -605,17 +608,22 @@ class StudioPanel(QtWidgets.QWidget):
         self.refresh()
         self.update_controls()
 
-    def load_history(self):
+    def load_history(self, *, automatic=False):
         if not self.thread_id or not self.logged_in:
             return
         if self.hydrating and self.history_thread == self.thread_id:
             self.history_again = True
             return
+        if not automatic:
+            # One repair per explicit read/reconnect, never a full-history polling
+            # loop for each delta in an active snapshot. Turn completion is separate.
+            self.history_repairs_left = 1
         thread_id = self.thread_id
         request = object()
         self.history_request, self.history_thread = request, thread_id
         self.history_events, self.history_event_bytes = [], 0
         self.history_again = False
+        self.history_terminal_pending = False
         self.history_refresh.stop()
         self.hydrating = True
 
@@ -636,28 +644,33 @@ class StudioPanel(QtWidgets.QWidget):
             for event in buffered:
                 if self.transcript.apply_event(event):
                     self.history_again = True
-            if self.history_again:
-                self.history_again = False
-                self.schedule_history()
+            repair, terminal = self.history_again, self.history_terminal_pending
+            self.history_again = self.history_terminal_pending = False
+            if repair or terminal:
+                self.schedule_history(terminal=terminal)
 
         def failed(message):
             if self.history_request is not request or self.thread_id != thread_id or self.closed:
                 return
             self.hydrating = False
-            resync = self.history_again or bool(self.history_events)
             self.history_again = False
             buffered, self.history_events = self.history_events, []
             self.history_event_bytes = 0
             for event in buffered:
                 self.transcript.apply_event(event)
-            self.show_notice("原生历史读取失败：" + message)
-            if resync:
-                self.schedule_history()
+            self.show_notice("原生历史读取失败：" + str(message))
+            terminal, self.history_terminal_pending = self.history_terminal_pending, False
+            self.schedule_history(terminal=terminal)
         self.call("GET", "/thread", done=loaded, failed=failed)
 
-    def schedule_history(self):
-        if not self.closed and not self.history_refresh.isActive():
-            self.history_refresh.start()
+    def schedule_history(self, *, terminal=False):
+        if self.closed or self.history_refresh.isActive():
+            return
+        if not terminal:
+            if self.history_repairs_left <= 0:
+                return
+            self.history_repairs_left -= 1
+        self.history_refresh.start()
 
     def apply_events(self, value):
         if value.get("resync_required") or value.get("cursor", self.cursor) < self.cursor:
@@ -682,13 +695,14 @@ class StudioPanel(QtWidgets.QWidget):
                     self.history_event_bytes += size
                 else:
                     self.history_again = True  # Native history recovers bounded buffer overflow.
+                    self.show_notice("部分历史事件超出临时缓冲；本轮结束时会读取完整内容，也可手动刷新连接。")
             elif self.transcript.apply_event(event):
                 self.schedule_history()
             if method == "turn/completed":
                 if self.hydrating:
-                    self.history_again = True
+                    self.history_terminal_pending = True
                 else:
-                    self.schedule_history()
+                    self.schedule_history(terminal=True)
             if method in {"error", "warning"}:
                 error = params.get("error") or {}
                 self.show_notice(error.get("message") or params.get("message") or method)
@@ -781,6 +795,7 @@ class StudioPanel(QtWidgets.QWidget):
             if value.get("codex_state"):
                 self.state["codex"] = {**self.state.get("codex", {}), "state": value["codex_state"]}
             if value.get("history_available") is not False:
+                self.history_repairs_left = 1
                 self.transcript.hydrate(value.get("thread"))
             self.show_notice("已读取 Codex 原生状态；Houdini 结果以执行记录为准。")
         else:

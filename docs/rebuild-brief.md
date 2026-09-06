@@ -2,7 +2,7 @@
 
 Product: **Big-Chicken Houdini Studio**. New folder and new Git history; original HIA stays intact.
 Source diagnosis: [the user's complete Pro diagnosis](pro-diagnosis.md). Do not lose its execution semantics while redesigning the UI.
-Current delivery scope: [stage readiness review](stage-readiness-review.md). Preserve the architecture; fix confirmed boundaries, establish a real GUI and natural-language task slice, and validate the launcher visually.
+Current delivery scope: [authoring review](authoring-review.md). Preserve the architecture; protect Runtime execution ownership, complete a reusable asset's create/modify/image workflow, bound history resynchronization, and verify the release through a cold launch.
 
 ## Required outcomes
 

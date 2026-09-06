@@ -117,6 +117,9 @@ class PanelTest(unittest.TestCase):
         self.assertEqual(sum(path == "/turn" for _, path, _ in self.api.calls), 1)
 
     def test_history_buffers_inflight_events_and_resolves_snapshot_overlap(self):
+        self.api.thread["turns"][0]["status"] = "inProgress"
+        self.panel.transcript.reset()
+        self.panel.transcript.hydrate(self.api.thread)
         self.api.hold["/thread"] = []
         self.panel.load_history()
         loaded = self.api.hold["/thread"].pop()[0]
