@@ -9,10 +9,12 @@ import time
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import patch
 
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
 from PySide6 import QtCore, QtWidgets  # noqa: E402
+from shiboken6 import delete as delete_qobject, isValid  # noqa: E402
 
 from scripts.preview_ui import PreviewApi, configure_preview_fonts, fixture_image, process_until  # noqa: E402
 from scripts.preview_launcher import make_fixture_window  # noqa: E402
@@ -301,6 +303,38 @@ class PanelTest(unittest.TestCase):
                 process_until(lambda: bool(returned or errors))
                 self.assertEqual(errors, [])
                 self.assertEqual(returned, [receipt])
+            for path in ("/slow", "/reject"):
+                with self.subTest(callback_destroys_owner=path):
+                    owner = QtCore.QObject()
+                    owned_api = Api(api.url, token, owner)
+                    received, unexpected, callback_errors = [], [], []
+
+                    def received_and_destroy(value):
+                        received.append(value)
+                        delete_qobject(owner)
+
+                    def capture_error(kind, value, _trace):
+                        callback_errors.append((kind.__name__, str(value)))
+
+                    try:
+                        with patch("sys.excepthook", capture_error):
+                            owned_api.call("GET", path,
+                                           done=received_and_destroy if path == "/slow" else unexpected.append,
+                                           failed=received_and_destroy if path == "/reject" else unexpected.append)
+                            process_until(lambda: bool(received or unexpected))
+                        self.assertEqual(unexpected, [])
+                        self.assertFalse(isValid(owner))
+                        self.assertFalse(isValid(owned_api))
+                        self.assertEqual(callback_errors, [])
+                        if path == "/slow":
+                            self.assertEqual(received, [{"ready": True}])
+                        else:
+                            self.assertEqual(received[0].code, "INVALID_INPUT")
+                            self.assertEqual(received[0].submission_state, "not_submitted")
+                    finally:
+                        if isValid(owner):
+                            owned_api.close()
+                            delete_qobject(owner)
         finally:
             heartbeat.stop()
             api.close()

@@ -148,10 +148,11 @@ class Api(QtCore.QObject):
         def finished():
             self.inflight.discard(key)
             self.replies.discard(reply)
-            raw = bytes(reply.readAll())
+            callback = None
             try:
                 if self.closed:
                     return
+                raw = bytes(reply.readAll())
                 value = json.loads(raw) if raw else {}
                 if not isinstance(value, dict):
                     raise ValueError("Bridge returned an invalid response")
@@ -160,18 +161,21 @@ class Api(QtCore.QObject):
                 if reply.error() != QtNetwork.QNetworkReply.NoError or not (isinstance(status, int) and 200 <= status < 300):
                     error = value.get("error")
                     message = error.get("message", "Request failed") if isinstance(error, dict) else reply.errorString()
-                    if failed:
-                        failed(ApiFailure(message, code=error.get("code") if isinstance(error, dict) else None,
-                                          status=status, submission_state=error.get("submission_state")
-                                          if isinstance(error, dict) else None,
-                                          details=error if isinstance(error, dict) else value))
-                elif done:
-                    done(value)
+                    callback = failed
+                    value = ApiFailure(message, code=error.get("code") if isinstance(error, dict) else None,
+                                       status=status, submission_state=error.get("submission_state")
+                                       if isinstance(error, dict) else None,
+                                       details=error if isinstance(error, dict) else value)
+                else:
+                    callback = done
             except (ValueError, TypeError) as exc:
-                if failed:
-                    failed(ApiFailure(str(exc)))
+                callback, value = failed, ApiFailure(str(exc))
             finally:
+                # Delivery may destroy Api's owner and its replies. Finish Qt
+                # cleanup first; do not access the reply after the callback.
                 reply.deleteLater()
+            if callback:
+                callback(value)
         reply.finished.connect(finished)
         return True
 
