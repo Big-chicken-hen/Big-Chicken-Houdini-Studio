@@ -754,7 +754,8 @@ class StudioPanel(QtWidgets.QWidget):
             self.send_button.setEnabled(False)
         model = self.model_controls.catalog.get(self.model_controls.next_model, {})
         image_mismatch = bool(self.attachments and "image" not in model.get("inputModalities", ["text", "image"]))
-        self.model_controls.set_constraint("当前模型不接收图片；请选择其他模型或移除图片。" if image_mismatch else "")
+        self.model_block_reason = "当前模型不接收图片；请选择其他模型或移除图片。" if image_mismatch else ""
+        self.model_controls.set_constraint(self.model_block_reason)
         if image_mismatch:
             self.send_button.setEnabled(False)
         self.selection_button.setEnabled(ready and scene_ready and not self.selection_pending and not self.selection_inflight)
@@ -809,6 +810,8 @@ class StudioPanel(QtWidgets.QWidget):
             text = ""  # Account feedback stays beside the sign-in action.
         elif not self.thread_id:
             text = "新建或选择对话后即可发送。"
+        elif getattr(self, "model_block_reason", ""):
+            text = self.model_block_reason
         else:
             text = "可以继续描述下一步。" if native == "completed" else "准备好了。"
         turn_fact = False

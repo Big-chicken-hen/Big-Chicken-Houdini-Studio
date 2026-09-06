@@ -235,9 +235,10 @@ class ModelSettings(QtWidgets.QWidget):
             elif not self.next_model:
                 note = "请明确选择下一轮模型。"
             else:
-                note = self._adjustment or "下一轮选择 · 不改变正在执行的工作"
+                note = self._adjustment
             self._base_note = note
             self.note.setText(self._constraint or note)
+            self.note.setVisible(bool(self.note.text()))
         finally:
             self.models.blockSignals(False)
             self.efforts.blockSignals(False)
@@ -267,8 +268,9 @@ class ModelSettings(QtWidgets.QWidget):
         self.user_override = True
         self.selection_revision += 1
         self._adjustment = ""
-        self._base_note = "下一轮选择 · 不改变正在执行的工作"
+        self._base_note = ""
         self.note.setText(self._constraint or self._base_note)
+        self.note.setVisible(bool(self.note.text()))
         self.render_button()
         self.changed.emit()
 
@@ -288,6 +290,7 @@ class ModelSettings(QtWidgets.QWidget):
     def set_constraint(self, message):
         self._constraint = message
         self.note.setText(message or self._base_note)
+        self.note.setVisible(bool(self.note.text()))
         self.render_button()
 
     def apply_turn(self, settings, *, active, turn_id=None):
