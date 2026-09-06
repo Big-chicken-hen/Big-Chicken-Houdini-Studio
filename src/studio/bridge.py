@@ -13,6 +13,7 @@ from pathlib import Path
 from .codex.client import CodexStdioClient
 from .codex.errors import BridgeError
 from .codex.protocol import ProtocolPolicy
+from .codex.trust import SessionTrust, STUDIO_TOOLS
 from .common import TERMINAL, StudioError, atomic_json, new_id, read_json
 from .http import Client, serve
 from .instructions import SCENE_INSTRUCTIONS
@@ -38,6 +39,7 @@ class Bridge:
         self.owner_stopped = False
         self.completed_turns = collections.deque(maxlen=256)
         self.pending_requests = {}
+        self.scene_trust = SessionTrust()
         self._runtime = None
         self.server = None
         env = dict(os.environ)
@@ -83,12 +85,37 @@ class Bridge:
                     self.codex_state = turn.get("status", "unknown")
                     self.turn_id = None
                     self.turn_revision += 1
+                if turn_id and turn.get("status") in {"completed", "interrupted", "failed"}:
+                    # An authoritative terminal event closes this turn's native
+                    # requests, including when a read already saw its status.
+                    # A metadata-only idle read is not such evidence.
+                    self.pending_requests = {
+                        key: request for key, request in self.pending_requests.items()
+                        if request.get("params", {}).get("turnId") != turn_id
+                    }
             elif event.get("type") == "process_exit":
                 self.codex_state = "unavailable"
                 self.pending_requests.clear()
                 self.turn_revision += 1
+            if event.get("type") in {"process_started", "process_exit", "process_stopped"}:
+                self.scene_trust.reset()
+                self.pending_requests.clear()
+            self.scene_trust.observe(method, params, self.turn_id)
             if event.get("type") == "server_request":
                 self.pending_requests[str(event["request_id"])] = event
+                call_id = self.scene_trust.match(event, self.thread_id, self.turn_id)
+                if (call_id and self.scene_trust.enabled and self.codex_state == "running" and
+                        not self.stop_requested):
+                    try:
+                        # Client registers the pending request before invoking this sink.
+                        # The lock orders this single response against explicit revocation;
+                        # no RPC wait, HOM queue or user wait occurs under it.
+                        self._respond_request(str(event["request_id"]), {"action": "accept", "content": {}})
+                        event = {**event, "studio_trust_applied": True}
+                    except Exception:
+                        # A failed write may have reached Codex. Retain the request as
+                        # unknown, disable further delegation, and never resend it.
+                        event = {**event, "response_state": "unknown"}
             if method == "serverRequest/resolved":
                 self.pending_requests.pop(str(params.get("requestId")), None)
             self.sequence += 1
@@ -114,7 +141,49 @@ class Bridge:
             return {"workspace": self.workspace, "thread_id": self.thread_id, "turn_id": self.turn_id,
                     "codex": {"state": self.codex_state, "alive": self.client.is_running,
                               "stop_requested": self.stop_requested}, "runtime": runtime,
+                    "scene_trust": self._scene_trust_state(runtime),
                     "pending_requests": list(self.pending_requests.values())}
+
+    def _scene_trust_state(self, runtime=None):
+        reason = ""
+        if not self.thread_id:
+            reason = "请先新建或选择对话。"
+        elif self.action_lock.locked():
+            reason = "等待当前对话请求完成后启用许可。"
+        elif self._has_unknown_response():
+            reason = "上次许可回复尚未确认，请等待原生请求结论。"
+        elif not self.client.is_running or self.codex_state in {"unknown", "unavailable", "selecting"}:
+            reason = "等待当前对话状态确认后启用许可。"
+        elif self.stop_requested:
+            reason = "停止请求后，请先确认当前工作状态。"
+        elif runtime is not None and runtime.get("connection") != "connected":
+            reason = "等待当前 Houdini 连接后启用许可。"
+        return {"enabled": self.scene_trust.enabled, "thread_id": self.thread_id,
+                "revision": self.scene_trust.revision, "available": not reason,
+                "can_change": self.scene_trust.enabled or not reason, "reason": reason,
+                "pending": False, "tools": list(STUDIO_TOOLS),
+                "effect": "撤销立即停止后续自动许可；已许可或已接纳的 Houdini 操作仍以执行收据为准。"}
+
+    def _has_unknown_response(self):
+        return any(request.get("response_state") == "unknown" for request in self.pending_requests.values())
+
+    def set_scene_trust(self, body):
+        enabled, revision = body.get("enabled"), body.get("revision")
+        if type(enabled) is not bool or type(revision) is not int:
+            raise StudioError("INVALID_TRUST", "Supply enabled and the displayed permission revision")
+        # Grant can read cached Runtime health; revocation never waits on Houdini.
+        runtime = self.state()["runtime"] if enabled else None
+        with self.lock:
+            if (not self.thread_id or body.get("thread_id") != self.thread_id or
+                    revision != self.scene_trust.revision):
+                raise StudioError("TRUST_STALE", "对话或许可已变化，请刷新后重新选择。", 409)
+            state = self._scene_trust_state(runtime)
+            if enabled and not state["available"]:
+                raise StudioError("TRUST_UNAVAILABLE", state["reason"], 409)
+            self.scene_trust.change(enabled)
+            # A pending native approval stays pending. Enabling only applies to
+            # future requests; it never replays an earlier approval response.
+            return {"scene_trust": self._scene_trust_state(runtime)}
 
     def thread_config(self):
         executable = Path(os.environ.get("BCS_PYTHON_EXECUTABLE") or sys.executable)
@@ -128,13 +197,19 @@ class Bridge:
             for key, value in re.findall(r"(?m)^\s*(model_context_window|model_auto_compact_token_limit)\s*=\s*(\d+)\s*(?:#.*)?$",
                                          project_config.read_text(encoding="utf-8")):
                 context_config[key] = int(value)
-        return {"cwd": str(self.cwd), "approvalPolicy": "on-request", "sandbox": "workspace-write",
+        return {"cwd": str(self.cwd), "approvalPolicy": "on-request", "approvalsReviewer": "user",
+                "sandbox": "workspace-write",
                 "developerInstructions": SCENE_INSTRUCTIONS,
                 "config": {**context_config, "project_doc_max_bytes": 0, "mcp_servers": {"big_chicken": {
                     "command": str(executable), "args": ["-m", "studio.mcp"],
                     "env_vars": ["HIA_PROJECT_ROOT", "BCS_SESSION_ID", "BCS_WORKSPACE_ID", "BCS_SESSION_TOKEN",
                                  "BCS_OWNER_ID", "BCS_PYTHON_EXECUTABLE", "HIA_RENDER_OUTPUT_DIR", "PYTHONPATH", "TEMP", "TMP"],
-                    "startup_timeout_sec": 15, "tool_timeout_sec": 30}}}}
+                    "startup_timeout_sec": 15, "tool_timeout_sec": 30,
+                    # Native session/persistent grants cannot be revoked in-place
+                    # in 0.153.4. Keep every batch promptable; Studio delegates only
+                    # precisely correlated single approvals after explicit consent.
+                    "default_tools_approval_mode": "prompt",
+                    "tools": {name: {"approval_mode": "prompt"} for name in STUDIO_TOOLS}}}}}
 
     @contextmanager
     def action(self):
@@ -151,6 +226,8 @@ class Bridge:
 
     def _select_thread(self, thread_id):
         with self.lock:
+            if self._has_unknown_response():
+                raise StudioError("APPROVAL_RESPONSE_UNKNOWN", "上次许可回复尚未确认，暂不能切换对话。", 409)
             if self.codex_state in {"running", "starting", "stopping", "unknown", "unavailable", "selecting"}:
                 raise StudioError("TURN_ACTIVE", "Finish or stop the current turn before switching conversations", 409)
         config = self.thread_config()
@@ -159,8 +236,17 @@ class Bridge:
             if Path(item.get("cwd", "")).resolve() != self.cwd.resolve():
                 raise StudioError("THREAD_WORKSPACE_MISMATCH", "Conversation belongs to another workspace", 409)
             config["threadId"] = thread_id
-        result = self.client.request("thread/resume" if thread_id else "thread/start", config)
         with self.lock:
+            self.scene_trust.reset()
+            self.codex_state = "selecting"
+        try:
+            result = self.client.request("thread/resume" if thread_id else "thread/start", config)
+        except Exception:
+            with self.lock:
+                self.codex_state = "unknown"
+            raise
+        with self.lock:
+            self.scene_trust.reset()
             self.thread_id, self.turn_id = result["thread"]["id"], None
             self.codex_state, self.stop_requested = "idle", False
             self.pending_requests.clear()
@@ -197,6 +283,8 @@ class Bridge:
             if body.get(key) is not None and (not isinstance(body[key], str) or len(body[key]) > 160):
                 raise StudioError("INVALID_INPUT", "Model and effort must be native advertised strings")
         with self.lock:
+            if self._has_unknown_response():
+                raise StudioError("APPROVAL_RESPONSE_UNKNOWN", "上次许可回复尚未确认，暂不能发送新请求。", 409)
             if self.codex_state in {"starting", "running", "stopping", "unknown", "unavailable", "selecting"}:
                 raise StudioError("TURN_ACTIVE", "Wait for native turn confirmation or reconcile the conversation", 409)
             if not self.thread_id:
@@ -338,10 +426,32 @@ class Bridge:
             stream.write(raw)
         return {"attachment_id": name, "name": path.name, "path": str(folder / name)}
 
+    def _respond_request(self, request_id, result):
+        with self.lock:
+            request = self.pending_requests.get(request_id)
+            if request is None:
+                raise StudioError("REQUEST_EXPIRED", "This request is no longer pending", 409)
+            if request.get("response_state") == "unknown":
+                raise StudioError("APPROVAL_RESPONSE_UNKNOWN", "许可回复尚未确认，请查询原生状态或停止当前轮次。", 409)
+            call_id = self.scene_trust.match(request, self.thread_id, self.turn_id)
+            self.scene_trust.consume(call_id)
+            try:
+                self.client.respond_to_server_request(request["request_id"], result)
+            except Exception:
+                self.pending_requests[request_id] = {**request, "response_state": "unknown"}
+                self.scene_trust.reset()
+                self.codex_state = "unknown"
+                self.turn_revision += 1
+                raise
+            self.pending_requests.pop(request_id, None)
+            return {"responded": True}
+
     def route(self, method, path, query, body):
         try:
             if method == "GET" and path == "/state":
                 return self.state()
+            if method == "POST" and path == "/scene-trust":
+                return self.set_scene_trust(body)
             if method == "GET" and path == "/events":
                 cursor = int(query.get("after", [0])[0])
                 with self.lock:
@@ -385,20 +495,14 @@ class Bridge:
             if method == "POST" and path == "/account/login":
                 return self.client.request("account/login/start", {"type": "chatgpt"})
             if method == "POST" and path == "/requests/respond":
-                request_id = str(body["request_id"])
-                with self.lock:
-                    request = self.pending_requests.get(request_id)
-                if request is None:
-                    raise StudioError("REQUEST_EXPIRED", "This request is no longer pending", 409)
-                self.client.respond_to_server_request(request["request_id"], body["result"])
-                with self.lock:
-                    self.pending_requests.pop(request_id, None)
-                return {"responded": True}
+                return self._respond_request(str(body["request_id"]), body["result"])
         except BridgeError as exc:
             raise StudioError(exc.code, exc.message, exc.http_status) from exc
         raise StudioError("ROUTE_NOT_FOUND", "Unknown bridge route", 404)
 
     def close(self):
+        with self.lock:
+            self.scene_trust.reset()
         self.client.close(grace_seconds=1)
         if self.server:
             self.server.shutdown()
