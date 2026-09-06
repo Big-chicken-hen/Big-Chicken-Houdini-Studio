@@ -15,7 +15,6 @@ from PySide6 import QtCore, QtGui, QtWidgets  # noqa: E402
 
 from scripts.preview_launcher import make_fixture_window  # noqa: E402
 from studio.ui.panel import StudioPanel  # noqa: E402
-from studio.ui.theme import COLORS  # noqa: E402
 
 
 class PreviewApi:
@@ -149,17 +148,10 @@ def process_until(predicate, timeout=3000):
 
 
 def fixture_image(path):
-    image = QtGui.QImage(440, 260, QtGui.QImage.Format_RGB32)
-    image.fill(QtGui.QColor(COLORS["surface_elevated"]))
-    painter = QtGui.QPainter(image)
-    painter.setRenderHint(QtGui.QPainter.Antialiasing)
-    painter.setPen(QtGui.QPen(QtGui.QColor(COLORS["primary_pink"]), 3))
-    painter.setBrush(QtGui.QColor(COLORS["selected_surface"]))
-    painter.drawRoundedRect(QtCore.QRectF(125, 45, 185, 160), 45, 45)
-    painter.setPen(QtGui.QColor(COLORS["text_primary"]))
-    painter.drawText(QtCore.QRectF(0, 215, 440, 35), QtCore.Qt.AlignCenter, "IMAGE DECODING FIXTURE")
-    painter.end()
-    image.save(str(path))
+    # Exercise image decoding with a Qt-provided resource, never a custom mark.
+    icon = QtWidgets.QApplication.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_FileIcon)
+    if not icon.pixmap(QtCore.QSize(256, 256)).save(str(path)):
+        raise AssertionError("Could not save the standard Qt image fixture")
 
 
 def configure_preview_fonts(app):

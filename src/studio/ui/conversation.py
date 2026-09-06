@@ -52,9 +52,11 @@ class ImageTile(QtWidgets.QFrame):
         self.caption.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
         row.addWidget(self.caption, 1)
         if removable:
-            remove = button("×", self.removed.emit, "quiet")
+            remove = button("移除", self.removed.emit, "quiet")
             remove.setAccessibleName("移除图片 " + caption)
-            remove.setFixedSize(32, 32)
+            remove.setToolTip("移除图片 " + caption)
+            remove.setStyleSheet("padding: 0;")
+            remove.setFixedSize(44, 32)
             row.addWidget(remove)
         layout.addLayout(row)
         self.task = Task(lambda: self.decode(source))
