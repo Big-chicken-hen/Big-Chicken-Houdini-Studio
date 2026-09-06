@@ -7,10 +7,10 @@ from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from ..common import AppPaths, StudioError, read_json
+from ..common import AppPaths, StudioError, new_id, read_json
 from .conversation import ImageTile, Transcript
-from .requests import RequestCard
-from .shared import DARK, Api, button, clear_layout, label
+from .requests import RequestCard, SessionTrustControl
+from .shared import DARK, Api, button, label
 
 
 PANEL_STYLE = DARK + """
@@ -18,7 +18,14 @@ QWidget#studioPanel, QWidget#transcript { background: #20231F; }
 QFrame#panelHeader { background: #F1F0E8; border-radius: 9px; }
 QFrame#panelHeader QLabel { color: #374131; }
 QFrame#panelHeader QLabel#brand { color: #334726; font-size: 17px; }
-QFrame#panelHeader QLabel#workspaceName { font-size: 21px; font-weight: 700; }
+QFrame#panelHeader QLabel#workspaceName { font-size: 13px; font-weight: 700; }
+QLabel#workStatus { color: #D9EDB7; font-weight: 600; }
+QToolButton { background: transparent; color: #BBCBA9; border: 0; padding: 5px; }
+QToolButton:hover { background: #384331; }
+QFrame#panelHeader QToolButton { color: #334726; background: #E0E5D4; border-radius: 4px; }
+QMenu { background: #292F23; color: #E7E8E2; border: 1px solid #536342; }
+QMenu::item { padding: 8px 18px; }
+QMenu::item:selected { background: #414A39; }
 QFrame#messageCard { background: #292D26; border: 1px solid #3B4135; border-radius: 9px; }
 QLabel#messageAuthor { color: #C8E889; font-size: 11px; font-weight: 700; }
 QLabel#welcome { color: #B6C1AA; font-size: 17px; }
@@ -26,7 +33,7 @@ QLabel#warning { color: #F0BC87; }
 QFrame#requestCard { background: #353326; border: 1px solid #8B8653; border-radius: 9px; }
 QFrame#imageTile { background: #1C2019; border: 1px solid #46533B; border-radius: 7px; }
 QFrame#composer { background: #292F23; border: 1px solid #536342; border-radius: 10px; }
-QFrame#composer QPlainTextEdit { border: 0; background: transparent; padding: 2px; }
+QFrame#composer QTextEdit { border: 0; background: transparent; padding: 2px; }
 QWidget#attachmentBody { background: #292F23; }
 QWidget#requestBody, QWidget#imageBody { background: #20231F; }
 QSplitter::handle { background: #343D2D; height: 3px; width: 3px; }
@@ -40,15 +47,47 @@ OP_STATES = {"queued": "排队中", "running": "执行中", "finished": "执行�
 BUSY_CODEX = {"starting", "running", "stopping", "unknown", "unavailable", "selecting"}
 
 
-class Composer(QtWidgets.QPlainTextEdit):
+class Composer(QtWidgets.QTextEdit):
+    """Keep Qt's native text/IME path; only images leave the plain-text editor."""
     send_requested = QtCore.Signal()
+    image_pasted = QtCore.Signal(object)
 
-    def keyPressEvent(self, event):
-        if event.key() in {QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter} and event.modifiers() & QtCore.Qt.ControlModifier:
-            self.send_requested.emit()
-            event.accept()
-        else:
-            super().keyPressEvent(event)
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # Small adaptation of HIA's ExpandableTextEdit: no keyboard or IME overrides.
+        self.setAcceptRichText(False)
+        self.setMinimumHeight(84)
+        self.setMaximumHeight(160)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
+        self._send_shortcuts = []
+        for sequence in ("Ctrl+Return", "Ctrl+Enter"):
+            shortcut = QtGui.QShortcut(QtGui.QKeySequence(sequence), self)
+            shortcut.setContext(QtCore.Qt.WidgetShortcut)
+            shortcut.setAutoRepeat(False)
+            shortcut.activated.connect(self.send_requested.emit)
+            self._send_shortcuts.append(shortcut)
+        self.document().documentLayout().documentSizeChanged.connect(lambda _size: self.update_height())
+        self.document().contentsChanged.connect(self.update_height)
+        self.update_height()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.update_height()
+
+    def update_height(self):
+        height = max(84, min(160, int(self.document().size().height()) + 14))
+        if self.maximumHeight() != height:
+            self.setMaximumHeight(height)
+            self.updateGeometry()
+
+    def canInsertFromMimeData(self, source):
+        return source.hasImage() or super().canInsertFromMimeData(source)
+
+    def insertFromMimeData(self, source):
+        if source.hasImage():
+            self.image_pasted.emit(source.imageData())
+            return  # Mixed clipboard formats must not insert text a second time.
+        super().insertFromMimeData(source)
 
 
 class StudioPanel(QtWidgets.QWidget):
@@ -64,6 +103,7 @@ class StudioPanel(QtWidgets.QWidget):
         self.logged_in = False
         self.account_known = False
         self.thread_id = None
+        self.confirmed_new_thread = None
         self.cursor = 0
         self.revision = 0
         self.hydrating = False
@@ -75,6 +115,8 @@ class StudioPanel(QtWidgets.QWidget):
         self.history_repairs_left = 1
         self.history_terminal_pending = False
         self.submitting = False
+        self.pending_submission = None
+        self.stop_pending = False
         self.switching = False
         self.uncertain_send = False
         self.reconciling = False
@@ -82,7 +124,11 @@ class StudioPanel(QtWidgets.QWidget):
         self.login_url = None
         self.memory_busy = False
         self.attachments = []
+        self.attachment_tiles = {}
         self.uploading = 0
+        self.operation_summary_key = None
+        self.observed_operations = set()
+        self.observed_turn = None
         self.request_cards = {}
         self.receipts = {}
         self.operation_id = None
@@ -95,8 +141,8 @@ class StudioPanel(QtWidgets.QWidget):
         self.setObjectName("studioPanel")
         self.setWindowTitle("Big-Chicken · Houdini Studio")
         self.setStyleSheet(PANEL_STYLE)
-        self.resize(880, 960)
-        self.setMinimumSize(590, 630)
+        self.resize(720, 900)
+        self.setMinimumSize(440, 580)
         self.build_ui()
         self.poll = QtCore.QTimer(self)
         self.poll.setInterval(850)
@@ -113,54 +159,79 @@ class StudioPanel(QtWidgets.QWidget):
 
     def build_ui(self):
         root = QtWidgets.QVBoxLayout(self)
-        root.setContentsMargins(18, 16, 18, 14)
-        root.setSpacing(11)
+        root.setContentsMargins(10, 10, 10, 10)
+        root.setSpacing(8)
         header = QtWidgets.QFrame()
         header.setObjectName("panelHeader")
         top = QtWidgets.QHBoxLayout(header)
-        top.setContentsMargins(19, 13, 19, 14)
+        top.setContentsMargins(12, 8, 12, 8)
         names = QtWidgets.QVBoxLayout()
-        names.addWidget(label("BC /  HOUDINI STUDIO", "brand"))
+        names.setSpacing(2)
+        names.addWidget(label("BIG-CHICKEN STUDIO", "brand"))
         self.workspace_name = label("连接工作空间…", "workspaceName")
+        self.workspace_name.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
         names.addWidget(self.workspace_name)
         top.addLayout(names, 1)
-        top.addWidget(label("想法 · 现场 · 决策"))
+        self.conversation_button = button("返回对话", lambda: self.tabs.setCurrentIndex(0))
+        self.conversation_button.hide()
+        top.addWidget(self.conversation_button)
+        self.menu_button = QtWidgets.QToolButton()
+        self.menu_button.setText("更多")
+        self.menu_button.setPopupMode(QtWidgets.QToolButton.InstantPopup)
+        menu = QtWidgets.QMenu(self.menu_button)
+        menu.addAction("设置与连接详情", self.toggle_settings)
+        menu.addAction("执行详情", lambda: self.tabs.setCurrentIndex(1))
+        menu.addAction("项目约定", lambda: self.tabs.setCurrentIndex(2))
+        self.menu_button.setMenu(menu)
+        top.addWidget(self.menu_button)
         root.addWidget(header)
-        row = QtWidgets.QHBoxLayout()
-        self.account_label = label("正在读取账号…", "muted")
+        self.login_area = QtWidgets.QWidget()
+        row = QtWidgets.QHBoxLayout(self.login_area)
+        row.setContentsMargins(0, 0, 0, 0)
+        self.account_label = label("正在读取账号…", "muted", True)
         row.addWidget(self.account_label, 1)
         self.login_button = button("登录 ChatGPT", self.login, "primary")
         row.addWidget(self.login_button)
+        root.addWidget(self.login_area)
+        self.settings_area = QtWidgets.QFrame()
+        self.settings_area.setObjectName("status")
+        self.settings_layout = QtWidgets.QVBoxLayout(self.settings_area)
+        self.settings_layout.setContentsMargins(10, 8, 10, 8)
+        self.settings_layout.addWidget(label("设置与连接详情", "eyebrow"))
+        self.account_detail = label("", "muted", True)
+        self.settings_layout.addWidget(self.account_detail)
+        detail_row = QtWidgets.QHBoxLayout()
         self.refresh_button = button("刷新连接", self.reconnect)
-        row.addWidget(self.refresh_button)
-        root.addLayout(row)
-        status_row = QtWidgets.QHBoxLayout()
+        detail_row.addWidget(self.refresh_button)
+        self.threads_refresh = button("刷新会话列表", self.load_threads, "quiet")
+        detail_row.addWidget(self.threads_refresh)
+        detail_row.addStretch()
+        self.settings_layout.addLayout(detail_row)
         self.codex_label, self.runtime_label = label("未连接", wrap=True), label("未连接", wrap=True)
         for title, value in (("CODEX", self.codex_label), ("HOUDINI RUNTIME", self.runtime_label)):
-            card = QtWidgets.QFrame()
-            card.setObjectName("status")
-            stack = QtWidgets.QVBoxLayout(card)
-            stack.setContentsMargins(12, 9, 12, 9)
-            stack.addWidget(label(title, "eyebrow"))
-            stack.addWidget(value)
-            status_row.addWidget(card, 1)
-        root.addLayout(status_row)
-        scene_row = QtWidgets.QHBoxLayout()
+            self.settings_layout.addWidget(label(title, "eyebrow"))
+            self.settings_layout.addWidget(value)
         self.scene_label = label("场景快照尚不可用", "muted", True)
-        scene_row.addWidget(self.scene_label, 1)
-        self.reconcile_button = button("校正 Codex 状态", self.reconcile, "quiet")
-        scene_row.addWidget(self.reconcile_button)
-        root.addLayout(scene_row)
+        self.settings_layout.addWidget(self.scene_label)
+        self.settings_layout.addWidget(label("长操作占用 Houdini 主线程时，停止按钮可能延迟响应；执行结果以收据为准。", "muted", True))
+        self.settings_area.hide()
         self.notice = label("", "warning", True)
         self.notice.hide()
         root.addWidget(self.notice)
         self.tabs = QtWidgets.QTabWidget()
+        self.tabs.tabBar().hide()
         self.tabs.currentChanged.connect(self.tab_changed)
         root.addWidget(self.tabs, 1)
         self.build_conversation()
         self.build_operations()
         self.build_decisions()
-        root.addWidget(label("执行记录来自 Houdini runtime  ·  对话保存在 Codex 原生会话", "eyebrow"))
+        self.settings_layout.addStretch()
+        self.tabs.addTab(self.settings_area, "设置与连接详情")
+        # Execution uncertainty remains visible while another page is open, too.
+        root.insertWidget(root.indexOf(self.tabs), self.runtime_status)
+
+    def toggle_settings(self):
+        self.tabs.setCurrentIndex(0 if self.tabs.currentIndex() == 3 else 3)
 
     def build_conversation(self):
         page = QtWidgets.QWidget()
@@ -171,16 +242,17 @@ class StudioPanel(QtWidgets.QWidget):
         self.threads = QtWidgets.QComboBox()
         self.threads.setMinimumWidth(130)
         self.threads.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
-        self.threads.setPlaceholderText("选择原生会话")
+        self.threads.setPlaceholderText("选择对话")
         self.threads.activated.connect(self.choose_thread)
         row.addWidget(self.threads, 1)
-        self.threads_refresh = button("刷新", self.load_threads, "quiet")
-        row.addWidget(self.threads_refresh)
         self.new_thread = button("＋ 新对话", lambda: self.select_thread(None))
         row.addWidget(self.new_thread)
         layout.addLayout(row)
         self.transcript = Transcript(self.paths.root)
         layout.addWidget(self.transcript, 1)
+        self.session_trust = SessionTrustControl(self.api)
+        self.session_trust.changed.connect(self.refresh)
+        layout.addWidget(self.session_trust)
         self.request_area = QtWidgets.QScrollArea()
         self.request_area.setWidgetResizable(True)
         self.request_area.setMaximumHeight(300)
@@ -191,6 +263,24 @@ class StudioPanel(QtWidgets.QWidget):
         self.request_area.setWidget(request_body)
         self.request_area.hide()
         layout.addWidget(self.request_area)
+        status_row = QtWidgets.QHBoxLayout()
+        self.work_status = label("连接工作空间后即可发送；现在可以先写草稿。", "workStatus", True)
+        status_row.addWidget(self.work_status, 1)
+        self.reconcile_button = button("查询提交状态", self.reconcile, "quiet")
+        status_row.addWidget(self.reconcile_button)
+        self.reconnect_button = button("重新连接", self.reconnect, "quiet")
+        status_row.addWidget(self.reconnect_button)
+        layout.addLayout(status_row)
+        self.runtime_status = label("", "warning", True)
+        layout.addWidget(self.runtime_status)
+        self.pending_button = button("查看未确认的原消息", self.toggle_pending_submission, "quiet")
+        self.pending_button.hide()
+        layout.addWidget(self.pending_button, 0, QtCore.Qt.AlignLeft)
+        self.pending_preview = QtWidgets.QPlainTextEdit()
+        self.pending_preview.setReadOnly(True)
+        self.pending_preview.setMaximumHeight(120)
+        self.pending_preview.hide()
+        layout.addWidget(self.pending_preview)
         composer = QtWidgets.QFrame()
         composer.setObjectName("composer")
         controls = QtWidgets.QVBoxLayout(composer)
@@ -217,9 +307,9 @@ class StudioPanel(QtWidgets.QWidget):
         controls.addLayout(reference_row)
         self.input = Composer()
         self.input.setPlaceholderText("描述你想完成的工作。Enter 换行，Ctrl + Enter 发送。")
-        self.input.setFixedHeight(78)
         self.input.textChanged.connect(self.update_controls)
         self.input.send_requested.connect(self.send)
+        self.input.image_pasted.connect(self.add_clipboard_image)
         controls.addWidget(self.input)
         settings = QtWidgets.QHBoxLayout()
         self.models = QtWidgets.QComboBox()
@@ -232,19 +322,22 @@ class StudioPanel(QtWidgets.QWidget):
         self.efforts.setToolTip("模型支持的推理档位")
         settings.addWidget(self.models, 1)
         settings.addWidget(self.efforts)
-        controls.addLayout(settings)
+        self.settings_layout.addLayout(settings)
         actions = QtWidgets.QHBoxLayout()
         self.attach_button = button("＋ 图片", self.choose_images, "quiet")
         self.selection_button = button("引用选择", self.request_selection, "quiet")
         actions.addWidget(self.attach_button)
         actions.addWidget(self.selection_button)
+        self.retry_attachments = button("添加待传图片", self.upload_attachments, "quiet")
+        self.retry_attachments.hide()
+        actions.addWidget(self.retry_attachments)
         actions.addStretch()
-        self.stop_button = button("请求停止", self.stop, "stop")
+        self.stop_button = button("停止后续工作", self.stop, "stop")
+        self.stop_button.setToolTip("请求停止后续工作；长操作占用主线程时，按钮可能延迟响应。")
         self.send_button = button("发送   ↑", self.send, "primary")
         actions.addWidget(self.stop_button)
         actions.addWidget(self.send_button)
         controls.addLayout(actions)
-        controls.addWidget(label("长 HOM 占用主线程时，按钮可能延迟响应；操作是否停止以收据为准。", "muted", True))
         layout.addWidget(composer)
         self.tabs.addTab(page, "对话")
 
@@ -290,7 +383,7 @@ class StudioPanel(QtWidgets.QWidget):
         splitter.addWidget(detail)
         splitter.setSizes([180, 400])
         layout.addWidget(splitter, 1)
-        self.tabs.addTab(page, "执行记录")
+        self.tabs.addTab(page, "执行详情")
 
     def build_decisions(self):
         page = QtWidgets.QWidget()
@@ -314,7 +407,7 @@ class StudioPanel(QtWidgets.QWidget):
             row.addWidget(control)
         row.addStretch()
         layout.addLayout(row)
-        self.tabs.addTab(page, "项目决策")
+        self.tabs.addTab(page, "项目约定")
 
     def show_notice(self, message):
         self.notice.setText(str(message)[:1500])
@@ -343,6 +436,7 @@ class StudioPanel(QtWidgets.QWidget):
                 self.show_notice(str(exc))
                 self.update_controls()
                 return
+        self.session_trust.set_api(self.api)
         self.refresh()
         self.refresh_account()
         if self.auto_poll:
@@ -385,6 +479,7 @@ class StudioPanel(QtWidgets.QWidget):
         recovered = not self.bridge_connected
         self.bridge_connected = True
         self.state = value
+        self.session_trust.apply_state(value)
         workspace = value.get("workspace", {})
         self.workspace_name.setText(workspace.get("name", "工作空间"))
         self.workspace_name.setToolTip(str(workspace.get("workspace_id", "")))
@@ -423,6 +518,21 @@ class StudioPanel(QtWidgets.QWidget):
         self.sync_requests(value.get("pending_requests", []))
         if self.selection_reference and scene.get("scene_epoch") != self.selection_reference.get("scene_epoch"):
             self.reference_label.setText("引用来自较早场景；发送前请重新引用当前选择。")
+        observed_turn = (value.get("thread_id"), value.get("turn_id"))
+        if self.observed_turn and (observed_turn[0] != self.observed_turn[0]
+                                   or observed_turn[1] and observed_turn != self.observed_turn):
+            self.observed_operations.clear()
+        if observed_turn[1] or not self.observed_turn or observed_turn[0] != self.observed_turn[0]:
+            self.observed_turn = observed_turn
+        active = runtime.get("active_operation_id")
+        if active:
+            self.observed_operations.add(active)
+        summary_key = (value.get("thread_id"), value.get("turn_id"), native, active,
+                       runtime.get("main_thread_busy"), runtime.get("queue_depth"), runtime.get("connection"))
+        if summary_key != self.operation_summary_key:
+            self.operation_summary_key = summary_key
+            if runtime.get("connection") == "connected":
+                self.load_operations()
         self.update_controls()
 
     def update_controls(self):
@@ -435,25 +545,47 @@ class StudioPanel(QtWidgets.QWidget):
         ready = account and idle and not self.switching and not self.submitting and not self.uncertain_send and not self.reconciling
         scene_ready = runtime.get("connection") == "connected" and not runtime.get("storage_fault")
         self.login_button.setVisible(not self.logged_in)
+        self.login_area.setVisible(not self.logged_in)
+        self.account_detail.setText(self.account_label.text())
         self.login_button.setEnabled(self.bridge_connected and (not self.login_pending or self.login_url is not None))
         self.new_thread.setEnabled(ready)
         self.threads.setEnabled(ready)
         self.threads_refresh.setEnabled(account and not self.switching)
-        self.input.setEnabled(account and not self.submitting)
+        # Local editing is independent from account, connection and turn state.
+        self.input.setEnabled(True)
         self.models.setEnabled(ready and self.models_loaded)
         self.efforts.setEnabled(ready and self.efforts.count() > 0)
         text_ok = 0 < len(self.input.toPlainText().strip()) <= 64000
         reference_ok = not self.selection_reference or self.selection_reference.get("scene_epoch") == runtime.get("scene", {}).get("scene_epoch")
         self.send_button.setEnabled(ready and bool(self.thread_id) and text_ok and not self.uploading and not self.selection_pending
                                     and not self.selection_inflight and reference_ok)
-        self.attach_button.setEnabled(account and not self.submitting and len(self.attachments) + self.uploading < 8)
+        self.attach_button.setEnabled(len(self.attachments) < 8)
+        waiting_images = any(item.get("status") in {"waiting", "failed"} for item in self.attachments)
+        self.retry_attachments.setVisible(waiting_images)
+        self.retry_attachments.setEnabled(self.bridge_connected)
+        if any(item.get("status") in {"waiting", "failed", "uploading"} for item in self.attachments):
+            self.send_button.setEnabled(False)
         self.selection_button.setEnabled(ready and scene_ready and not self.selection_pending and not self.selection_inflight)
         self.reference_clear.setVisible(bool(self.selection_reference))
-        self.reference_clear.setEnabled(not self.submitting)
-        self.stop_button.setEnabled(self.bridge_connected and (codex.get("state") in {"running", "starting", "stopping", "unknown"}
-                                                              or bool(runtime.get("main_thread_busy")) or runtime.get("queue_depth", 0) > 0))
+        self.reference_clear.setEnabled(True)
+        working = (codex.get("state") in {"running", "starting", "stopping", "unknown"}
+                   or bool(runtime.get("main_thread_busy")) or bool(runtime.get("active_operation_id"))
+                   or runtime.get("queue_depth", 0) > 0 or self.submitting)
+        self.stop_button.setVisible(working or self.stop_pending)
+        self.stop_button.setEnabled(self.bridge_connected and working and not self.stop_pending)
+        self.stop_button.setText("正在请求停止…" if self.stop_pending else "停止后续工作")
+        self.send_button.setVisible(not working or self.send_button.isEnabled())
+        send_style = "quiet" if working else "primary"
+        if self.send_button.objectName() != send_style:
+            self.send_button.setObjectName(send_style)
+            self.send_button.style().unpolish(self.send_button)
+            self.send_button.style().polish(self.send_button)
         self.reconcile_button.setEnabled(self.bridge_connected and bool(self.thread_id) and not self.switching
                                          and not self.submitting and not self.reconciling)
+        self.reconcile_button.setVisible(self.uncertain_send or codex.get("state") in {"unknown", "unavailable"})
+        self.reconnect_button.setVisible(not self.bridge_connected)
+        self.pending_button.setVisible(self.uncertain_send and self.pending_submission is not None)
+        self.update_work_status()
         for control in (self.decision_refresh, self.operations_refresh, self.lookup_button):
             control.setEnabled(self.bridge_connected)
         has_text = 0 < len(self.decision_input.toPlainText().strip()) <= 12000
@@ -461,6 +593,65 @@ class StudioPanel(QtWidgets.QWidget):
         self.decision_save.setEnabled(self.bridge_connected and has_text and not self.memory_busy)
         self.decision_replace.setEnabled(self.bridge_connected and has_text and has_record and not self.memory_busy)
         self.decision_delete.setEnabled(self.bridge_connected and has_record and not self.memory_busy)
+
+    def update_work_status(self):
+        codex, runtime = self.state.get("codex", {}), self.state.get("runtime", {})
+        native = codex.get("state", "unknown")
+        if self.uncertain_send:
+            text = "上次提交结果未确认。可继续写草稿，请先查询提交状态。"
+        elif self.stop_pending or codex.get("stop_requested") and native in {"running", "starting", "stopping"}:
+            text = "已请求停止后续工作，等待确认。"
+        elif not self.bridge_connected:
+            text = "连接未就绪；草稿可继续编辑。"
+        elif self.submitting:
+            text = "正在提交消息；可以继续写下一段草稿。"
+        elif self.request_cards:
+            text = "需要你的回应，完成后继续。"
+        elif self.selection_pending or self.selection_inflight:
+            text = "正在读取当前选择…"
+        elif not codex.get("alive"):
+            text = "对话服务不可用；草稿已保留。"
+        elif native in {"starting", "running", "stopping", "unknown", "failed", "interrupted"}:
+            text = {"failed": "本轮对话失败，请查看对话中的原因。", "interrupted": "本轮对话已中断。"}.get(native, CODEX_STATES[native])
+        elif not self.logged_in:
+            text = "登录状态未确认；可先写草稿，确认账号后发送。"
+        elif not self.thread_id:
+            text = "新建或选择对话后即可发送。"
+        else:
+            text = "可以继续描述下一步。" if native == "completed" else "准备好了。"
+        self.work_status.setText(text)
+        if not self.bridge_connected or runtime.get("connection") != "connected":
+            fact = "Houdini 连接未确认，场景修改结果尚未确认。"
+        elif runtime.get("storage_fault"):
+            fact = "Houdini 执行记录存储异常，修改结果尚未确认。"
+        elif runtime.get("main_thread_busy") or runtime.get("active_operation_id"):
+            fact = "Houdini 仍在执行，请等待当前操作结束。"
+        elif runtime.get("queue_depth", 0):
+            fact = "Houdini 还有操作在排队，等待执行。"
+        elif any(r.get("state") == "unknown" or r.get("receipt_confirmed") is False
+                 or r.get("mutation_outcome") == "unknown" and r.get("state") in {"finished", "failed"}
+                 for r in self.receipts.values()):
+            fact = "工作空间仍有结果未确认的 Houdini 操作；请查看执行详情。"
+        elif any(self.receipts.get(key, {}).get("state") in {None, "queued", "running"}
+                 for key in self.observed_operations):
+            fact = "Houdini 队列已空闲，上次操作的结果仍待确认。"
+        elif any(self.receipts[key].get("mutation_outcome") == "partial" for key in self.observed_operations):
+            fact = "本轮 Houdini 操作留下了部分修改；请查看执行详情后继续。"
+        elif any(self.receipts[key].get("checks_outcome") == "failed" for key in self.observed_operations):
+            fact = "本轮 Houdini 操作的检查发现问题；请查看执行详情。"
+        elif any(self.receipts[key].get("state") in {"failed", "rejected"} for key in self.observed_operations):
+            fact = "本轮有 Houdini 操作失败或被拒绝；请查看执行详情。"
+        else:
+            fact = ""
+        self.runtime_status.setText(fact)
+        self.runtime_status.setVisible(bool(fact))
+
+    def toggle_pending_submission(self):
+        if self.pending_submission:
+            snapshot = self.pending_submission
+            names = "、".join(item["name"] for item in snapshot["attachments"])
+            self.pending_preview.setPlainText(snapshot["request_text"] + ("\n\n保留的图片：" + names if names else ""))
+            self.pending_preview.setVisible(self.pending_preview.isHidden())
 
     def refresh_account(self):
         self.call("GET", "/account", done=self.apply_account, failed=self.account_failed, unique=True)
@@ -586,12 +777,15 @@ class StudioPanel(QtWidgets.QWidget):
         self.revision += 1
         self.update_controls()
         self.call("POST", "/threads/select", {"thread_id": thread_id} if thread_id else {},
-                  done=self.thread_selected, failed=self.thread_failed)
+                  done=lambda value: self.thread_selected(value, created=thread_id is None), failed=self.thread_failed)
 
-    def thread_selected(self, value):
+    def thread_selected(self, value, *, created=False):
         self.switching = False
         self.revision += 1
         self.thread_id = value.get("thread", {}).get("id")
+        # A successful explicit creation establishes an empty starting boundary;
+        # a metadata-only read of an existing conversation does not.
+        self.confirmed_new_thread = self.thread_id if created and not value.get("thread", {}).get("turns") else None
         self.uncertain_send = False
         self.selection_reference = None
         self.reference_label.hide()
@@ -724,45 +918,86 @@ class StudioPanel(QtWidgets.QWidget):
         if self.efforts.currentData():
             body["effort"] = self.efforts.currentData()
         self.submitting = True
+        self.pending_submission = {"thread_id": self.thread_id, "text": self.input.toPlainText(),
+                                   "document_revision": self.input.document().revision(), "request_text": text,
+                                   "attachments": [dict(item) for item in self.attachments],
+                                   "selection": self.selection_reference,
+                                   "seen_items": set(self.transcript.cards),
+                                   "history_known": (self.transcript.history_known and not self.hydrating
+                                                     or self.confirmed_new_thread == self.thread_id
+                                                     and self.transcript.last_turn_id is None),
+                                   "last_turn_id": self.transcript.last_turn_id}
         self.revision += 1
         self.update_controls()
         self.show_notice("")
-        self.call("POST", "/turn", body, done=self.sent, failed=self.send_failed)
+        if not self.call("POST", "/turn", body, done=self.sent, failed=self.send_failed):
+            self.submitting = False
+            self.pending_submission = None
+            self.show_notice("连接尚未就绪，消息未发出。草稿已保留。")
+            self.update_controls()
 
     def sent(self, value):
+        if not (value.get("turn") or {}).get("id"):
+            self.send_failed("提交响应缺少原生消息轮次；请查询提交状态。")
+            return
         self.submitting = False
         self.revision += 1
         native_status = value.get("turn", {}).get("status", "inProgress")
         self.state["codex"] = {**self.state.get("codex", {}),
                                "state": "running" if native_status == "inProgress" else native_status}
-        self.input.clear()
-        self.attachments.clear()
-        self.render_attachments()
-        self.selection_reference = None
-        self.reference_label.hide()
+        self.accept_submission()
         for item in value.get("turn", {}).get("items", []):
             self.transcript.put(item)
         self.refresh()
         self.update_controls()
 
+    def accept_submission(self):
+        snapshot = self.pending_submission
+        if snapshot and (self.input.document().revision() == snapshot["document_revision"]
+                         and self.input.toPlainText() == snapshot["text"]
+                         and self.attachments == snapshot["attachments"]
+                         and self.selection_reference == snapshot["selection"]):
+            # One deliberate edit after acknowledgement; native undo remains available.
+            cursor = self.input.textCursor()
+            cursor.beginEditBlock()
+            cursor.select(QtGui.QTextCursor.Document)
+            cursor.removeSelectedText()
+            cursor.endEditBlock()
+            self.attachments.clear()
+            self.render_attachments()
+            self.clear_reference()
+        elif snapshot:
+            self.show_notice("消息已确认提交；等待期间编辑的草稿已保留。")
+        self.pending_submission = None
+        self.confirmed_new_thread = None
+        self.uncertain_send = False
+        self.pending_preview.hide()
+
     def send_failed(self, message):
         self.submitting = False
         self.uncertain_send = getattr(message, "submission_state", None) != "not_submitted"
+        if not self.uncertain_send:
+            self.pending_submission = None
         self.revision += 1
-        prefix = ("提交未确认，输入已保留。请先校正 Codex 状态，查看原生历史。\n" if self.uncertain_send else
+        prefix = ("提交未确认，原消息和图片已保留。请查询提交状态，避免重复发送。\n" if self.uncertain_send else
                   "提交被拒绝，输入已保留。修正后可以再次发送。\n")
         self.show_notice(prefix + str(message))
         self.refresh()
         self.update_controls()
+        if self.uncertain_send:
+            self.reconcile()  # One read after loss; never submit again or loop over history.
 
     def stop(self):
         if not self.stop_button.isEnabled():
             return
-        self.stop_button.setEnabled(False)
+        self.stop_pending = True
         self.revision += 1
+        self.show_notice("正在请求停止后续工作；Houdini 当前操作仍需单独确认。")
+        self.update_controls()
         self.call("POST", "/stop", {}, done=self.stopped, failed=self.stop_failed)
 
     def stopped(self, value):
+        self.stop_pending = False
         self.revision += 1
         error = value.get("codex_interrupt_error")
         scene = value.get("scene", {})
@@ -773,11 +1008,14 @@ class StudioPanel(QtWidgets.QWidget):
             message += "\nHoudini 停止后续操作未确认：" + str(scene.get("message", ""))
         self.show_notice(message)
         self.refresh()
+        self.update_controls()
 
     def stop_failed(self, message):
+        self.stop_pending = False
         self.revision += 1
         self.show_notice("停止请求未确认：" + message)
         self.refresh()
+        self.update_controls()
 
     def reconcile(self):
         if not self.reconcile_button.isEnabled():
@@ -790,17 +1028,49 @@ class StudioPanel(QtWidgets.QWidget):
     def reconciled(self, value):
         self.reconciling = False
         self.revision += 1
+        if (value.get("thread") or {}).get("id") not in {None, self.thread_id}:
+            self.show_notice("收到其他会话的迟到状态；原消息与草稿继续保留。")
+            self.refresh()
+            self.update_controls()
+            return
         if value.get("reconciled"):
-            self.uncertain_send = False
+            accepted = self.submission_in_history(value)
+            if accepted:
+                self.accept_submission()
             if value.get("codex_state"):
                 self.state["codex"] = {**self.state.get("codex", {}), "state": value["codex_state"]}
             if value.get("history_available") is not False:
                 self.history_repairs_left = 1
                 self.transcript.hydrate(value.get("thread"))
-            self.show_notice("已读取 Codex 原生状态；Houdini 结果以执行记录为准。")
+            self.show_notice("已在原生会话中确认原消息；Houdini 结果以执行详情为准。" if accepted else
+                             "已读取会话，但尚不能确认原消息是否提交；草稿和图片继续保留。" if self.uncertain_send else
+                             "已读取对话状态；Houdini 结果以执行详情为准。")
         else:
             self.show_notice(value.get("message", "没有可校正的会话。"))
         self.refresh()
+        self.update_controls()
+
+    def submission_in_history(self, value):
+        snapshot, thread = self.pending_submission, value.get("thread") or {}
+        if (not snapshot or not snapshot["history_known"] or value.get("history_available") is False
+                or thread.get("id") != snapshot["thread_id"]):
+            return False
+        turns = thread.get("turns", [])
+        previous = snapshot["last_turn_id"]
+        start = next((i + 1 for i, turn in enumerate(turns) if turn.get("id") == previous), None) if previous else 0
+        if start is None:
+            return False  # A truncated read cannot establish what came after our snapshot.
+        for turn in turns[start:]:
+            for item in turn.get("items", []):
+                if item.get("type") != "userMessage" or not item.get("id") or item["id"] in snapshot["seen_items"]:
+                    continue
+                content = item.get("content") or []
+                text = "\n\n".join(block.get("text", "") for block in content if block.get("type") == "text")
+                images = [block.get("path") for block in content if block.get("type") == "localImage"]
+                if (text == snapshot["request_text"] and images == [image["path"] for image in snapshot["attachments"]]
+                        and not any(block.get("type") == "image" for block in content)):
+                    return True
+        return False
 
     def reconcile_failed(self, message):
         self.reconciling = False
@@ -814,37 +1084,103 @@ class StudioPanel(QtWidgets.QWidget):
         self.add_images(paths)
 
     def add_images(self, paths):
-        room = 8 - len(self.attachments) - self.uploading
+        room = max(0, 8 - len(self.attachments))
         if len(paths) > room:
             self.show_notice("每次最多添加 8 张图片。")
         for path in paths[:room]:
-            self.uploading += 1
-            self.call("POST", "/attachments", {"path": str(path)}, done=self.attached, failed=self.attach_failed)
-        self.update_controls()
+            source = Path(path)
+            self.attachments.append({"local_key": new_id(), "attachment_id": None,
+                                     "name": source.name, "path": str(source), "status": "waiting"})
+        self.render_attachments()
+        self.upload_attachments()
 
-    def attached(self, value):
-        self.uploading = max(0, self.uploading - 1)
-        self.attachments.append(value)
+    def add_clipboard_image(self, image):
+        if len(self.attachments) >= 8:
+            self.show_notice("每次最多添加 8 张图片。")
+            return
+        if isinstance(image, QtGui.QPixmap):
+            image = image.toImage()
+        if not isinstance(image, QtGui.QImage) or image.isNull():
+            self.show_notice("剪贴板图片无法读取，请重新复制图片。")
+            return
+        if image.sizeInBytes() > 64 * 1024 * 1024:
+            self.show_notice("剪贴板图片过大，请裁剪后再粘贴。")
+            return
+        data = QtCore.QByteArray()
+        buffer = QtCore.QBuffer(data)
+        buffer.open(QtCore.QIODevice.WriteOnly)
+        saved = image.save(buffer, "PNG")
+        buffer.close()
+        if not saved or data.size() > 12 * 1024 * 1024:
+            self.show_notice("剪贴板图片无法保存或超过 12 MB，请裁剪后再粘贴。")
+            return
+        try:
+            folder = self.paths.local("composer")
+            folder.mkdir(parents=True, exist_ok=True)
+            path = folder / ("clipboard-" + new_id() + ".png")
+            with path.open("xb") as stream:
+                stream.write(bytes(data))
+        except OSError as exc:
+            self.show_notice("剪贴板图片保存失败：" + str(exc))
+            return
+        self.add_images([path])
+
+    def upload_attachments(self):
+        if self.bridge_connected:
+            for item in self.attachments:
+                if item.get("status") not in {"waiting", "failed"}:
+                    continue
+                item["status"] = "uploading"
+                self.uploading += 1
+                key = item["local_key"]
+                if not self.call("POST", "/attachments", {"path": item["path"]},
+                                 done=lambda value, key=key: self.attached(value, key),
+                                 failed=lambda message, key=key: self.attach_failed(message, key)):
+                    self.attach_failed("连接尚未就绪，图片保留在草稿中。", key)
         self.render_attachments()
         self.update_controls()
 
-    def attach_failed(self, message):
+    def attached(self, value, key=None):
         self.uploading = max(0, self.uploading - 1)
-        self.show_notice(message)
+        item = next((item for item in self.attachments if item.get("local_key") == key), None)
+        if item is not None:
+            item.update(value, status="ready")
+        self.render_attachments()
+        self.update_controls()
+
+    def attach_failed(self, message, key=None):
+        self.uploading = max(0, self.uploading - 1)
+        item = next((item for item in self.attachments if item.get("local_key") == key), None)
+        if item is not None:
+            item["status"] = "failed"
+            self.show_notice("图片尚未添加，原图片已保留：" + str(message))
+        self.render_attachments()
         self.update_controls()
 
     def render_attachments(self):
-        clear_layout(self.attachment_layout)
-        for item in self.attachments:
-            tile = ImageTile({"path": item["path"]}, item["name"], removable=True, compact=True)
-            tile.removed.connect(lambda attachment_id=item["attachment_id"]: self.remove_attachment(attachment_id))
-            self.attachment_layout.addWidget(tile)
+        retained = set()
+        for index, item in enumerate(self.attachments):
+            key = item.get("local_key") or item["attachment_id"]
+            retained.add(key)
+            prefix = {"waiting": "待添加 · ", "uploading": "添加中 · ", "failed": "未添加 · "}.get(item.get("status"), "")
+            tile = self.attachment_tiles.get(key)
+            if tile is None:
+                tile = ImageTile({"path": item["path"]}, item["name"], removable=True, compact=True)
+                tile.removed.connect(lambda key=key: self.remove_attachment(key))
+                self.attachment_tiles[key] = tile
+            tile.caption.setText(prefix + item["name"])
+            tile.caption.setToolTip(prefix + item["name"])
+            self.attachment_layout.insertWidget(index, tile)
+        for key in set(self.attachment_tiles) - retained:
+            tile = self.attachment_tiles.pop(key)
+            self.attachment_layout.removeWidget(tile)
+            tile.hide()
+            tile.deleteLater()
         self.attachment_area.setVisible(bool(self.attachments))
 
     def remove_attachment(self, attachment_id):
-        if self.submitting:
-            return
-        self.attachments = [item for item in self.attachments if item["attachment_id"] != attachment_id]
+        self.attachments = [item for item in self.attachments
+                            if attachment_id not in {item.get("local_key"), item["attachment_id"]}]
         self.render_attachments()
         self.update_controls()
 
@@ -908,6 +1244,8 @@ class StudioPanel(QtWidgets.QWidget):
                 card.respond.connect(self.respond_request)
                 self.request_cards[key] = card
                 self.request_layout.addWidget(card)
+            else:
+                self.request_cards[key].update_request(request)
         self.request_area.setVisible(bool(current))
         self.tabs.setTabText(0, "对话" + ("  ·  待回应 " + str(len(current)) if current else ""))
 
@@ -917,6 +1255,7 @@ class StudioPanel(QtWidgets.QWidget):
                   done=lambda _: self.refresh(), failed=lambda message: card.failed(message) if str(request_id) in self.request_cards else None)
 
     def tab_changed(self, index):
+        self.conversation_button.setVisible(index != 0)
         if index == 1:
             self.load_operations()
         elif index == 2:
@@ -945,6 +1284,7 @@ class StudioPanel(QtWidgets.QWidget):
             item.setFlags(QtCore.Qt.NoItemFlags)
             self.operation_list.addItem(item)
         self.operation_list.blockSignals(False)
+        self.update_work_status()
 
     def operation_selected(self, current, _previous=None):
         if current and current.data(QtCore.Qt.UserRole):
