@@ -1,8 +1,11 @@
 # Authoring stage: implementation and evidence
 
 Review baseline: `c2c63111c3a10ae3131e271a48dbacddae3570b7`.
-The implementation is in [PR #3](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio/pull/3).
-This stage is still awaiting final cold-launch authoring acceptance.
+The execution/query foundation in [PR #3](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio/pull/3)
+closed at `9ad3e260775520a89350ec246eda8c20a7e26f01` and merged into main as
+`76e2292bf7609d5da6a3c4ada6c2954abdd1f57a`, preserving its commit ancestry.
+The user workflow belongs to [PR #4](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio/pull/4),
+which now targets main and remains a draft pending actual authoring acceptance.
 
 ## Implementation review
 
@@ -30,16 +33,18 @@ This stage is still awaiting final cold-launch authoring acceptance.
 
 ## Verified checks
 
-[CI at `33b2429`](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio/actions/runs/33967096704)
-passed all four Windows/Linux backend jobs and the separate Windows Qt job.
+[Final PR #3 candidate CI at `9ad3e26`](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio/actions/runs/34006143566)
+passed all four Windows/Linux Python 3.10/3.13 backend jobs and the separate
+Windows Qt job. This supersedes the earlier `33b2429` development checkpoint.
 The initial integrated local run exposed a Windows venv redirector PID mismatch
 in the ownership test fixture. The fixture was corrected to use the direct
 interpreter; the affected normal, handled-error and forced-exit cases then passed.
 This was a test-fixture correction, not a relaxation of production PID validation.
 
-The subsequent startup-error propagation change, Stop wording and scene
-instructions were source-reviewed but have not been retested in this review pass.
-The earlier CI result does not certify those later commits.
+The final candidate CI includes startup-error propagation, Stop wording, scene
+instructions and pane-menu registration. The closure review checked their source
+and existing test coverage; it did not repeat the full local suite or inject a
+new real Houdini startup failure.
 
 Dedicated Houdini 22.0.368 runs produced evidence for queued cancellation,
 same-path HIP reload rejecting an old observation, one execution after an
@@ -49,25 +54,44 @@ resolution checks. A request for frame 1.5 was rounded to 2 in that installation
 capture failed explicitly and restored frame 1. It is not fractional-frame support.
 
 These runs used a developer-controlled dedicated scene and test driver. They do
-not substitute for the final ordinary-user workflow. Original intermediate
+not substitute for the final ordinary-user workflow. The archived reports do not
+identify the executing commit SHA and retain their original running status;
+individual case results are not a completed acceptance of `9ad3e26`. Intermediate
 reports are retained; selected public evidence describes individual cases rather
 than relabeling every raw report as a completed acceptance run.
 The [selected receipts](evidence/authoring-2026-09-05/README.md) omit the original
 PNG because its text metadata contains a local machine username. The untouched
 image remains local; the public bundle provides no independent visual check.
 
-## Acceptance still open
+For PR #4, [source candidate CI at `0e2c362`](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio/actions/runs/34011616375)
+passed all five jobs against the original stacked base. The diagnostic capture
+regression and 16 capture tests also passed locally with process exit 0, followed
+by a successful scoped Ruff check. The 2026-09-06 closure edit changes this report
+only; [PR #4 checks](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio/pull/4/checks)
+track the current candidate against main. Automated and offscreen checks do not
+establish actual model consent delivery, Houdini capture or continuous authoring.
 
-The Stop attempts so far do not establish button reachability during long HOM.
+## Product acceptance owned by PR #4
+
+The archived Stop attempts do not establish button reachability during long HOM.
 Two native turns were interrupted before a long execution was admitted. A later
 attempt completed its context read, but no long-execution receipt was present at
-this review checkpoint. Computer Use was subsequently stopped by the user.
-Input-helper focus failures also do not establish a Composer defect.
+that checkpoint. Computer Use was subsequently stopped by the user.
+Those historical input-helper focus failures did not establish a Composer defect.
 
-The final current-main cold launch, new workspace, three ordinary Panel requests
-that create and twice modify the same bookcase, and native image feedback with a
-model explanation are still required. Do not report this stage as complete on
-the strength of CI, the earlier Box example or the dedicated fault driver.
+PR #4 owns real input and draft behavior, native consent grant/revoke, three
+ordinary Panel requests that create and twice modify the same asset, native image
+feedback, and continuation in an existing HIP copy after a manual scene change.
+Review capture must preserve the original view, camera binding/lock and frame.
+The actual running-HOM Stop boundary still needs one bounded user check: when the
+request can arrive, whether subsequent work stops, and the final original receipt.
+An honestly reported uninterruptible native call is a known limit; duplicate
+effects, lost receipts, wrong terminal states or camera pollution require fixes.
+
+These user workflow gates no longer hold PR #3 open. After PR #4 passes, the next
+short branch starts from main and uses the same asset for two simple MaterialX
+looks, limited lighting, one camera and one Karma frame plus one appearance edit.
+That delivery does not add a new prerequisite to PR #4 or a core redesign phase.
 
 ## Repository cleanup
 
