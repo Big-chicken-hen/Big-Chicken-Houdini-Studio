@@ -81,15 +81,13 @@ class _TaskReply(QtCore.QObject):
 
 
 class StudioLauncher(QtWidgets.QWidget):
-    def __init__(self, paths=None, *, onboarding_factory=None, onboarding_for_paths=None, catalog=None, target_factory=None,
+    def __init__(self, paths=None, *, onboarding_factory=None, catalog=None, target_factory=None,
                  launch_function=None, status_function=None, browser_open=None, auto_probe=True):
         super().__init__()
         self.paths = paths if paths is not None else AppPaths.for_user()
         if onboarding_factory is None:
-            if onboarding_for_paths is None:
-                from ..onboarding import Onboarding
-                onboarding_for_paths = Onboarding
-            onboarding_factory = lambda bound_paths=self.paths: onboarding_for_paths(bound_paths)
+            from ..onboarding import Onboarding
+            onboarding_factory = lambda bound_paths=self.paths: Onboarding(bound_paths)
         if catalog is None or target_factory is None:
             from ..targets import SceneCatalog, SceneTarget
             catalog = catalog if catalog is not None else SceneCatalog(self.paths)
@@ -100,9 +98,6 @@ class StudioLauncher(QtWidgets.QWidget):
             status_function = status_function or launch_status
         self.catalog, self.target_factory = catalog, target_factory
         self._factory, self._launch, self._query = onboarding_factory, launch_function, status_function
-        self._normal_paths, self._normal_factory = self.paths, onboarding_factory
-        self._onboarding_for_paths = onboarding_for_paths
-        self._legacy_context = None
         self._browser_open = browser_open or QtGui.QDesktopServices.openUrl
         self._guard = threading.Lock()
         self._onboarding = None
@@ -119,7 +114,6 @@ class StudioLauncher(QtWidgets.QWidget):
         self._request_id = None
         self._launch_target = None
         self._launch_paths = None
-        self._launch_legacy_workspace_id = None
         self._launch_record = None
         self._launch_error = None
         self._launch_version = 0
@@ -197,19 +191,8 @@ class StudioLauncher(QtWidgets.QWidget):
         rows.addLayout(actions)
         content.addWidget(readiness)
 
-        self.context_notice = QtWidgets.QFrame()
-        self.context_notice.setObjectName("surface")
-        context = QtWidgets.QVBoxLayout(self.context_notice)
-        self.context_summary = label("", wrap=True)
-        self.context_summary.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
-        context.addWidget(self.context_summary)
-        self.return_normal = button("返回常规启动", self.leave_legacy, "quiet")
-        context.addWidget(self.return_normal, 0, QtCore.Qt.AlignLeft)
-        content.addWidget(self.context_notice)
-
         row = QtWidgets.QHBoxLayout()
-        self.scene_title = label("最近场景", "sectionTitle")
-        row.addWidget(self.scene_title, 1)
+        row.addWidget(label("最近场景", "sectionTitle"), 1)
         self.open_button = button("打开 HIP…", self.choose_hip)
         self.empty_button = button("空场景", self.select_empty)
         self.empty_button.setCheckable(True)
@@ -276,25 +259,6 @@ class StudioLauncher(QtWidgets.QWidget):
         self.environment_details.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
         self.environment_details.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
         advanced.addWidget(self.environment_details)
-        advanced.addWidget(label("旧上下文", "sectionTitle"))
-        advanced.addWidget(label("显式访问本安装的旧数据。历史记录不能确认本次应打开的 HIP。", "muted", True))
-        self.load_legacy = button("查看本安装的旧上下文", self.reload_legacy, "quiet")
-        advanced.addWidget(self.load_legacy, 0, QtCore.Qt.AlignLeft)
-        self.legacy_list = QtWidgets.QListWidget()
-        self.legacy_list.setAccessibleName("本安装旧上下文 · 原身份与原位置")
-        self.legacy_list.setTextElideMode(QtCore.Qt.ElideMiddle)
-        self.legacy_list.setMinimumHeight(100)
-        self.legacy_list.setMaximumHeight(180)
-        self.legacy_list.currentItemChanged.connect(self.legacy_selected)
-        self.legacy_list.hide()
-        advanced.addWidget(self.legacy_list)
-        self.legacy_details = label("尚未读取旧数据。", "muted", True)
-        self.legacy_details.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
-        self.legacy_details.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
-        advanced.addWidget(self.legacy_details)
-        self.enter_legacy = button("选择 HIP 并进入原上下文…", self.choose_legacy_hip)
-        self.enter_legacy.hide()
-        advanced.addWidget(self.enter_legacy, 0, QtCore.Qt.AlignLeft)
         self.advanced.hide()
         content.addWidget(self.advanced)
         self.error_details = ErrorDetails()
@@ -354,7 +318,8 @@ class StudioLauncher(QtWidgets.QWidget):
     def _ready(self):
         return (self._snapshot.get("codex", {}).get("state") == "ready" and
                 self._snapshot.get("houdini", {}).get("state") == "found" and
-                self._snapshot.get("account", {}).get("status") == "signed_in")
+                self._snapshot.get("account", {}).get("status") == "signed_in" and
+                not self._snapshot.get("account", {}).get("action_unknown"))
 
     def render(self):
         if self._closed:
@@ -362,6 +327,8 @@ class StudioLauncher(QtWidgets.QWidget):
         snapshot = self._snapshot
         account, codex, houdini = (snapshot.get(key, {}) for key in ("account", "codex", "houdini"))
         status = account.get("status", "unknown")
+        login_pending = account.get("login_pending", status == "waiting")
+        action_unknown = bool(account.get("action_unknown"))
         account_text = {"signed_in": "已登录 ChatGPT", "signed_out": "需要使用 ChatGPT 登录",
                         "waiting": "等待浏览器登录", "unknown": "账号状态暂未确认",
                         "other": "当前为其他认证方式"}.get(status, "账号状态暂未确认")
@@ -379,30 +346,20 @@ class StudioLauncher(QtWidgets.QWidget):
         active = self._launch_active()
         busy = "probe" in self._pending or "account" in self._pending
         for control in (self.open_button, self.empty_button, self.recents, self.relocate, self.remove_recent,
-                        self.codex, self.codex_browse, self.houdini, self.houdini_browse, self.recheck,
-                        self.load_legacy, self.legacy_list, self.return_normal):
+                        self.codex, self.codex_browse, self.houdini, self.houdini_browse, self.recheck):
             control.setEnabled(not active)
-        self.load_legacy.setEnabled(not active and "legacy" not in self._pending)
-        self.enter_legacy.setEnabled(not active and self.legacy_list.currentItem() is not None)
         self.recheck.setEnabled(not active and not busy)
-        self.reopen_login.setVisible(status == "waiting" and not active)
-        self.cancel_login.setVisible(status == "waiting" and not active)
-        self.reopen_login.setEnabled(not busy)
-        self.cancel_login.setEnabled(not busy)
+        self.reopen_login.setVisible(bool(login_pending) and not active)
+        self.cancel_login.setVisible(bool(login_pending) and not active)
+        self.reopen_login.setEnabled(not busy and not action_unknown)
+        self.cancel_login.setEnabled(not busy and not action_unknown)
         self.logout.setVisible(status == "signed_in" and not active)
-        self.logout.setEnabled(not busy)
+        self.logout.setEnabled(not busy and not action_unknown)
         self.empty_button.setChecked(self._target is not None and self._target.kind == "empty")
-        legacy = self._legacy_context
-        self.scene_title.setText("本次目标" if legacy is not None else "最近场景")
-        self.context_notice.setVisible(legacy is not None)
-        if legacy is not None:
-            self.context_summary.setText("原上下文 · " + str(legacy.get("name") or legacy["workspace_id"]) +
-                                         "\n本次将打开下方所选 HIP；历史记录不代表当前场景事实。")
-        self.empty_hint.setVisible(not self._recent_records and legacy is None)
-        self.recents.setVisible(bool(self._recent_records) and legacy is None)
-        self.relocate.setVisible(bool(self._recent_path) and legacy is None)
-        self.remove_recent.setVisible(bool(self._recent_path) and legacy is None)
-        self.empty_button.setText("返回并选择空场景" if legacy is not None else "空场景")
+        self.empty_hint.setVisible(not self._recent_records)
+        self.recents.setVisible(bool(self._recent_records))
+        self.relocate.setVisible(bool(self._recent_path))
+        self.remove_recent.setVisible(bool(self._recent_path))
         target = self._launch_target if active else self._target
         if target is None:
             self.target_summary.setText("请选择可用的 HIP 或空场景")
@@ -410,7 +367,7 @@ class StudioLauncher(QtWidgets.QWidget):
             self.target_summary.setText("空场景\n未保存的新场景")
         else:
             self.target_summary.setText(Path(target.path).name + "\n" + str(Path(target.path).parent))
-        self.target_summary.setToolTip(str(target.path) if target and target.path else "每次启动空场景使用独立的内部上下文")
+        self.target_summary.setToolTip(str(target.path) if target and target.path else "未保存的新场景")
         self.launch_button.setEnabled(True)
         record = self._launch_record or {}
         state = record.get("state")
@@ -442,6 +399,8 @@ class StudioLauncher(QtWidgets.QWidget):
             title, message = "重新检查环境", "尚未确认可用的 Codex。"
         elif houdini.get("state") != "found":
             title, message = "选择 Houdini 安装", "选择本机 Houdini 后继续。"
+        elif action_unknown:
+            title, message = "重新检查账号", "上次账号操作尚未确认，请先查询账号状态。"
         elif status in {"signed_out", "other"}:
             title, message = "使用 ChatGPT 登录", "登录通过官方浏览器流程完成。"
         elif status == "waiting":
@@ -478,7 +437,6 @@ class StudioLauncher(QtWidgets.QWidget):
         self.environment_details.setText("Codex：" + str(codex.get("path") or "尚未选定") +
                                          "\nHoudini：" + str(houdini.get("path") or "尚未选定") +
                                          "\n账号类型：" + str(self._snapshot.get("account", {}).get("type") or "尚未确认") +
-                                         "\n数据位置：" + str(self.paths.data_root) +
                                          ("\n启动请求：" + self._request_id if self._request_id else ""))
 
     def show_failure(self, failure):
@@ -528,7 +486,8 @@ class StudioLauncher(QtWidgets.QWidget):
             self.show_failure(value["error"])
         else:
             self.error_details.set_failure(None)
-        if value.get("account", {}).get("status") == "waiting":
+        account = value.get("account", {})
+        if account.get("login_pending", account.get("status") == "waiting"):
             self.account_poll.start()
         else:
             self.account_poll.stop()
@@ -536,7 +495,10 @@ class StudioLauncher(QtWidgets.QWidget):
     def account_action(self, method):
         if self._launch_active() or self._closed or self._onboarding is None:
             return
-        if method == "login_start" and "account" in self._pending:
+        account = self._snapshot.get("account", {})
+        if "account" in self._pending or account.get("action_unknown"):
+            return
+        if method == "login_start" and account.get("login_pending"):
             return
         self._account_polls = 0
         owner = self._onboarding
@@ -547,12 +509,16 @@ class StudioLauncher(QtWidgets.QWidget):
                 url = value.get("auth_url") if isinstance(value, dict) else value
                 if url:
                     self.open_url(url)
-        self._submit("account", lambda: owner.call(method), complete, self.account_failed)
+        self._submit("account", lambda: owner.call(method), complete,
+                     lambda failure: self.account_failed(failure, action_unknown=method in {
+                         "login_start", "cancel_login", "logout"}))
         self.render()
 
-    def account_failed(self, failure):
+    def account_failed(self, failure, *, action_unknown=False):
         self.account_poll.stop()
-        self._snapshot["account"] = {"status": "unknown"}
+        account = self._snapshot["account"] = {**self._snapshot.get("account", {}), "status": "unknown"}
+        if action_unknown:
+            account["action_unknown"] = True
         self.show_failure(failure)
 
     def refresh_account(self):
@@ -562,7 +528,8 @@ class StudioLauncher(QtWidgets.QWidget):
             self._account_polls += 1
             if self._account_polls >= 150:
                 self.account_poll.stop()
-                self._snapshot["account"] = {"status": "unknown", "message": "请主动重新检查登录状态"}
+                self._snapshot["account"] = {**self._snapshot.get("account", {}), "status": "unknown",
+                                             "message": "请主动重新检查登录状态"}
                 self.render()
                 return
         owner = self._onboarding
@@ -582,6 +549,8 @@ class StudioLauncher(QtWidgets.QWidget):
             self.probe()
         elif self._snapshot.get("houdini", {}).get("state") != "found":
             self.choose_houdini()
+        elif self._snapshot.get("account", {}).get("action_unknown"):
+            self.refresh_account()
         elif self._snapshot.get("account", {}).get("status") in {"signed_out", "other"}:
             self.account_action("login_start")
         elif self._snapshot.get("account", {}).get("status") != "signed_in":
@@ -591,85 +560,6 @@ class StudioLauncher(QtWidgets.QWidget):
 
     def reload_recents(self):
         self._submit("recent", lambda: self.catalog.recent(limit=20), self.recents_loaded)
-
-    def reload_legacy(self):
-        if self._launch_active() or "legacy" in self._pending:
-            return
-        self.legacy_details.setText("正在读取本安装原位置的上下文记录…")
-        self._submit("legacy", self.catalog.legacy_workspaces, self.legacy_loaded)
-        self.render()
-
-    def legacy_loaded(self, records):
-        self.legacy_list.clear()
-        for record in records or []:
-            item = QtWidgets.QListWidgetItem(str(record.get("name") or "旧上下文") +
-                                            "\nID · " + record["workspace_id"])
-            item.setData(QtCore.Qt.UserRole, record)
-            self.legacy_list.addItem(item)
-        found = self.legacy_list.count() > 0
-        self.legacy_list.setVisible(found)
-        self.enter_legacy.setVisible(found)
-        self.legacy_details.setText("请选择原记录；关联 HIP 尚未确认。" if found else
-                                   "本安装的 .runtime 中没有可列出的旧上下文。")
-
-    def legacy_selected(self, item, _previous=None):
-        if item is not None:
-            record = item.data(QtCore.Qt.UserRole)
-            paths = AppPaths.for_legacy(self._normal_paths.root)
-            work = paths.workspace(record["workspace_id"]) / "work"
-            self.legacy_details.setText("原工作目录：" + str(work) + "\n原账号目录：" + str(paths.codex_home) +
-                                       "\n关联 HIP：未确认。进入前须明确选择现存 HIP；原记录留在原位置。")
-        self.render()
-
-    def choose_legacy_hip(self):
-        item = self.legacy_list.currentItem()
-        if self._launch_active() or item is None:
-            return
-        if self._onboarding_for_paths is None:
-            self.show_failure(ApiFailure("当前启动服务不支持切换数据位置", code="PROFILE_SWITCH_UNAVAILABLE"))
-            return
-        record = dict(item.data(QtCore.Qt.UserRole))
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self, "为原上下文明确选择 HIP", "", "Houdini scenes (*.hip *.hiplc *.hipnc)")
-        if not path:
-            return
-        self._target = None
-        self._user_chose_target = True
-        def selected(target):
-            self.switch_context(AppPaths.for_legacy(self._normal_paths.root), record, target)
-        self._submit("target", lambda: self.target_factory.hip(path), selected)
-        self.render()
-
-    def switch_context(self, paths, record, target):
-        if self._closed or self._launch_active():
-            return
-        if record is not None and target.kind != "hip":
-            self.show_failure(ApiFailure("进入原上下文须明确选择现存 HIP", code="LEGACY_HIP_REQUIRED"))
-            return
-        # All old account I/O completes and closes under the guard before the new
-        # owner's factory runs. The factory binds these paths, never mutable UI state.
-        self.paths, self._legacy_context, self._target = paths, record, target
-        self._factory = ((lambda bound_paths=paths: self._onboarding_for_paths(bound_paths))
-                         if record is not None else self._normal_factory)
-        self._pending.pop("target", None)
-        self._pending.pop("recent-edit", None)
-        self._recent_path = None
-        self._user_chose_target = True
-        self._request_id, self._launch_record, self._prepared = None, None, None
-        self._launch_version += 1
-        self._snapshot = {}
-        self._overrides_dirty.clear()
-        self.codex.clear()
-        self.houdini.blockSignals(True)
-        self.houdini.clear()
-        self.houdini.addItem("自动选择", "")
-        self.houdini.blockSignals(False)
-        self.error_details.set_failure(None)
-        self.probe()
-
-    def leave_legacy(self):
-        if self._legacy_context is not None:
-            self.switch_context(self._normal_paths, None, self.target_factory.empty())
 
     def recents_loaded(self, records):
         self._recent_records = list(records or [])
@@ -720,9 +610,6 @@ class StudioLauncher(QtWidgets.QWidget):
 
     def select_empty(self):
         if self._launch_active():
-            return
-        if self._legacy_context is not None:
-            self.leave_legacy()
             return
         self._pending.pop("target", None)
         self._target = self.target_factory.empty()
@@ -813,7 +700,6 @@ class StudioLauncher(QtWidgets.QWidget):
         self._request_id = new_id()
         self._launch_target = self._target
         self._launch_paths = self.paths
-        self._launch_legacy_workspace_id = (self._legacy_context or {}).get("workspace_id")
         self._launch_record = None
         self._launch_error = None
         self._launch_version += 1
@@ -835,12 +721,9 @@ class StudioLauncher(QtWidgets.QWidget):
         self._prepared = choices
         request_id, target = self._request_id, self._launch_target
         paths = self._launch_paths
-        arguments = {"request_id": request_id}
-        if self._launch_legacy_workspace_id is not None:
-            arguments["legacy_workspace_id"] = self._launch_legacy_workspace_id
         self._launch_phase = "submit"
         self._submit("launch", lambda: self._launch(paths, target, choices["houdini_path"],
-                     choices["codex_path"], **arguments), self.launched, self.launch_failed)
+                     choices["codex_path"], request_id=request_id), self.launched, self.launch_failed)
 
     def prepare_failed(self, failure):
         # launch_target has not been called, so no admission could have happened.

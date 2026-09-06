@@ -107,15 +107,11 @@ class PreviewServices:
         self.probe_gate = None
         self.launch_gate = None
         self.paths = AppPaths(APP_ROOT)
-        self.legacy_records, self.legacy_reads = [], 0
-        self.lifecycle, self.launch_profiles = [], []
+        self.lifecycle = []
 
     def factory(self):
-        return self.for_paths(self.paths)
-
-    def for_paths(self, paths):
-        self.lifecycle.append(("created", paths))
-        backend = PreviewOnboarding(self, paths)
+        self.lifecycle.append(("created", self.paths))
+        backend = PreviewOnboarding(self, self.paths)
         self.backends.append(backend)
         return backend
 
@@ -129,15 +125,12 @@ class PreviewServices:
                          "path": "C:/fixture/houdini.exe", "version": "22.0.368", "message": "",
                          "installations": [{"path": "C:/fixture/houdini.exe", "label": "Houdini 22.0.368"}]},
             "account": {"status": account_status, "type": "chatgpt" if account_status == "signed_in" else None,
+                        "login_pending": account_status == "waiting", "action_unknown": False,
                         "email": "artist@example.invalid" if account_status == "signed_in" else None},
             "error": None}
 
     def recent(self, limit=20):
         return copy.deepcopy(self.records[:limit])
-
-    def legacy_workspaces(self):
-        self.legacy_reads += 1
-        return copy.deepcopy(self.legacy_records)
 
     def remove_recent(self, path):
         self.records = [r for r in self.records if r["path"] != path]
@@ -149,9 +142,8 @@ class PreviewServices:
                 record.update(path=target.path, name=Path(target.path).name,
                               directory=str(Path(target.path).parent), missing=False)
 
-    def launch(self, paths, target, houdini, codex, *, request_id, legacy_workspace_id=None):
+    def launch(self, paths, target, houdini, codex, *, request_id):
         self.launches.append((target.to_dict(), request_id, houdini, codex))
-        self.launch_profiles.append((paths, legacy_workspace_id))
         if self.launch_gate:
             self.launch_gate.wait(2)
         self.admissions[request_id] = {"request_id": request_id, "session_id": request_id,
@@ -194,7 +186,7 @@ def process_until(predicate, timeout=2500):
 def make_fixture_window(paths=None, state="ready", records=None, services=None):
     services = services or PreviewServices(state, records)
     services.paths = paths or AppPaths(APP_ROOT)
-    window = StudioLauncher(paths=services.paths, onboarding_factory=services.factory, onboarding_for_paths=services.for_paths,
+    window = StudioLauncher(paths=services.paths, onboarding_factory=services.factory,
                             catalog=services, target_factory=PreviewTarget, launch_function=services.launch,
                             status_function=services.query, browser_open=services.open_browser)
     window.show()
@@ -205,7 +197,7 @@ def make_fixture_window(paths=None, state="ready", records=None, services=None):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--scale", default="1")
-    parser.add_argument("--case", choices=("all", "high-dpi", "first-use", "legacy"), default="all")
+    parser.add_argument("--case", choices=("all", "high-dpi", "first-use"), default="all")
     parser.add_argument("--out", type=Path)
     args = parser.parse_args()
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
@@ -249,25 +241,6 @@ def main():
     window, services = make_fixture_window(state="signed_out" if first_use else "ready",
                                           records=[] if first_use else None)
     capture(window, "00-first-use" if first_use else "01-ready")
-    if args.case == "legacy":
-        from unittest.mock import patch
-        services.legacy_records = [{"workspace_id": "fixture-original-context", "name": "旧书柜上下文",
-                                    "created_at": 1788670800}]
-        window.advanced_toggle.click()
-        window.load_legacy.click()
-        process_until(lambda: not window._pending)
-        window.legacy_list.setCurrentRow(0)
-        for _ in range(3):
-            app.processEvents()
-        window.scroll.ensureWidgetVisible(window.enter_legacy)
-        capture(window, "09-legacy-records")
-        with patch("studio.ui.launcher.QtWidgets.QFileDialog.getOpenFileName",
-                   return_value=("D:/fixture/user-selected-bookcase.hip", "")):
-            window.enter_legacy.click()
-        process_until(lambda: not window._pending)
-        window.advanced_toggle.click()
-        window.scroll.verticalScrollBar().setValue(0)
-        capture(window, "10-legacy-hip-selected")
     if args.case == "all":
         for state, name in (("signed_out", "02-sign-in"), ("missing_codex", "03-codex-missing"),
                             ("missing_houdini", "04-houdini-missing"), ("waiting", "05-browser-waiting")):

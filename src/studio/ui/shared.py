@@ -82,8 +82,6 @@ class ErrorDetails(QtWidgets.QFrame):
         self.details.setMaximumHeight(144)
         self.details.setAccessibleName("错误详情")
         body.addWidget(self.details)
-        self.copy = button("复制详情", self.copy_details, "quiet")
-        body.addWidget(self.copy, 0, QtCore.Qt.AlignRight)
         layout.addWidget(self.body)
         self.toggle.toggled.connect(self.set_expanded)
         self.set_failure(None)
@@ -117,10 +115,6 @@ class ErrorDetails(QtWidgets.QFrame):
         self.body.setVisible(expanded and self.failure is not None)
         self.toggle.setArrowType(QtCore.Qt.DownArrow if expanded else QtCore.Qt.RightArrow)
         self.toggle.setAccessibleName("收起错误详情" if expanded else "展开错误详情")
-
-    def copy_details(self):
-        QtWidgets.QApplication.clipboard().setText(self.details.toPlainText())
-
 
 class Api(QtCore.QObject):
     def __init__(self, url, token, parent=None):
