@@ -148,10 +148,18 @@ class Api(QtCore.QObject):
         def finished():
             self.inflight.discard(key)
             self.replies.discard(reply)
+            # A posted Python callback can outlive its native owner/reply.
+            if self.closed or not isValid(self):
+                if isValid(reply):
+                    reply.deleteLater()
+                return
+            if not isValid(reply):
+                if failed:
+                    failed(ApiFailure("Network reply is no longer available; query the original request state.",
+                                      code="REPLY_UNAVAILABLE", submission_state="unknown"))
+                return
             callback = None
             try:
-                if self.closed:
-                    return
                 raw = bytes(reply.readAll())
                 value = json.loads(raw) if raw else {}
                 if not isinstance(value, dict):
@@ -173,7 +181,8 @@ class Api(QtCore.QObject):
             finally:
                 # Delivery may destroy Api's owner and its replies. Finish Qt
                 # cleanup first; do not access the reply after the callback.
-                reply.deleteLater()
+                if isValid(reply):
+                    reply.deleteLater()
             if callback:
                 callback(value)
         reply.finished.connect(finished)
@@ -182,7 +191,8 @@ class Api(QtCore.QObject):
     def close(self):
         self.closed = True
         for reply in tuple(self.replies):
-            reply.abort()
+            if isValid(reply):
+                reply.abort()
 
 
 class TaskSignals(QtCore.QObject):
