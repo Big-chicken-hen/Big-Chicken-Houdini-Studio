@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from PySide6 import QtCore, QtGui, QtNetwork, QtWidgets
+from shiboken6 import isValid
 
 from .theme import COLORS, studio_stylesheet
 
@@ -194,12 +195,23 @@ class Task(QtCore.QRunnable):
 
     def run(self):
         try:
-            self.signals.result.emit(self.function())
+            value = self.function()
         except Exception as exc:
             details = getattr(exc, "details", None)
-            self.signals.error.emit(ApiFailure(str(exc), code=getattr(exc, "code", None),
+            self._emit("error", ApiFailure(str(exc), code=getattr(exc, "code", None),
                 status=getattr(exc, "status", None), details=details,
                 submission_state=details.get("submission_state") if isinstance(details, dict) else None))
+        else:
+            self._emit("result", value)
+
+    def _emit(self, channel, value):
+        try:
+            getattr(self.signals, channel).emit(value)
+        except RuntimeError:
+            # Application teardown may delete the QObject while a worker finishes
+            # its cleanup. Delivery failure is not failure of the completed work.
+            if isValid(self.signals):
+                raise
 
 
 class StudioGlyph(QtWidgets.QWidget):
