@@ -542,7 +542,9 @@ class StudioPanel(QtWidgets.QWidget):
         runtime = self.state.get("runtime", {})
         idle = codex.get("state", "unknown") not in BUSY_CODEX and bool(codex.get("alive"))
         account = self.bridge_connected and self.logged_in
-        ready = account and idle and not self.switching and not self.submitting and not self.uncertain_send and not self.reconciling
+        response_unknown = any(card.response_unknown for card in self.request_cards.values())
+        ready = (account and idle and not self.switching and not self.submitting and not self.uncertain_send
+                 and not self.reconciling and not response_unknown)
         scene_ready = runtime.get("connection") == "connected" and not runtime.get("storage_fault")
         self.login_button.setVisible(not self.logged_in)
         self.login_area.setVisible(not self.logged_in)
@@ -582,7 +584,8 @@ class StudioPanel(QtWidgets.QWidget):
             self.send_button.style().polish(self.send_button)
         self.reconcile_button.setEnabled(self.bridge_connected and bool(self.thread_id) and not self.switching
                                          and not self.submitting and not self.reconciling)
-        self.reconcile_button.setVisible(self.uncertain_send or codex.get("state") in {"unknown", "unavailable"})
+        self.reconcile_button.setVisible(self.uncertain_send or response_unknown
+                                         or codex.get("state") in {"unknown", "unavailable"})
         self.reconnect_button.setVisible(not self.bridge_connected)
         self.pending_button.setVisible(self.uncertain_send and self.pending_submission is not None)
         self.update_work_status()
@@ -599,6 +602,8 @@ class StudioPanel(QtWidgets.QWidget):
         native = codex.get("state", "unknown")
         if self.uncertain_send:
             text = "上次提交结果未确认。可继续写草稿，请先查询提交状态。"
+        elif any(card.response_unknown for card in self.request_cards.values()):
+            text = "上次回应是否送达尚未确认，请先查询状态。草稿可继续编辑。"
         elif self.stop_pending or codex.get("stop_requested") and native in {"running", "starting", "stopping"}:
             text = "已请求停止后续工作，等待确认。"
         elif not self.bridge_connected:
@@ -1248,11 +1253,17 @@ class StudioPanel(QtWidgets.QWidget):
                 self.request_cards[key].update_request(request)
         self.request_area.setVisible(bool(current))
         self.tabs.setTabText(0, "对话" + ("  ·  待回应 " + str(len(current)) if current else ""))
+        self.update_controls()
 
     def respond_request(self, request_id, result):
-        card = self.request_cards.get(str(request_id))
         self.call("POST", "/requests/respond", {"request_id": request_id, "result": result},
-                  done=lambda _: self.refresh(), failed=lambda message: card.failed(message) if str(request_id) in self.request_cards else None)
+                  done=lambda _: self.refresh(), failed=lambda message: self.request_response_failed(request_id, message))
+
+    def request_response_failed(self, request_id, message):
+        card = self.request_cards.get(str(request_id))
+        if card:
+            card.failed(message)
+            self.update_controls()
 
     def tab_changed(self, index):
         self.conversation_button.setVisible(index != 0)

@@ -286,6 +286,22 @@ class ComposerTest(unittest.TestCase):
         self.assertTrue(all(not action.isEnabled() for action in card.actions))
         self.assertFalse(any(path == "/requests/respond" for _, path, _ in self.api.calls))
 
+    def test_unknown_approval_keeps_query_and_send_gate_after_completed_reconcile(self):
+        request = {"request_id": "permission", "response_state": "unknown",
+                   "method": "item/commandExecution/requestApproval", "params": {
+                       "threadId": "preview_thread", "command": "echo preview", "availableDecisions": ["accept", "decline"]}}
+        self.panel.input.insertPlainText("下一段草稿")
+        self.api.state["pending_requests"] = [request]
+        self.api.state["codex"]["state"] = "completed"
+        self.panel.apply_state(copy.deepcopy(self.api.state))
+        self.panel.reconciled({"reconciled": True, "codex_state": "completed", "thread": self.api.thread})
+        self.assertTrue(self.panel.reconcile_button.isVisible())
+        self.assertTrue(self.panel.reconcile_button.isEnabled())
+        self.assertFalse(self.panel.send_button.isEnabled())
+        self.assertTrue(self.panel.input.isEnabled())
+        self.panel.sync_requests([])
+        self.assertTrue(self.panel.send_button.isEnabled())
+
 
 if __name__ == "__main__":
     unittest.main()
