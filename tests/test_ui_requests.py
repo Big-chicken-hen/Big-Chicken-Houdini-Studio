@@ -159,10 +159,16 @@ class RequestControlsTest(unittest.TestCase):
             self.assertIn("逐次确认", self.control.status.text())
 
     def test_native_permission_session_choice_is_separate_and_explicit(self):
-        permissions = {"fileSystem": {"write": ["C:/explicit-output"]}}
+        permissions = {"fileSystem": {"write": ["C:/explicit-output"]}, "network": {"enabled": False}, "customScope": "native extension"}
         card = RequestCard({"request_id": 71, "method": "item/permissions/requestApproval",
                             "params": {"permissions": permissions}})
         responses = []
+        presented = "\n".join(item.text() for item in card.findChildren(QtWidgets.QLabel))
+        self.assertIn("写入", presented)
+        self.assertIn("C:/explicit-output", presented)
+        self.assertIn("customScope：native extension", presented)
+        self.assertNotIn('"fileSystem"', presented)
+        self.assertIn('"fileSystem"', card.full_request.toPlainText())
         card.respond.connect(lambda request_id, value: responses.append((request_id, value)))
         self.assertEqual(responses, [])
         next(button for button in card.actions if "本会话" in button.text()).click()

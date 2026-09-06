@@ -7,8 +7,9 @@ from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from .icons import set_button_icon
 from .shared import Task, button, label
-from .theme import COLORS
+from .theme import COLORS, apply_theme
 
 
 class SafeBrowser(QtWidgets.QTextBrowser):
@@ -31,34 +32,91 @@ class SafeBrowser(QtWidgets.QTextBrowser):
             QtGui.QDesktopServices.openUrl(url)
 
 
+class ImageView(QtWidgets.QLabel):
+    activated = QtCore.Signal()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == QtCore.Qt.LeftButton and self.rect().contains(event.position().toPoint()):
+            self.activated.emit()
+        super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event):
+        if event.key() in {QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter, QtCore.Qt.Key_Space}:
+            self.activated.emit()
+            event.accept()
+        else:
+            super().keyPressEvent(event)
+
+
+class ImagePreview(QtWidgets.QDialog):
+    """Enlarge only the already-decoded image; never perform another source read."""
+    def __init__(self, decoded, parent=None):
+        super().__init__(parent)
+        self.decoded = decoded
+        self.setObjectName("studioImagePreview")
+        self.setWindowTitle("图片预览")
+        apply_theme(self)
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        self.picture = label("")
+        self.picture.setAlignment(QtCore.Qt.AlignCenter)
+        self.picture.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Ignored)
+        layout.addWidget(self.picture)
+        available = self.screen().availableGeometry()
+        self.resize(min(960, available.width() - 24), min(720, available.height() - 24))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        dpr = self.devicePixelRatioF()
+        pixmap = QtGui.QPixmap.fromImage(self.decoded).scaled(
+            max(1, int((self.width() - 24) * dpr)), max(1, int((self.height() - 24) * dpr)),
+            QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+        pixmap.setDevicePixelRatio(dpr)
+        self.picture.setPixmap(pixmap)
+
+
 class ImageTile(QtWidgets.QFrame):
     """Decode selected/native image bytes in a worker, create pixmaps on the UI thread."""
     removed = QtCore.Signal()
+    geometry_will_change = QtCore.Signal()
+    geometry_changed = QtCore.Signal()
 
     def __init__(self, source, caption="图片", removable=False, compact=False, parent=None):
         super().__init__(parent)
         self.setObjectName("imageTile")
-        self.setFixedWidth(132 if compact else 260)
+        self.compact = compact
+        self.decoded = QtGui.QImage()
+        self.failure = None
+        self.viewer = None
+        self._display_key = None
+        self._box = (56, 56) if compact else (560, 300)
         layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(7, 7, 7, 7)
-        self.picture = label("读取图片…")
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        self.picture = ImageView("读取图片…")
+        self.picture.setTextFormat(QtCore.Qt.PlainText)
         self.picture.setAlignment(QtCore.Qt.AlignCenter)
-        self.picture.setFixedSize(116, 68) if compact else self.picture.setFixedSize(244, 148)
+        self.picture.setWordWrap(True)
+        self.picture.setFocusPolicy(QtCore.Qt.StrongFocus)
+        self.picture.setCursor(QtCore.Qt.PointingHandCursor)
+        self.picture.activated.connect(self.enlarge)
         layout.addWidget(self.picture)
-        row = QtWidgets.QHBoxLayout()
         self.caption = label(caption)
         self.caption.setToolTip(caption)
         self.caption.setMinimumWidth(0)
         self.caption.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
-        row.addWidget(self.caption, 1)
+        self.caption.setVisible(compact or caption != "图片")
+        self.caption.setMaximumHeight(16)
+        layout.addWidget(self.caption)
         if removable:
-            remove = button("移除", self.removed.emit, "quiet")
-            remove.setAccessibleName("移除图片 " + caption)
-            remove.setToolTip("移除图片 " + caption)
-            remove.setStyleSheet("padding: 0;")
-            remove.setFixedSize(44, 32)
-            row.addWidget(remove)
-        layout.addLayout(row)
+            self.remove_button = button("移除图片", self.removed.emit, "quiet")
+            self.remove_button.setParent(self)
+            self.remove_button.setStyleSheet("padding: 0; background: " + COLORS["surface_elevated"] + ";")
+            self.remove_button.setFixedSize(32, 32)
+            set_button_icon(self.remove_button, "x", text="移除图片 " + caption, fallback_text="移除", icon_only=True)
+        else:
+            self.remove_button = None
+        self.set_display_size(*self._box)
         self.task = Task(lambda: self.decode(source))
         self.task.signals.result.connect(self.loaded)
         self.task.signals.error.connect(self.unavailable)
@@ -84,16 +142,57 @@ class ImageTile(QtWidgets.QFrame):
             reader.setScaledSize(size.scaled(900, 600, QtCore.Qt.KeepAspectRatio))
         result = reader.read()
         if result.isNull():
-            raise ValueError("图片不可用")
+            raise ValueError(reader.errorString() or "无法读取图片")
         return result
 
     def loaded(self, result):
-        self.picture.setPixmap(QtGui.QPixmap.fromImage(result).scaled(
-            self.picture.size(), QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation))
-        self.picture.setToolTip("原生图片预览")
+        self.geometry_will_change.emit()
+        self.decoded = result
+        self.failure = None
+        self.set_display_size(*self._box)
+        self.picture.setToolTip("点击放大此图片")
+        self.geometry_changed.emit()
 
-    def unavailable(self, _message):
-        self.picture.setText("图片不可用")
+    def unavailable(self, message):
+        self.failure = message
+        self.picture.setText("图片无法读取\n" + str(message))
+        self.picture.setToolTip(str(message))
+
+    def set_display_size(self, width, height):
+        self._box = (max(1, width), max(1, height))
+        size = QtCore.QSize(*self._box)
+        if not self.decoded.isNull():
+            size = self.decoded.size().scaled(size, QtCore.Qt.KeepAspectRatio)
+        if self.compact:
+            size = QtCore.QSize(56, 56)
+        self.picture.setFixedSize(size)
+        self.setFixedWidth(80 if self.compact else size.width())
+        if self.remove_button:
+            self.remove_button.move(self.width() - 32, 0)
+            self.remove_button.raise_()
+        key = (self.decoded.cacheKey(), size.width(), size.height(), self.devicePixelRatioF())
+        if not self.decoded.isNull() and key != self._display_key:
+            self._display_key = key
+            dpr = self.devicePixelRatioF()
+            pixmap = QtGui.QPixmap.fromImage(self.decoded).scaled(
+                int(size.width() * dpr), int(size.height() * dpr),
+                QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+            pixmap.setDevicePixelRatio(dpr)
+            self.picture.setPixmap(pixmap)
+
+    def enlarge(self):
+        if self.decoded.isNull() or self.compact:
+            return
+        if self.viewer is None:
+            self.viewer = ImagePreview(self.decoded, self)
+        self.viewer.show()
+        self.viewer.raise_()
+
+    def event(self, event):
+        result = super().event(event)
+        if event.type() == QtCore.QEvent.DevicePixelRatioChange and hasattr(self, "_box"):
+            self.set_display_size(*self._box)
+        return result
 
 
 def image_sources(item, app_root):
@@ -123,6 +222,8 @@ def image_sources(item, app_root):
 
 
 class MessageCard(QtWidgets.QFrame):
+    layout_will_change = QtCore.Signal()
+    layout_changed = QtCore.Signal()
     def __init__(self, item, app_root, parent=None):
         super().__init__(parent)
         self.setObjectName("messageCard")
@@ -131,7 +232,8 @@ class MessageCard(QtWidgets.QFrame):
         self.rendered_text = None
         self.image_tiles = []
         layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(18, 13, 18, 14)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(8)
         self.title = label("", "messageAuthor")
         layout.addWidget(self.title)
         self.sync_note = label("恢复中的消息：完整内容到达时更新，也可手动刷新连接。", "muted", True)
@@ -142,14 +244,17 @@ class MessageCard(QtWidgets.QFrame):
         self.text.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
         layout.addWidget(self.text)
         self.images = QtWidgets.QHBoxLayout()
+        self.images.setContentsMargins(0, 0, 0, 0)
+        self.images.setSpacing(8)
         self.images.setAlignment(QtCore.Qt.AlignLeft)
         self.image_area = QtWidgets.QWidget()
         self.image_area.setObjectName("imageBody")
         self.image_area.setLayout(self.images)
         self.image_scroll = QtWidgets.QScrollArea()
         self.image_scroll.setWidget(self.image_area)
+        self.image_area.setAutoFillBackground(False)
+        self.image_scroll.viewport().setAutoFillBackground(False)
         self.image_scroll.setWidgetResizable(True)
-        self.image_scroll.setFixedHeight(208)
         layout.addWidget(self.image_scroll)
         self.details_button = button("查看工具内容", self.toggle_details, "quiet")
         layout.addWidget(self.details_button, 0, QtCore.Qt.AlignLeft)
@@ -165,6 +270,11 @@ class MessageCard(QtWidgets.QFrame):
             return False
         self.item = item
         kind = item.get("type", "item")
+        role = "user" if kind == "userMessage" else "assistant"
+        if self.property("studioRole") != role:
+            self.setProperty("studioRole", role)
+            self.style().unpolish(self)
+            self.style().polish(self)
         status = item.get("status", "")
         titles = {"userMessage": "你", "agentMessage": "CODEX", "reasoning": "CODEX · 思考摘要",
                   "plan": "CODEX · 计划", "contextCompaction": "CODEX · 原生上下文压缩",
@@ -207,6 +317,8 @@ class MessageCard(QtWidgets.QFrame):
                 match = next((pair for pair in unused if pair[0] == source), None)
                 if match is None:
                     tile = ImageTile(source)
+                    tile.geometry_will_change.connect(self.layout_will_change.emit)
+                    tile.geometry_changed.connect(self.image_loaded)
                 else:
                     unused.remove(match)
                     tile = match[1]
@@ -216,6 +328,7 @@ class MessageCard(QtWidgets.QFrame):
                 self.images.removeWidget(tile)
                 tile.deleteLater()
         self.image_scroll.setVisible(bool(sources))
+        self.fit_images()
         if text_changed:
             QtCore.QTimer.singleShot(0, self, self.fit_text)
         return True
@@ -232,6 +345,25 @@ class MessageCard(QtWidgets.QFrame):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.fit_text()
+        self.fit_images()
+
+    def fit_images(self):
+        if not self.image_tiles:
+            return
+        available = max(56, self.width() - self.layout().contentsMargins().left() - self.layout().contentsMargins().right())
+        single = len(self.image_tiles) == 1
+        for _source, tile in self.image_tiles:
+            tile.set_display_size(min(560, available) if single else min(240, available), 300 if single else 160)
+        height = max(tile.sizeHint().height() for _source, tile in self.image_tiles)
+        self.image_area.setMinimumWidth(0 if single else sum(tile.width() for _source, tile in self.image_tiles)
+                                       + (len(self.image_tiles) - 1) * 8)
+        self.image_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff if single else QtCore.Qt.ScrollBarAsNeeded)
+        self.image_scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self.image_scroll.setFixedHeight(height + (0 if single else self.image_scroll.horizontalScrollBar().sizeHint().height()))
+
+    def image_loaded(self):
+        self.fit_images()
+        self.layout_changed.emit()
 
     def show_details(self):
         value = {k: v for k, v in self.item.items() if k != "result"}
@@ -258,6 +390,8 @@ class Transcript(QtWidgets.QScrollArea):
         self.layout.setContentsMargins(0, 8, 0, 12)
         self.layout.setSpacing(10)
         self.setWidget(self.body)
+        self.body.setAutoFillBackground(False)
+        self.viewport().setAutoFillBackground(False)
         self.cards = {}
         self.thread_id = None
         self.history_known = False
@@ -276,6 +410,11 @@ class Transcript(QtWidgets.QScrollArea):
         self.empty.setAlignment(QtCore.Qt.AlignCenter)
         self.empty.setMinimumHeight(170)
         self.layout.addWidget(self.empty)
+        self.turn_notice = label("", "warning", True)
+        self.turn_notice.hide()
+        self.layout.addWidget(self.turn_notice)
+        self._notice_turn = None
+        self._image_anchor = None
         self.layout.addStretch()
 
     def set_image_roots(self, roots):
@@ -303,6 +442,8 @@ class Transcript(QtWidgets.QScrollArea):
         self.last_turn_id = None
         self.suppressed_deltas.clear()
         self.completed_items.clear()
+        self.turn_notice.hide()
+        self._notice_turn = None
         self.empty.show()
 
     def hydrate(self, thread):
@@ -342,6 +483,8 @@ class Transcript(QtWidgets.QScrollArea):
                 card.set_recovering(item_id not in self.completed_items)
         # Same-thread items newer than the read are retained until their native
         # completion. A non-atomic snapshot is not evidence that they were removed.
+        if self._notice_turn:
+            self.set_turn_notice(self._notice_turn, self.turn_notice.text())
         self.queue_scroll_restore(target)
 
     @staticmethod
@@ -357,10 +500,14 @@ class Transcript(QtWidgets.QScrollArea):
             changed = self.cards[item_id].update_item(item)
         else:
             card = MessageCard(item, self.app_root)
+            card.layout_will_change.connect(self.image_will_change)
+            card.layout_changed.connect(self.image_changed)
             self.cards[item_id] = card
             self.layout.insertWidget(self.layout.count() - 1, card)
             self.empty.hide()
             changed = True
+        if turn_id:
+            self.cards[item_id].setProperty("nativeTurnId", turn_id)
         if self.is_tool(item):
             group_id = turn_id or self.item_turns.get(item_id) or self.last_turn_id or "current"
             self.item_turns[item_id] = group_id
@@ -378,11 +525,33 @@ class Transcript(QtWidgets.QScrollArea):
     def update_tool_group(self, group_id):
         control = self.tool_groups[group_id]
         cards = [self.cards[key] for key, turn_id in self.item_turns.items() if turn_id == group_id]
-        control.setText("本轮执行详情 · " + str(len(cards)) + " 项")
-        control.setArrowType(QtCore.Qt.DownArrow if control.isChecked() else QtCore.Qt.RightArrow)
+        set_button_icon(control, "chevron-down" if control.isChecked() else "chevron-right",
+                        text="本轮执行详情 · " + str(len(cards)) + " 项", size=16)
         for card in cards:
             # Native images remain in the conversation even when tool internals fold away.
             card.setVisible(control.isChecked() or bool(card.image_tiles))
+
+    def image_will_change(self):
+        self._image_anchor = self.scroll_target()
+
+    def image_changed(self):
+        if self._image_anchor is not None:
+            self.queue_scroll_restore(self._image_anchor)
+        self._image_anchor = None
+
+    def set_turn_notice(self, turn_id, text):
+        cards = [card for card in self.cards.values() if card.property("nativeTurnId") == turn_id] if turn_id else []
+        self._notice_turn = turn_id if text else None
+        self.turn_notice.setText(text)
+        visible = bool(text and cards)
+        if visible:
+            position = max(self.layout.indexOf(card) for card in cards) + 1
+            if self.layout.indexOf(self.turn_notice) != position:
+                target = self.scroll_target()
+                self.layout.insertWidget(position, self.turn_notice)
+                self.queue_scroll_restore(target)
+        self.turn_notice.setVisible(visible)
+        return visible
 
     def apply_event(self, event):
         method, params = event.get("method", ""), event.get("params", {})

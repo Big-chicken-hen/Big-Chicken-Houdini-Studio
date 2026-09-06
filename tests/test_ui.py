@@ -69,7 +69,8 @@ class PanelTest(unittest.TestCase):
         self.api.state["runtime"] = {"connection": "connected", "main_thread_busy": False, "queue_depth": 1}
         self.panel.apply_state(copy.deepcopy(self.api.state))
         self.assertIn("等待主线程", self.panel.runtime_label.text())
-        self.assertTrue(self.panel.send_button.isEnabled())
+        self.assertFalse(self.panel.send_button.isEnabled())
+        self.assertIs(self.panel.action_slot.currentWidget(), self.panel.stop_button)
 
     def test_stop_keeps_runtime_fact_and_native_history_does_not_duplicate(self):
         self.assertIn("已中断", self.panel.codex_label.text())

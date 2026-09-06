@@ -7,7 +7,7 @@ from pathlib import Path
 
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
-from PySide6 import QtCore, QtGui, QtWidgets  # noqa: E402
+from PySide6 import QtCore, QtGui, QtTest, QtWidgets  # noqa: E402
 
 from scripts.preview_ui import PreviewApi, configure_preview_fonts, fixture_image, process_until  # noqa: E402
 from studio.ui.conversation import image_sources  # noqa: E402
@@ -45,8 +45,8 @@ class PanelProductTest(unittest.TestCase):
         self.app.sendPostedEvents(None, QtCore.QEvent.DeferredDelete)
 
     def choose_model(self, slug):
-        index = next(i for i in range(self.panel.models.count()) if self.panel.models.itemData(i)["model"] == slug)
-        self.panel.models.setCurrentIndex(index)
+        index = next(i for i in range(self.panel.models.count()) if self.panel.models.item(i).data(QtCore.Qt.UserRole)["model"] == slug)
+        self.panel.models.setCurrentRow(index)
 
     def select_thread(self, thread_id, model="preview-model", effort="high", revision=2):
         self.api.thread = {"id": thread_id, "turns": []}
@@ -106,7 +106,7 @@ class PanelProductTest(unittest.TestCase):
         self.panel.input.insertPlainText("edit")
         self.select_thread("missing", "retired-model", "ultra")
         self.assertEqual(self.panel.model_controls.next_model, "retired-model")
-        self.assertIn("不可用", self.panel.models.currentText())
+        self.assertIn("不可用", self.panel.model_controls.button.toolTip())
         self.assertFalse(self.panel.send_button.isEnabled())
         self.choose_model("second-model")
         self.assertEqual(self.panel.model_controls.next_effort, "balanced")
@@ -191,13 +191,13 @@ class PanelProductTest(unittest.TestCase):
         self.panel.apply_state(copy.deepcopy(self.api.state))
         self.assertIn("B.hip", self.panel.workspace_name.text())
         self.assertTrue(self.panel.scene_context_note.isHidden())
-        self.assertIn("已引用：1 个节点", self.panel.reference_label.text())
+        self.assertIn("选择：1 个节点", self.panel.reference_label.text())
         self.assertTrue(self.panel.send_button.isEnabled())
         scene.update(scene_epoch="replacement_epoch", display_name="未保存场景", is_new_file=True, saved_hip_path=None)
         self.api.state["scene_context"] = {"thread_id": "preview_thread", "scene_epoch": "preview_epoch",
                                            "current_scene_epoch": "replacement_epoch", "changed": True}
         self.panel.apply_state(copy.deepcopy(self.api.state))
-        self.assertIn("来自之前", self.panel.reference_label.text())
+        self.assertIn("过期", self.panel.reference_label.text())
         self.assertTrue(self.panel.scene_context_note.isVisible())
         self.assertFalse(self.panel.send_button.isEnabled())
         self.assertEqual(self.panel.input.toPlainText(), "keep the local draft")
@@ -214,9 +214,15 @@ class PanelProductTest(unittest.TestCase):
             self.app.processEvents()
             self.assertEqual(self.panel.width(), width)
             self.assertTrue(self.panel.model_controls.isVisible())
-            self.assertTrue(self.panel.models.isVisible())
-            self.assertTrue(self.panel.efforts.isVisible())
-            self.assertLessEqual(self.panel.models.mapTo(self.panel, QtCore.QPoint()).x() + self.panel.models.width(), width)
+            entry = self.panel.model_controls.button
+            self.assertTrue(entry.isVisible())
+            self.assertLessEqual(entry.mapTo(self.panel, QtCore.QPoint()).x() + entry.width(), width)
+            entry.click()
+            self.app.processEvents()
+            popup = self.panel.model_controls.popup
+            self.assertTrue(popup.isVisible())
+            self.assertTrue(popup.screen().availableGeometry().contains(popup.geometry()))
+            popup.hide()
 
     def test_file_mime_uses_attachments_and_old_selection_read_cannot_bind_new_scene(self):
         picture = self.root / "dropped-reference.png"
@@ -268,6 +274,67 @@ class PanelProductTest(unittest.TestCase):
         account_done({"account_revision": 1000, "status": "signed_out", "account": None})
         self.assertEqual(self.panel.account_revision, 1)
         old.close()
+
+    def test_popup_search_escape_and_binding_changes_preserve_only_current_intent(self):
+        controls = self.panel.model_controls
+        extra = [{**self.api.models["data"][0], "model": f"native-model-{i}", "displayName": f"Native {i}"} for i in range(8)]
+        self.panel.apply_models({**self.api.models, "catalog_revision": 2, "data": self.api.models["data"] + extra})
+        controls.button.click()
+        self.app.processEvents()
+        self.assertTrue(controls.search.isVisible())
+        controls.search.setText("Second")
+        visible = [controls.models.item(i) for i in range(controls.models.count()) if not controls.models.item(i).isHidden()]
+        self.assertEqual(len(visible), 1)
+        QtTest.QTest.mouseClick(controls.models.viewport(), QtCore.Qt.LeftButton,
+                               pos=controls.models.visualItemRect(visible[0]).center())
+        self.assertEqual(controls.next_model, "second-model")
+        controls.efforts.setCurrentIndex(controls.efforts.findData("adaptive-max"))
+        QtTest.QTest.keyClick(controls.popup, QtCore.Qt.Key_Escape)
+        self.assertTrue(controls.popup.isHidden())
+        self.assertEqual(controls.next_effort, "adaptive-max")
+        controls.button.click()
+        self.select_thread("other_thread")
+        self.assertTrue(controls.popup.isHidden())
+        controls.button.click()
+        controls.set_account_revision(2)
+        self.assertTrue(controls.popup.isHidden())
+        self.assertFalse(any(method == "POST" and path == "/turn" for method, path, _ in self.api.calls))
+
+    def test_send_stop_share_slot_and_working_shortcut_does_not_interrupt_or_resend(self):
+        self.panel.input.insertPlainText("current draft")
+        self.app.processEvents()
+        location = self.panel.send_button.mapTo(self.panel, QtCore.QPoint())
+        self.api.hold["/turn"] = []
+        self.api.hold["/stop"] = []
+        self.panel.send_button.click()
+        self.app.processEvents()
+        self.assertIs(self.panel.action_slot.currentWidget(), self.panel.stop_button)
+        self.assertEqual(self.panel.stop_button.mapTo(self.panel, QtCore.QPoint()), location)
+        self.panel.input.setFocus()
+        QtTest.QTest.keyClick(self.panel.input, QtCore.Qt.Key_Return, QtCore.Qt.ControlModifier)
+        self.assertEqual(sum(path == "/turn" for _, path, _ in self.api.calls), 1)
+        self.assertEqual(sum(path == "/stop" for _, path, _ in self.api.calls), 0)
+        self.panel.stop_button.click()
+        self.panel.stop_button.click()
+        self.assertEqual(sum(path == "/stop" for _, path, _ in self.api.calls), 1)
+        self.assertTrue(self.panel.input.isEnabled())
+
+    def test_result_image_fits_and_enlarges_already_decoded_data(self):
+        picture = self.root / "result-image.png"
+        fixture_image(picture)
+        self.panel.transcript.put({"id": "result_picture", "type": "imageView", "path": str(picture)}, turn_id="preview_turn")
+        tile = self.panel.transcript.cards["result_picture"].image_tiles[0][1]
+        process_until(lambda: not tile.decoded.isNull())
+        self.panel.resize(720, 800)
+        self.app.processEvents()
+        self.assertLessEqual(tile.picture.width(), 560)
+        self.assertEqual(tile.picture.height(), 300)
+        QtTest.QTest.mouseClick(tile.picture, QtCore.Qt.LeftButton)
+        self.app.processEvents()
+        self.assertIs(tile.viewer.decoded, tile.decoded)
+        self.assertTrue(tile.viewer.isVisible())
+        self.panel.close()
+        self.assertFalse(tile.viewer.isVisible())
 
 if __name__ == "__main__":
     unittest.main()

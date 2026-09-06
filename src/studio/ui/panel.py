@@ -9,30 +9,19 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..common import AppPaths, StudioError, new_id, read_json
 from .conversation import ImageTile, Transcript
-from .model_settings import ModelSettings
+from .icons import icon_diagnostics, set_button_icon
+from .model_settings import ChoiceBox, ModelSettings
 from .requests import RequestCard, SessionTrustControl
 from .shared import Api, ErrorDetails, button, label
-from .theme import COLORS, studio_stylesheet
+from .theme import COLORS, apply_theme, studio_stylesheet
 
 
 PANEL_STYLE = studio_stylesheet("studioPanel") + f"""
-QWidget#studioPanel QWidget#transcript {{ background: {COLORS['background']}; }}
-QWidget#studioPanel QFrame#panelHeader {{ background: {COLORS['surface']}; border-radius: 8px; }}
-QWidget#studioPanel QLabel#workspaceName {{ font-size: 13pt; font-weight: 600; }}
+QWidget#studioPanel QLabel#workspaceName {{ font-size: 12pt; font-weight: 600; }}
 QWidget#studioPanel QLabel#workStatus {{ font-weight: 600; }}
-QWidget#studioPanel QMenu {{ background: {COLORS['surface_elevated']}; color: {COLORS['text_primary']}; border: 1px solid {COLORS['border_subtle']}; }}
-QWidget#studioPanel QMenu::item {{ padding: 8px 16px; }}
-QWidget#studioPanel QMenu::item:selected {{ background: {COLORS['selected_surface']}; }}
-QWidget#studioPanel QFrame#messageCard {{ background: {COLORS['surface']}; border: 1px solid {COLORS['border_subtle']}; border-radius: 8px; }}
 QWidget#studioPanel QLabel#messageAuthor {{ color: {COLORS['text_secondary']}; font-size: 9.5pt; font-weight: 600; }}
-QWidget#studioPanel QLabel#welcome {{ color: {COLORS['text_secondary']}; font-size: 13pt; }}
 QWidget#studioPanel QLabel#warning {{ color: {COLORS['warning']}; }}
-QWidget#studioPanel QFrame#requestCard {{ background: {COLORS['surface_elevated']}; border: 1px solid {COLORS['warning']}; border-radius: 8px; }}
-QWidget#studioPanel QFrame#imageTile {{ background: {COLORS['surface']}; border: 1px solid {COLORS['border_subtle']}; border-radius: 6px; }}
-QWidget#studioPanel QFrame#composer QTextEdit {{ background: transparent; padding: 2px; }}
-QWidget#studioPanel QWidget#attachmentBody {{ background: {COLORS['surface_elevated']}; }}
-QWidget#studioPanel QWidget#requestBody, QWidget#studioPanel QWidget#imageBody {{ background: {COLORS['background']}; }}
-QWidget#studioPanel QSplitter::handle {{ background: {COLORS['border_subtle']}; height: 3px; width: 3px; }}
+QWidget#studioPanel QToolButton::menu-indicator {{ image: none; }}
 """
 
 CODEX_STATES = {"idle": "就绪", "starting": "正在提交", "running": "正在工作", "stopping": "已请求停止，等待确认",
@@ -53,7 +42,8 @@ class Composer(QtWidgets.QTextEdit):
         super().__init__(parent)
         # Small adaptation of HIA's ExpandableTextEdit: no keyboard or IME overrides.
         self.setAcceptRichText(False)
-        self.setMinimumHeight(84)
+        self.height_limit = 160
+        self.setMinimumHeight(64)
         self.setMaximumHeight(160)
         self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
         self._send_shortcuts = []
@@ -72,7 +62,7 @@ class Composer(QtWidgets.QTextEdit):
         self.update_height()
 
     def update_height(self):
-        height = max(84, min(160, int(self.document().size().height()) + 14))
+        height = max(64, min(self.height_limit, int(self.document().size().height()) + 14))
         if self.maximumHeight() != height:
             self.setMaximumHeight(height)
             self.updateGeometry()
@@ -157,7 +147,7 @@ class StudioPanel(QtWidgets.QWidget):
         self.setWindowTitle("Big-Chicken · Houdini Studio")
         self.setStyleSheet(PANEL_STYLE)
         self.resize(720, 900)
-        self.setMinimumSize(340, 560)
+        self.setMinimumSize(280, 420)
         self.build_ui()
         self.poll = QtCore.QTimer(self)
         self.poll.setInterval(850)
@@ -174,32 +164,46 @@ class StudioPanel(QtWidgets.QWidget):
 
     def build_ui(self):
         root = QtWidgets.QVBoxLayout(self)
-        root.setContentsMargins(10, 10, 10, 10)
+        self.root_layout = root
+        root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(8)
         header = QtWidgets.QFrame()
         header.setObjectName("panelHeader")
         top = QtWidgets.QHBoxLayout(header)
-        top.setContentsMargins(12, 8, 12, 8)
-        names = QtWidgets.QVBoxLayout()
-        names.setSpacing(2)
-        names.addWidget(label("STUDIO", "eyebrow"))
+        top.setContentsMargins(0, 0, 0, 0)
         self.workspace_name = label("等待场景信息…", "workspaceName")
         self.workspace_name.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
-        names.addWidget(self.workspace_name)
-        top.addLayout(names, 1)
+        top.addWidget(self.workspace_name, 1)
         self.conversation_button = button("返回对话", lambda: self.tabs.setCurrentIndex(0))
+        set_button_icon(self.conversation_button, "arrow-left", text="返回对话", fallback_text="返回", icon_only=True)
+        self.conversation_button.setFixedSize(32, 32)
         self.conversation_button.hide()
         top.addWidget(self.conversation_button)
+        self.new_thread = button("新对话", lambda: self.select_thread(None), "quiet")
+        set_button_icon(self.new_thread, "square-pen", text="新对话", fallback_text="新建", icon_only=True)
+        self.new_thread.setFixedSize(32, 32)
+        top.addWidget(self.new_thread)
         self.menu_button = QtWidgets.QToolButton()
         self.menu_button.setText("更多")
+        self.menu_button.setFixedSize(32, 32)
+        set_button_icon(self.menu_button, "ellipsis", text="更多", icon_only=True)
         self.menu_button.setPopupMode(QtWidgets.QToolButton.InstantPopup)
         menu = QtWidgets.QMenu(self.menu_button)
+        menu.setObjectName("studioPanelMenu")
+        apply_theme(menu, popup=True)
         menu.addAction("设置与连接详情", self.toggle_settings)
         menu.addAction("执行详情", lambda: self.tabs.setCurrentIndex(1))
         menu.addAction("项目约定", lambda: self.tabs.setCurrentIndex(2))
         self.menu_button.setMenu(menu)
         top.addWidget(self.menu_button)
         root.addWidget(header)
+        self.threads = ChoiceBox()
+        self.threads.setMinimumWidth(0)
+        self.threads.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.threads.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+        self.threads.setPlaceholderText("选择对话")
+        self.threads.activated.connect(self.choose_thread)
+        root.addWidget(self.threads)
         self.scene_context_note = label("", "warning", True)
         self.scene_context_note.hide()
         root.addWidget(self.scene_context_note)
@@ -214,7 +218,6 @@ class StudioPanel(QtWidgets.QWidget):
         self.model_controls = ModelSettings()
         self.models, self.efforts = self.model_controls.models, self.model_controls.efforts
         self.model_controls.changed.connect(self.update_controls)
-        root.addWidget(self.model_controls)
         self.settings_area = QtWidgets.QFrame()
         self.settings_area.setObjectName("status")
         self.settings_layout = QtWidgets.QVBoxLayout(self.settings_area)
@@ -239,7 +242,8 @@ class StudioPanel(QtWidgets.QWidget):
         self.settings_area.hide()
         self.error_details = ErrorDetails()
         self.notice = self.error_details.summary
-        root.addWidget(self.error_details)
+        self.settings_layout.addWidget(self.error_details)
+        self.presentation_notice = ""
         self.tabs = QtWidgets.QTabWidget()
         self.tabs.tabBar().hide()
         self.tabs.currentChanged.connect(self.tab_changed)
@@ -249,8 +253,8 @@ class StudioPanel(QtWidgets.QWidget):
         self.build_decisions()
         self.settings_layout.addStretch()
         self.tabs.addTab(self.settings_area, "设置与连接详情")
-        # Execution uncertainty remains visible while another page is open, too.
-        root.insertWidget(root.indexOf(self.tabs), self.runtime_status)
+        self.settings_layout.insertWidget(self.settings_layout.count() - 1, self.runtime_status)
+        root.addWidget(self.status_bar)
 
     def toggle_settings(self):
         self.tabs.setCurrentIndex(0 if self.tabs.currentIndex() == 3 else 3)
@@ -259,33 +263,27 @@ class StudioPanel(QtWidgets.QWidget):
         page = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(page)
         layout.setContentsMargins(0, 2, 0, 0)
-        layout.setSpacing(9)
-        row = QtWidgets.QHBoxLayout()
-        self.threads = QtWidgets.QComboBox()
-        self.threads.setMinimumWidth(130)
-        self.threads.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
-        self.threads.setPlaceholderText("选择对话")
-        self.threads.activated.connect(self.choose_thread)
-        row.addWidget(self.threads, 1)
-        self.new_thread = button("新对话", lambda: self.select_thread(None))
-        row.addWidget(self.new_thread)
-        layout.addLayout(row)
+        layout.setSpacing(8)
         self.transcript = Transcript(self.paths.root, image_roots=self.preview_image_roots or ())
         layout.addWidget(self.transcript, 1)
         self.session_trust = SessionTrustControl(self.api)
         self.session_trust.changed.connect(self.refresh)
-        layout.addWidget(self.session_trust)
         self.request_area = QtWidgets.QScrollArea()
         self.request_area.setWidgetResizable(True)
-        self.request_area.setMaximumHeight(300)
+        self.request_area.setMaximumHeight(int(self.height() * 0.3))
+        self.request_area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         request_body = QtWidgets.QWidget()
         request_body.setObjectName("requestBody")
         self.request_layout = QtWidgets.QVBoxLayout(request_body)
         self.request_layout.setContentsMargins(0, 0, 0, 0)
         self.request_area.setWidget(request_body)
+        request_body.setAutoFillBackground(False)
+        self.request_area.viewport().setAutoFillBackground(False)
         self.request_area.hide()
         layout.addWidget(self.request_area)
-        status_row = QtWidgets.QBoxLayout(QtWidgets.QBoxLayout.LeftToRight)
+        self.status_bar = QtWidgets.QWidget()
+        status_row = QtWidgets.QBoxLayout(QtWidgets.QBoxLayout.LeftToRight, self.status_bar)
+        status_row.setContentsMargins(0, 0, 0, 0)
         self.status_layout = status_row
         self.work_status = label("连接 Studio 后即可发送；现在可以先写草稿。", "workStatus", True)
         status_row.addWidget(self.work_status, 1)
@@ -293,9 +291,7 @@ class StudioPanel(QtWidgets.QWidget):
         status_row.addWidget(self.reconcile_button)
         self.reconnect_button = button("重新连接", self.reconnect, "quiet")
         status_row.addWidget(self.reconnect_button)
-        layout.addLayout(status_row)
         self.runtime_status = label("", "warning", True)
-        layout.addWidget(self.runtime_status)
         self.pending_button = button("查看未确认的原消息", self.toggle_pending_submission, "quiet")
         self.pending_button.hide()
         layout.addWidget(self.pending_button, 0, QtCore.Qt.AlignLeft)
@@ -304,31 +300,46 @@ class StudioPanel(QtWidgets.QWidget):
         self.pending_preview.setMaximumHeight(120)
         self.pending_preview.hide()
         layout.addWidget(self.pending_preview)
-        composer = QtWidgets.QFrame()
+        composer = self.composer = QtWidgets.QFrame()
         composer.setObjectName("composer")
         controls = QtWidgets.QVBoxLayout(composer)
-        controls.setContentsMargins(12, 10, 12, 10)
+        controls.setContentsMargins(8, 8, 8, 8)
         controls.setSpacing(8)
         self.attachment_area = QtWidgets.QScrollArea()
-        self.attachment_area.setFixedHeight(122)
+        self.attachment_area.setFixedHeight(72)
         self.attachment_area.setWidgetResizable(True)
+        self.attachment_area.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         attachment_body = QtWidgets.QWidget()
         attachment_body.setObjectName("attachmentBody")
         self.attachment_layout = QtWidgets.QHBoxLayout(attachment_body)
         self.attachment_layout.setContentsMargins(0, 0, 0, 0)
         self.attachment_layout.setAlignment(QtCore.Qt.AlignLeft)
         self.attachment_area.setWidget(attachment_body)
+        attachment_body.setAutoFillBackground(False)
+        self.attachment_area.viewport().setAutoFillBackground(False)
         self.attachment_area.hide()
         controls.addWidget(self.attachment_area)
-        self.reference_label = label("", "muted", True)
+        self.reference_label = QtWidgets.QToolButton()
+        self.reference_label.setProperty("studioRole", "quiet")
+        self.reference_label.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+        self.reference_label.setCheckable(True)
+        self.reference_label.setMinimumHeight(32)
+        self.reference_label.clicked.connect(self.toggle_reference)
         self.reference_label.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
         self.reference_label.hide()
         reference_row = QtWidgets.QHBoxLayout()
         reference_row.addWidget(self.reference_label, 1)
         self.reference_clear = button("清除引用", self.clear_reference, "quiet")
+        self.reference_clear.setFixedSize(32, 32)
+        set_button_icon(self.reference_clear, "x", text="清除引用", fallback_text="清除", icon_only=True)
         self.reference_clear.hide()
         reference_row.addWidget(self.reference_clear)
         controls.addLayout(reference_row)
+        self.reference_paths = QtWidgets.QPlainTextEdit()
+        self.reference_paths.setReadOnly(True)
+        self.reference_paths.setMaximumHeight(72)
+        self.reference_paths.hide()
+        controls.addWidget(self.reference_paths)
         self.input = Composer()
         self.input.setPlaceholderText("描述你想完成的工作。Enter 换行，Ctrl + Enter 发送。")
         self.input.textChanged.connect(self.update_controls)
@@ -338,13 +349,19 @@ class StudioPanel(QtWidgets.QWidget):
         controls.addWidget(self.input)
         self.input.document().setParent(self)
         self.save_draft()
-        self.composer_action_layout = QtWidgets.QBoxLayout(QtWidgets.QBoxLayout.LeftToRight)
-        secondary = QtWidgets.QWidget()
+        self.composer_action_layout = QtWidgets.QGridLayout()
+        self.composer_action_layout.setContentsMargins(0, 0, 0, 0)
+        self.composer_action_layout.setSpacing(4)
+        secondary = self.context_actions = QtWidgets.QWidget()
         actions = QtWidgets.QHBoxLayout(secondary)
         actions.setContentsMargins(0, 0, 0, 0)
         actions.setSpacing(4)
         self.attach_button = button("图片", self.choose_images, "quiet")
         self.selection_button = button("引用选择", self.request_selection, "quiet")
+        for control, name, text in ((self.attach_button, "paperclip", "添加图片"),
+                                     (self.selection_button, "mouse-pointer-2", "引用选择")):
+            set_button_icon(control, name, text=text, fallback_text="附件" if control is self.attach_button else "选择", icon_only=True)
+            control.setFixedSize(32, 32)
         actions.addWidget(self.attach_button)
         actions.addWidget(self.selection_button)
         self.retry_attachments = button("添加待传", self.upload_attachments, "quiet")
@@ -352,20 +369,25 @@ class StudioPanel(QtWidgets.QWidget):
         self.retry_attachments.hide()
         actions.addWidget(self.retry_attachments)
         actions.addStretch()
-        primary = QtWidgets.QWidget()
-        primary_actions = QtWidgets.QHBoxLayout(primary)
-        primary_actions.setContentsMargins(0, 0, 0, 0)
-        primary_actions.addStretch()
+        self.action_slot = QtWidgets.QStackedWidget()
+        self.action_slot.setFixedSize(36, 36)
         self.stop_button = button("停止后续工作", self.stop, "stop")
         self.stop_button.setToolTip("请求停止后续工作；长操作占用主线程时，按钮可能延迟响应。")
         self.send_button = button("发送", self.send, "primary")
-        primary_actions.addWidget(self.stop_button)
-        primary_actions.addWidget(self.send_button)
-        self.composer_action_layout.addWidget(secondary, 1)
-        self.composer_action_layout.addWidget(primary)
+        for control, name, text, color in ((self.send_button, "arrow-up", "发送", COLORS["on_primary"]),
+                                           (self.stop_button, "square", "停止后续工作", COLORS["background"])):
+            control.setFixedSize(36, 36)
+            set_button_icon(control, name, text=text, fallback_text="发送" if control is self.send_button else "停止", color=color, icon_only=True)
+            self.action_slot.addWidget(control)
+        self.action_slot.setCurrentWidget(self.send_button)
         controls.addLayout(self.composer_action_layout)
-        controls.addWidget(label("Enter 换行 · Ctrl+Enter 发送", "eyebrow"))
         layout.addWidget(composer)
+        footer = QtWidgets.QHBoxLayout()
+        self.shortcut_hint = label("Enter 换行 · Ctrl+Enter 发送", "eyebrow")
+        footer.addWidget(self.shortcut_hint, 1)
+        footer.addWidget(self.session_trust)
+        layout.addLayout(footer)
+        self.arrange_composer()
         self.tabs.addTab(page, "对话")
 
     def build_operations(self):
@@ -437,8 +459,11 @@ class StudioPanel(QtWidgets.QWidget):
         self.tabs.addTab(page, "项目约定")
 
     def show_notice(self, message, *, failure=None):
+        self.presentation_notice = str(message).splitlines()[0] if message else ""
         if not message:
             self.error_details.set_failure(None)
+            if hasattr(self, "work_status"):
+                self.update_work_status()
             return
         self.error_details.set_failure(failure if failure is not None else message)
         summary = str(message).splitlines()[0]
@@ -446,17 +471,41 @@ class StudioPanel(QtWidgets.QWidget):
         self.notice.setProperty("tone", "error" if getattr(failure or message, "code", None) else "notice")
         self.notice.style().unpolish(self.notice)
         self.notice.style().polish(self.notice)
+        if hasattr(self, "work_status"):
+            self.update_work_status()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if not hasattr(self, "composer_action_layout"):
             return
-        narrow = self.width() < 500
+        self.arrange_composer()
+
+    def arrange_composer(self):
+        narrow = self.width() < 440
+        margin = 8 if narrow else 12
+        self.root_layout.setContentsMargins(margin, margin, margin, margin)
+        self.request_area.setMaximumHeight(max(80, int(self.height() * 0.3)))
+        self.input.height_limit = 96 if self.height() < 620 else 160
+        self.input.update_height()
+        self.attachment_area.setFixedHeight(56 if self.height() < 620 else 72)
+        for tile in self.attachment_tiles.values():
+            tile.caption.setVisible(self.height() >= 620)
+        self.shortcut_hint.setVisible(self.height() >= 620)
         if narrow != self.narrow_layout:
             self.narrow_layout = narrow
-            direction = QtWidgets.QBoxLayout.TopToBottom if narrow else QtWidgets.QBoxLayout.LeftToRight
-            self.composer_action_layout.setDirection(direction)
-            self.status_layout.setDirection(direction)
+            for widget in (self.context_actions, self.model_controls, self.action_slot):
+                self.composer_action_layout.removeWidget(widget)
+            if narrow:
+                self.composer_action_layout.addWidget(self.model_controls, 0, 0, 1, 3)
+                self.composer_action_layout.addWidget(self.context_actions, 1, 0, 1, 2)
+                self.composer_action_layout.addWidget(self.action_slot, 1, 2)
+            else:
+                self.composer_action_layout.addWidget(self.context_actions, 0, 0)
+                self.composer_action_layout.addWidget(self.model_controls, 0, 1, QtCore.Qt.AlignRight)
+                self.composer_action_layout.addWidget(self.action_slot, 0, 2)
+            self.composer_action_layout.setColumnStretch(0, 1 if narrow else 0)
+            self.composer_action_layout.setColumnStretch(1, 0 if narrow else 1)
+            self.status_layout.setDirection(QtWidgets.QBoxLayout.TopToBottom if narrow else QtWidgets.QBoxLayout.LeftToRight)
 
     def save_draft(self):
         if not hasattr(self, "input"):
@@ -627,7 +676,8 @@ class StudioPanel(QtWidgets.QWidget):
         self.workspace_name.setToolTip(str(path or "") if runtime.get("connection") == "connected" else "Houdini 连接未确认")
         self.scene_label.setText((Path(path).name + "  ·  帧 " + str(scene.get("frame", "?")) +
                                  ("  ·  有未保存修改" if scene.get("dirty") else "") + "  ·  最近快照") if path else "场景快照尚不可用")
-        self.scene_label.setToolTip(json.dumps({"scene": scene, "scene_context": value.get("scene_context")},
+        self.scene_label.setToolTip(json.dumps({"scene": scene, "scene_context": value.get("scene_context"),
+                                               "icons": icon_diagnostics()},
                                               ensure_ascii=False, indent=2))
         if not self.switching and value.get("thread_id") != self.thread_id:
             self.thread_id = value.get("thread_id")
@@ -683,7 +733,7 @@ class StudioPanel(QtWidgets.QWidget):
         self.uploading = sum(item.get("status") == "uploading" for item in self.attachments)
         self.models_loaded = self.model_controls.catalog_loaded and bool(self.model_controls.catalog)
         self.login_button.setVisible(not self.logged_in)
-        self.login_area.setVisible(not self.logged_in)
+        self.login_area.setVisible(self.bridge_connected and not self.logged_in)
         self.account_detail.setText(self.account_label.text())
         self.login_button.setEnabled(self.bridge_connected and (not self.login_pending or self.login_url is not None))
         self.new_thread.setEnabled(ready)
@@ -691,8 +741,6 @@ class StudioPanel(QtWidgets.QWidget):
         self.threads_refresh.setEnabled(account and not self.switching)
         # Local editing is independent from account, connection and turn state.
         self.input.setEnabled(True)
-        self.models.setEnabled(ready and self.models_loaded)
-        self.efforts.setEnabled(ready and self.efforts.count() > 0)
         text_ok = 0 < len(self.input.toPlainText().strip()) <= 64000
         reference_ok = not self.selection_reference or self.selection_reference.get("scene_epoch") == runtime.get("scene", {}).get("scene_epoch")
         self.send_button.setEnabled(ready and bool(self.thread_id) and text_ok and not self.uploading and not self.selection_pending
@@ -715,15 +763,11 @@ class StudioPanel(QtWidgets.QWidget):
         working = (codex.get("state") in {"running", "starting", "stopping", "unknown"}
                    or bool(runtime.get("main_thread_busy")) or bool(runtime.get("active_operation_id"))
                    or runtime.get("queue_depth", 0) > 0 or self.submitting)
-        self.stop_button.setVisible(working or self.stop_pending)
+        self.send_button.setEnabled(self.send_button.isEnabled() and not working)
+        self.action_slot.setCurrentWidget(self.stop_button if working or self.stop_pending else self.send_button)
         self.stop_button.setEnabled(self.bridge_connected and working and not self.stop_pending)
-        self.stop_button.setText("正在请求停止…" if self.stop_pending else "停止后续工作")
-        self.send_button.setVisible(not working or self.send_button.isEnabled())
-        send_style = "quiet" if working else "primary"
-        if self.send_button.objectName() != send_style:
-            self.send_button.setObjectName(send_style)
-            self.send_button.style().unpolish(self.send_button)
-            self.send_button.style().polish(self.send_button)
+        self.stop_button.setToolTip("停止请求已发送" if self.stop_pending else "停止后续工作")
+        self.model_controls.set_interactive(ready and self.models_loaded and not working)
         self.model_controls.apply_turn(self.state.get("turn_settings"), active=working, turn_id=self.state.get("turn_id"))
         self.reconcile_button.setEnabled(self.bridge_connected and bool(self.thread_id) and not self.switching
                                          and not self.submitting and not self.reconciling)
@@ -746,7 +790,7 @@ class StudioPanel(QtWidgets.QWidget):
         if self.uncertain_send:
             text = "上次提交结果未确认。可继续写草稿，请先查询提交状态。"
         elif any(card.response_unknown for card in self.request_cards.values()):
-            text = "上次回应是否送达尚未确认，请先查询状态。草稿可继续编辑。"
+            text = ""  # The approval card owns this error; the query action remains available.
         elif self.stop_pending or codex.get("stop_requested") and native in {"running", "starting", "stopping"}:
             text = "已请求停止后续工作，等待确认。"
         elif not self.bridge_connected:
@@ -762,12 +806,12 @@ class StudioPanel(QtWidgets.QWidget):
         elif native in {"starting", "running", "stopping", "unknown", "failed", "interrupted"}:
             text = {"failed": "本轮对话失败，请查看对话中的原因。", "interrupted": "本轮对话已中断。"}.get(native, CODEX_STATES[native])
         elif not self.logged_in:
-            text = "登录状态未确认；可先写草稿，确认账号后发送。"
+            text = ""  # Account feedback stays beside the sign-in action.
         elif not self.thread_id:
             text = "新建或选择对话后即可发送。"
         else:
             text = "可以继续描述下一步。" if native == "completed" else "准备好了。"
-        self.work_status.setText(text)
+        turn_fact = False
         if not self.bridge_connected or runtime.get("connection") != "connected":
             fact = "Houdini 连接未确认，场景修改结果尚未确认。"
         elif runtime.get("storage_fault"):
@@ -785,14 +829,29 @@ class StudioPanel(QtWidgets.QWidget):
             fact = "Houdini 队列已空闲，上次操作的结果仍待确认。"
         elif any(self.receipts[key].get("mutation_outcome") == "partial" for key in self.observed_operations):
             fact = "本轮 Houdini 操作留下了部分修改；请查看执行详情后继续。"
+            turn_fact = True
         elif any(self.receipts[key].get("checks_outcome") == "failed" for key in self.observed_operations):
             fact = "本轮 Houdini 操作的检查发现问题；请查看执行详情。"
+            turn_fact = True
         elif any(self.receipts[key].get("state") in {"failed", "rejected"} for key in self.observed_operations):
             fact = "本轮有 Houdini 操作失败或被拒绝；请查看执行详情。"
+            turn_fact = True
         else:
             fact = ""
         self.runtime_status.setText(fact)
         self.runtime_status.setVisible(bool(fact))
+        placed = self.transcript.set_turn_notice(self.state.get("turn_id"), fact if turn_fact else text if native == "failed" else "")
+        if fact and not placed:
+            prefix = text + " " if self.stop_pending or native in {"interrupted", "stopping"} else ""
+            primary = prefix + fact
+        elif placed:
+            primary = "" if native == "failed" else text
+        elif self.uncertain_send or self.request_cards:
+            primary = text
+        else:
+            primary = self.presentation_notice or text
+        self.work_status.setText(primary)
+        self.work_status.setVisible(bool(primary))
 
     def toggle_pending_submission(self):
         if self.pending_submission:
@@ -1347,8 +1406,9 @@ class StudioPanel(QtWidgets.QWidget):
         item = next((item for item in items if item.get("local_key") == key), None)
         if item is not None:
             item["status"] = "failed"
+            item["error"] = str(message)
         if not self.closed and items is self.attachments:
-            self.show_notice("图片尚未添加，原图片已保留。", failure=message)
+            self.error_details.set_failure(message)
             self.render_attachments()
             self.update_controls()
 
@@ -1364,7 +1424,8 @@ class StudioPanel(QtWidgets.QWidget):
                 tile.removed.connect(lambda key=key: self.remove_attachment(key))
                 self.attachment_tiles[key] = tile
             tile.caption.setText(prefix + item["name"])
-            tile.caption.setToolTip(prefix + item["name"])
+            tile.caption.setVisible(self.height() >= 620)
+            tile.caption.setToolTip(str(item.get("error") or prefix + item["name"]))
             self.attachment_layout.insertWidget(index, tile)
         for key in set(self.attachment_tiles) - retained:
             tile = self.attachment_tiles.pop(key)
@@ -1434,10 +1495,19 @@ class StudioPanel(QtWidgets.QWidget):
         reference = self.selection_reference
         current_epoch = (self.state.get("runtime", {}).get("scene") or {}).get("scene_epoch")
         stale = bool(reference and reference.get("scene_epoch") != current_epoch)
-        self.reference_label.setText("来自之前的场景，请重新引用" if stale else
-                                     "已引用：" + str(len(reference.get("nodes", []))) + " 个节点" if reference else "")
-        self.reference_label.setToolTip("\n".join(reference.get("nodes", [])) if reference else "")
+        self.reference_label.setText("选择已过期" if stale else
+                                     "选择：" + str(len(reference.get("nodes", []))) + " 个节点" if reference else "")
+        if reference:
+            set_button_icon(self.reference_label, "chevron-down", text=self.reference_label.text(), size=16)
+        paths = "\n".join(reference.get("nodes", [])) if reference else ""
+        if self.reference_paths.toPlainText() != paths:
+            self.reference_paths.setPlainText(paths)
+        self.reference_paths.setVisible(bool(reference) and self.reference_label.isChecked())
+        self.reference_label.setToolTip(("来自之前的场景，请重新引用。\n" if stale else "") + paths)
         self.reference_label.setVisible(bool(reference))
+
+    def toggle_reference(self):
+        self.reference_paths.setVisible(bool(self.selection_reference) and self.reference_label.isChecked())
 
     def sync_requests(self, requests):
         current = {str(r["request_id"]): r for r in requests
@@ -1467,7 +1537,7 @@ class StudioPanel(QtWidgets.QWidget):
         card = self.request_cards.get(str(request_id))
         if card:
             card.failed(message)
-            self.show_notice("审批回应未确认，请查询状态后继续。", failure=message)
+            self.error_details.set_failure(message)
             self.update_controls()
 
     def tab_changed(self, index):
@@ -1649,6 +1719,11 @@ class StudioPanel(QtWidgets.QWidget):
 
     def closeEvent(self, event):
         self.closed = True
+        self.model_controls.popup.hide()
+        for card in self.transcript.cards.values():
+            for _source, tile in card.image_tiles:
+                if tile.viewer is not None:
+                    tile.viewer.close()
         self.session_trust.set_api(None)
         self.poll.stop()
         self.account_poll.stop()
