@@ -9,15 +9,13 @@ import time
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from unittest.mock import patch
 
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
 from PySide6 import QtCore, QtWidgets  # noqa: E402
 
 from scripts.preview_ui import PreviewApi, configure_preview_fonts, fixture_image, process_until  # noqa: E402
-from studio.common import AppPaths  # noqa: E402
-from studio.ui.launcher import StudioLauncher  # noqa: E402
+from scripts.preview_launcher import make_fixture_window  # noqa: E402
 from studio.ui.panel import StudioPanel  # noqa: E402
 from studio.ui.shared import Api, ApiFailure  # noqa: E402
 
@@ -32,14 +30,17 @@ class PanelTest(unittest.TestCase):
 
     def setUp(self):
         self.api = PreviewApi(self.root)
-        self.panel = StudioPanel(api=self.api, auto_poll=False)
+        self.panel = StudioPanel(api=self.api, auto_poll=False, image_roots=(self.root,))
         self.panel.show()
         process_until(lambda: len(self.panel.transcript.cards) == 3)
 
     def tearDown(self):
+        self.api.close()
         self.panel.close()
         self.panel.deleteLater()
+        self.app.sendPostedEvents(None, QtCore.QEvent.DeferredDelete)
         self.app.processEvents()
+        self.app.sendPostedEvents(None, QtCore.QEvent.DeferredDelete)
 
     def idle(self):
         self.api.state["codex"]["state"] = "idle"
@@ -159,8 +160,10 @@ class PanelTest(unittest.TestCase):
         self.idle()
         self.panel.input.setPlainText("Edit this input")
         self.panel.submitting = True
-        self.panel.send_failed(ApiFailure("Missing attachment", code="ATTACHMENT_NOT_FOUND", status=400,
-                                          submission_state="not_submitted"))
+        failure = ApiFailure("Missing attachment", code="ATTACHMENT_NOT_FOUND", status=400,
+                             submission_state="not_submitted", details={"attachment_id": "missing-image"})
+        self.panel.send_failed(failure)
+        self.assertIs(self.panel.error_details.failure, failure)
         self.assertFalse(self.panel.uncertain_send)
         self.assertEqual(self.panel.input.toPlainText(), "Edit this input")
         self.assertTrue(self.panel.send_button.isEnabled())
@@ -208,21 +211,18 @@ class PanelTest(unittest.TestCase):
         self.assertFalse(any(path == "/operations" and method == "POST" for method, path, _ in self.api.calls))
 
     def test_launcher_ready_remains_owned_and_busy_selection_cannot_relaunch(self):
-        with patch("studio.ui.launcher.discover_houdini", return_value=[]):
-            launcher = StudioLauncher(paths=AppPaths())
-        item = QtWidgets.QListWidgetItem("Preview only")
-        item.setData(QtCore.Qt.UserRole, "preview_workspace")
-        launcher.projects.clear()
-        launcher.projects.addItem(item)
-        launcher.projects.setCurrentRow(0)
-        launcher.busy = True
-        launcher.update_selection()
+        launcher, services = make_fixture_window(records=[])
+        launcher.launch_button.click()
+        process_until(lambda: len(services.launches) == 1 and not launcher._pending)
         self.assertFalse(launcher.launch_button.isEnabled())
-        launcher.busy = False
-        launcher.sessions["preview_workspace"] = {"state": "ready", "directory": str(self.root)}
-        launcher.update_selection()
+        request_id = services.launches[0][1]
+        launcher.apply_launch_status({**services.admissions[request_id], "state": "target_opened", "target_opened": True})
+        process_until(lambda: not launcher._pending)
+        launcher.render()
         self.assertFalse(launcher.launch_button.isEnabled())
-        launcher.statuses_read({"preview_workspace": {"state": "closed", "directory": str(self.root)}})
+        self.assertEqual(len(services.launches), 1)
+        launcher.apply_launch_status({**services.admissions[request_id], "state": "closed", "process_may_exist": False})
+        process_until(lambda: not launcher._pending)
         self.assertTrue(launcher.launch_button.isEnabled())
         launcher.close()
         launcher.deleteLater()

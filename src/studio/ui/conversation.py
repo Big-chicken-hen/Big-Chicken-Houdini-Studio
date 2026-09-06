@@ -8,6 +8,7 @@ from pathlib import Path
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from .shared import Task, button, label
+from .theme import COLORS
 
 
 class SafeBrowser(QtWidgets.QTextBrowser):
@@ -18,8 +19,8 @@ class SafeBrowser(QtWidgets.QTextBrowser):
         self.setOpenExternalLinks(False)
         self.anchorClicked.connect(self.open_link)
         self.document().setDefaultStyleSheet(
-            "p { margin: 6px 0; } pre { background: #191c18; padding: 10px; } "
-            "a { color: #c8e889; } code { font-family: Consolas; }")
+            "p { margin: 6px 0; } pre { background: " + COLORS["surface_elevated"] + "; padding: 10px; } "
+            "a { color: " + COLORS["primary_pink"] + "; } code { font-family: Consolas; }")
 
     def loadResource(self, kind, url):
         return QtCore.QByteArray()
@@ -53,7 +54,7 @@ class ImageTile(QtWidgets.QFrame):
         if removable:
             remove = button("×", self.removed.emit, "quiet")
             remove.setAccessibleName("移除图片 " + caption)
-            remove.setFixedSize(24, 24)
+            remove.setFixedSize(32, 32)
             row.addWidget(remove)
         layout.addLayout(row)
         self.task = Task(lambda: self.decode(source))
@@ -94,6 +95,7 @@ class ImageTile(QtWidgets.QFrame):
 
 
 def image_sources(item, app_root):
+    roots = (Path(app_root).resolve(),) if isinstance(app_root, (str, Path)) else tuple(Path(path).resolve() for path in app_root)
     content = list(item.get("content") or [])
     if item.get("type") == "imageView":
         content.append({"type": "localImage", "path": item.get("path")})
@@ -113,7 +115,7 @@ def image_sources(item, app_root):
             elif block.get("path"):
                 path = Path(block["path"]).resolve()
                 # Native history cannot ask Qt to read outside application storage.
-                if app_root == path or app_root in path.parents:
+                if any(root == path or root in path.parents for root in roots):
                     sources.append({"path": str(path)})
     return sources[:8]
 
@@ -156,8 +158,8 @@ class MessageCard(QtWidgets.QFrame):
         layout.addWidget(self.details)
         self.update_item(item)
 
-    def update_item(self, item):
-        if self.item == item:
+    def update_item(self, item, *, force=False):
+        if self.item == item and not force:
             return False
         self.item = item
         kind = item.get("type", "item")
@@ -244,9 +246,9 @@ class MessageCard(QtWidgets.QFrame):
 
 
 class Transcript(QtWidgets.QScrollArea):
-    def __init__(self, app_root, parent=None):
+    def __init__(self, app_root, parent=None, *, image_roots=None):
         super().__init__(parent)
-        self.app_root = app_root
+        self.app_root = (app_root,) if image_roots is None else tuple(image_roots)
         self.setWidgetResizable(True)
         self.body = QtWidgets.QWidget()
         self.body.setObjectName("transcript")
@@ -273,6 +275,15 @@ class Transcript(QtWidgets.QScrollArea):
         self.empty.setMinimumHeight(170)
         self.layout.addWidget(self.empty)
         self.layout.addStretch()
+
+    def set_image_roots(self, roots):
+        roots = tuple(Path(root).resolve() for root in roots)
+        if roots == self.app_root:
+            return
+        self.app_root = roots
+        for card in self.cards.values():
+            card.app_root = roots
+            card.update_item(card.item, force=True)
 
     def reset(self, thread_id=None):
         self.cancel_scroll_restore()

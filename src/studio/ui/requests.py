@@ -37,7 +37,8 @@ class RequestCard(QtWidgets.QFrame):
         self.layout.addWidget(details)
         self.layout.addWidget(self.error)
         self.error.hide()
-        self.row = QtWidgets.QHBoxLayout()
+        self.row = QtWidgets.QBoxLayout(QtWidgets.QBoxLayout.LeftToRight)
+        self.row.setSpacing(6)
         if method in {"item/commandExecution/requestApproval", "item/fileChange/requestApproval"}:
             if params.get("command"):
                 self.layout.addWidget(label(str(params["command"]), wrap=True))
@@ -55,7 +56,7 @@ class RequestCard(QtWidgets.QFrame):
             if not self.actions:
                 self.layout.addWidget(label("当前原生审批选项暂不受支持。", "warning", True))
         elif method == "item/permissions/requestApproval":
-            self.layout.addWidget(label(json.dumps(params.get("permissions", {}), ensure_ascii=False, indent=2), wrap=True))
+            self.layout.addWidget(label(json.dumps(params.get("permissions", {}), ensure_ascii=False), wrap=True))
             self.action("允许本轮", lambda: self.submit({"permissions": params.get("permissions", {}), "scope": "turn"}))
             self.action("允许本会话", lambda: self.submit({"permissions": params.get("permissions", {}), "scope": "session"}))
             self.action("拒绝", lambda: self.submit({"permissions": {}, "scope": "turn"}))
@@ -98,6 +99,13 @@ class RequestCard(QtWidgets.QFrame):
         control = button(title, lambda: callback())
         self.row.addWidget(control)
         self.actions.append(control)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        margins = self.layout.contentsMargins()
+        action_width = sum(control.minimumSizeHint().width() for control in self.actions) + max(0, len(self.actions) - 1) * 6
+        self.row.setDirection(QtWidgets.QBoxLayout.TopToBottom if action_width > self.width() - margins.left() - margins.right()
+                              else QtWidgets.QBoxLayout.LeftToRight)
 
     def add_question(self, question):
         self.layout.addWidget(label(question.get("header", ""), "eyebrow"))
@@ -193,9 +201,11 @@ class SessionTrustControl(QtWidgets.QFrame):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
         row = QtWidgets.QHBoxLayout()
-        self.status = label("场景操作：逐次确认", "muted", True)
-        self.toggle = button("会话授权…", self.show_details, "quiet")
-        self.revoke = button("撤销授权", lambda: self.request_change(False), "quiet")
+        self.status = label("当前对话：逐次确认", "muted", True)
+        self.toggle = button("授权…", self.show_details, "quiet")
+        self.toggle.setAccessibleName("当前对话的场景操作授权")
+        self.revoke = button("撤销", lambda: self.request_change(False), "quiet")
+        self.revoke.setAccessibleName("撤销当前对话的场景操作授权")
         self.query = button("查询授权状态", self.query_state, "quiet")
         row.addWidget(self.status, 1)
         row.addWidget(self.toggle)
@@ -233,6 +243,10 @@ class SessionTrustControl(QtWidgets.QFrame):
         self.api = api
         self.render()
 
+    def closeEvent(self, event):
+        self.set_api(None)
+        super().closeEvent(event)
+
     def apply_state(self, value):
         thread_id = value.get("thread_id")
         trust = value.get("scene_trust") or {}
@@ -256,7 +270,7 @@ class SessionTrustControl(QtWidgets.QFrame):
         enabled = known and self.trust.get("enabled") is True
         can_change = bool(self.api and known and type(self.trust.get("revision")) is int and
                           self.trust.get("can_change", False) and not pending)
-        text = "场景操作：本会话已授权" if enabled else "场景操作：逐次确认"
+        text = "当前对话：已授权" if enabled else "当前对话：逐次确认"
         if not known:
             text = "场景授权状态不可用"
         if pending:

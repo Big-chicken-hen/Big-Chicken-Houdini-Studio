@@ -132,7 +132,8 @@ class RequestControlsTest(unittest.TestCase):
                             Mock(is_running=True))
             bridge.thread_id = "thread_a"
             bridge._runtime = Mock()
-            bridge._runtime.call.return_value = {"alive": True}
+            bridge._runtime.call.return_value = {"alive": True, "runtime_id": "fixture_runtime",
+                                                "scene": {"scene_epoch": "fixture_epoch"}}
 
             class DirectApi:
                 def call(self, method, route, body=None, done=None, failed=None):
