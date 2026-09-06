@@ -116,8 +116,9 @@ class _ButtonIcon(QtCore.QObject):
         button.installEventFilter(self)
         button.objectNameChanged.connect(self.refresh)
 
-    def configure(self, name, text, size, color, icon_only):
+    def configure(self, name, text, size, color, icon_only, fallback_text):
         self.name, self.text, self.size, self.color, self.icon_only = name, text, size, color, icon_only
+        self.fallback_text = fallback_text or text
         self.refresh()
 
     def refresh(self, *_args):
@@ -142,13 +143,18 @@ class _ButtonIcon(QtCore.QObject):
             only = self.icon_only and not result.isNull()
             button.setIcon(result)
             button.setIconSize(QtCore.QSize(self.size, self.size))
-            button.setText("" if only else self.text)
+            visible_text = self.fallback_text if self.icon_only and result.isNull() else self.text
+            button.setText("" if only else visible_text)
             button.setToolTip(self.text)
             button.setAccessibleName(self.text)
             if isinstance(button, QtWidgets.QToolButton):
                 button.setToolButtonStyle(QtCore.Qt.ToolButtonIconOnly if only else QtCore.Qt.ToolButtonTextBesideIcon)
-            if button.property("studioIconOnly") != only:
-                button.setProperty("studioIconOnly", only)
+            changed = False
+            for name, value in {"studioIconOnly": only, "studioCompact": bool(self.icon_only)}.items():
+                if button.property(name) != value:
+                    button.setProperty(name, value)
+                    changed = True
+            if changed:
                 button.style().unpolish(button)
                 button.style().polish(button)
             button.updateGeometry()
@@ -165,7 +171,7 @@ class _ButtonIcon(QtCore.QObject):
         return False
 
 
-def set_button_icon(button, name, *, text=None, size=20, color=None, icon_only=False):
+def set_button_icon(button, name, *, text=None, size=20, color=None, icon_only=False, fallback_text=None):
     """Decorate the same button, preserving actions and a readable text fallback."""
     binding = getattr(button, "_studio_icon_binding", None)
     text = text or button.text() or (binding.text if binding else "")
@@ -174,7 +180,7 @@ def set_button_icon(button, name, *, text=None, size=20, color=None, icon_only=F
     if binding is None:
         binding = _ButtonIcon(button)
         button._studio_icon_binding = binding
-    binding.configure(name, text, size, color, icon_only)
+    binding.configure(name, text, size, color, icon_only, fallback_text)
 
 
 class LoadingIcon(QtWidgets.QLabel):

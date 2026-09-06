@@ -59,7 +59,7 @@ def studio_stylesheet(root_name):
     rule(quiet, f"background: transparent; color: {c['text_secondary']};")
     rule(",".join(s + ":hover" for s in quiet.split(",")), f"background: {c['surface_hover']};")
     rule(",".join(s + ":pressed" for s in quiet.split(",")), f"background: {c['surface_pressed']};")
-    rule("QPushButton[studioIconOnly='true'],QToolButton[studioIconOnly='true']", "padding: 0; min-width: 32px; min-height: 32px;")
+    rule("QPushButton[studioCompact='true'],QToolButton[studioCompact='true']", "padding: 0; min-width: 32px; min-height: 32px;")
     stop = "QPushButton#stop,QPushButton[studioRole='stop'],QToolButton[studioRole='stop']"
     rule(stop, f"background: {c['text_secondary']}; color: {c['background']};")
     rule(",".join(s + ":hover" for s in stop.split(",")), f"background: {c['text_primary']};")

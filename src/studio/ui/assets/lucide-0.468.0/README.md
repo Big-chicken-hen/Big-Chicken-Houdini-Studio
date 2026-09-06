@@ -18,6 +18,10 @@ Both copyright and permission notices are distributed with these resources.
 Use `icon(name, size=20, color=None, dpr=1.0)` only on the existing Qt GUI thread.
 `set_button_icon(button, name, text=..., icon_only=...)` preserves the existing
 button and action, handles display-scale changes and retains action text if a
-resource cannot load. `LoadingIcon.set_busy()` stops its timer when idle, hidden
+resource cannot load. Fixed-size icon actions keep compact padding even when
+showing text. For longer labels, an explicit `fallback_text` supplies a short
+visible label; `text` remains the full tooltip and accessible name. Font size
+and the caller's button geometry are preserved.
+`LoadingIcon.set_busy()` stops its timer when idle, hidden
 or minimized. Missing-resource records are available from `icon_diagnostics()`
 for existing details views; the loader creates no new user alerts.
