@@ -10,13 +10,16 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
+from .accounts import NativeAccount
 from .codex.client import CodexStdioClient
 from .codex.errors import BridgeError
 from .codex.protocol import ProtocolPolicy
+from .codex.settings import ModelCatalog, NativeSettings
 from .codex.trust import SessionTrust, STUDIO_TOOLS
 from .common import TERMINAL, StudioError, atomic_json, new_id, read_json
 from .http import Client, serve
 from .instructions import SCENE_INSTRUCTIONS
+from .launcher import helper_environment
 from .workspace import WorkspaceData, Workspaces
 
 
@@ -40,17 +43,24 @@ class Bridge:
         self.completed_turns = collections.deque(maxlen=256)
         self.pending_requests = {}
         self.scene_trust = SessionTrust()
+        self.settings = NativeSettings()
+        self.scene_epoch = self.scene_runtime_id = self.thread_scene_epoch = None
+        self.new_scene_thread = False
+        self.account = self.models = None
         self._runtime = None
         self.server = None
-        env = dict(os.environ)
-        for path in (paths.local("codex-home"), paths.local("tmp")):
+        env = helper_environment(paths)
+        for path in (paths.codex_home, paths.cache("tmp")):
             path.mkdir(parents=True, exist_ok=True)
         env.update({"HIA_PROJECT_ROOT": str(paths.root), "BCS_WORKSPACE_ID": workspace_id,
                     "BCS_SESSION_ID": session_id, "BCS_OWNER_ID": self.owner_id, "BCS_SESSION_TOKEN": token,
-                    "CODEX_HOME": str(paths.local("codex-home")), "PYTHONPATH": str(paths.root / "src"),
-                    "TEMP": str(paths.local("tmp")), "TMP": str(paths.local("tmp"))})
+                    "BCS_DATA_ROOT": str(paths.data_root), "BCS_CACHE_ROOT": str(paths.cache_root),
+                    "CODEX_HOME": str(paths.codex_home), "PYTHONPATH": str(paths.root / "src"),
+                    "TEMP": str(paths.cache("tmp")), "TMP": str(paths.cache("tmp"))})
         self.client = client or CodexStdioClient([str(codex_path), "app-server"], cwd=self.cwd,
                                                 environment=env, policy=ProtocolPolicy(), event_sink=self.on_event)
+        self.account = NativeAccount(self.client)
+        self.models = ModelCatalog(self.client, lambda: self.account.revision)
         if client:
             self.client.set_event_sink(self.on_event)
 
@@ -63,18 +73,35 @@ class Bridge:
         self.client.initialize()
 
     def on_event(self, event):
+        # A possible delegated approval checks only Runtime's cached health.
+        # Do not wait on RPC while holding the Bridge lock or touch HOM here.
+        approval_runtime = None
+        if event.get("type") == "server_request" and self.scene_trust.enabled:
+            try:
+                approval_runtime = {"connection": "connected", **self.runtime().call("GET", "/health", timeout=0.3)}
+            except StudioError:
+                approval_runtime = {"connection": "unavailable"}
         with self.lock:
             method, params = event.get("method"), event.get("params", {})
             event_thread = params.get("threadId")
             # App Server may still emit events from previously loaded conversations.
             if event_thread and event_thread != self.thread_id:
                 return
+            if self.account:
+                account_revision = self.account.revision
+                self.account.observe(event)
+                if self.account.revision != account_revision:
+                    self.scene_trust.reset()
+                    self.models.invalidate()
+            if approval_runtime is not None:
+                self._observe_scene(approval_runtime)
             if method == "turn/started":
                 turn = params.get("turn", {})
                 if turn.get("id") and turn["id"] not in self.completed_turns and self.turn_id in {None, turn["id"]}:
                     self.turn_id = turn.get("id")
                     self.codex_state = "stopping" if self.stop_requested else "running"
                     self.turn_revision += 1
+                    self.settings.admitted(self.turn_id)
             elif method == "turn/completed":
                 turn = params.get("turn", {})
                 turn_id = turn.get("id")
@@ -97,6 +124,8 @@ class Bridge:
                 self.codex_state = "unavailable"
                 self.pending_requests.clear()
                 self.turn_revision += 1
+            elif method == "model/rerouted":
+                self.settings.rerouted(params)
             if event.get("type") in {"process_started", "process_exit", "process_stopped"}:
                 self.scene_trust.reset()
                 self.pending_requests.clear()
@@ -105,7 +134,7 @@ class Bridge:
                 self.pending_requests[str(event["request_id"])] = event
                 call_id = self.scene_trust.match(event, self.thread_id, self.turn_id)
                 if (call_id and self.scene_trust.enabled and self.codex_state == "running" and
-                        not self.stop_requested):
+                        not self.stop_requested and self._trust_matches(approval_runtime)):
                     try:
                         # Client registers the pending request before invoking this sink.
                         # The lock orders this single response against explicit revocation;
@@ -138,11 +167,36 @@ class Bridge:
         except StudioError as exc:
             runtime = {"connection": "unavailable", "message": exc.message}
         with self.lock:
+            self._observe_scene(runtime)
             return {"workspace": self.workspace, "thread_id": self.thread_id, "turn_id": self.turn_id,
                     "codex": {"state": self.codex_state, "alive": self.client.is_running,
                               "stop_requested": self.stop_requested}, "runtime": runtime,
                     "scene_trust": self._scene_trust_state(runtime),
+                    "scene_context": {"thread_id": self.thread_id, "scene_epoch": self.thread_scene_epoch,
+                                      "current_scene_epoch": self.scene_epoch,
+                                      "changed": bool(self.thread_id and self.scene_epoch and
+                                                      self.thread_scene_epoch != self.scene_epoch)},
+                    **self.settings.snapshot(), "account_revision": self.account.revision,
                     "pending_requests": list(self.pending_requests.values())}
+
+    def _observe_scene(self, runtime):
+        if runtime.get("connection") != "connected":
+            return
+        epoch = runtime.get("scene", {}).get("scene_epoch")
+        runtime_id = runtime.get("runtime_id")
+        if not epoch or not runtime_id:
+            return
+        if self.scene_epoch is not None and (epoch != self.scene_epoch or runtime_id != self.scene_runtime_id):
+            self.scene_trust.reset()
+        self.scene_epoch, self.scene_runtime_id = epoch, runtime_id
+        if self.new_scene_thread and self.thread_scene_epoch is None:
+            self.thread_scene_epoch = epoch
+
+    def _trust_matches(self, runtime):
+        return bool(runtime and runtime.get("connection") == "connected" and
+                    runtime.get("runtime_id") == self.scene_trust.runtime_id and
+                    runtime.get("scene", {}).get("scene_epoch") == self.scene_trust.scene_epoch and
+                    self.scene_trust.scene_epoch)
 
     def _scene_trust_state(self, runtime=None):
         reason = ""
@@ -158,7 +212,11 @@ class Bridge:
             reason = "停止请求后，请先确认当前工作状态。"
         elif runtime is not None and runtime.get("connection") != "connected":
             reason = "等待当前 Houdini 连接后启用许可。"
+        elif (not self.scene_epoch or not self.scene_runtime_id or runtime is not None and
+              (not runtime.get("scene", {}).get("scene_epoch") or not runtime.get("runtime_id"))):
+            reason = "等待当前场景身份确认后启用许可。"
         return {"enabled": self.scene_trust.enabled, "thread_id": self.thread_id,
+                "scene_epoch": self.scene_trust.scene_epoch, "runtime_id": self.scene_trust.runtime_id,
                 "revision": self.scene_trust.revision, "available": not reason,
                 "can_change": self.scene_trust.enabled or not reason, "reason": reason,
                 "pending": False, "tools": list(STUDIO_TOOLS),
@@ -180,7 +238,9 @@ class Bridge:
             state = self._scene_trust_state(runtime)
             if enabled and not state["available"]:
                 raise StudioError("TRUST_UNAVAILABLE", state["reason"], 409)
-            self.scene_trust.change(enabled)
+            self.scene_trust.change(enabled, self.scene_epoch, self.scene_runtime_id)
+            if enabled:
+                self.thread_scene_epoch = self.scene_epoch
             # A pending native approval stays pending. Enabling only applies to
             # future requests; it never replays an earlier approval response.
             return {"scene_trust": self._scene_trust_state(runtime)}
@@ -203,7 +263,8 @@ class Bridge:
                 "config": {**context_config, "project_doc_max_bytes": 0, "mcp_servers": {"big_chicken": {
                     "command": str(executable), "args": ["-m", "studio.mcp"],
                     "env_vars": ["HIA_PROJECT_ROOT", "BCS_SESSION_ID", "BCS_WORKSPACE_ID", "BCS_SESSION_TOKEN",
-                                 "BCS_OWNER_ID", "BCS_PYTHON_EXECUTABLE", "HIA_RENDER_OUTPUT_DIR", "PYTHONPATH", "TEMP", "TMP"],
+                                 "BCS_OWNER_ID", "BCS_PYTHON_EXECUTABLE", "BCS_DATA_ROOT", "BCS_CACHE_ROOT",
+                                 "PYTHONPATH", "TEMP", "TMP"],
                     "startup_timeout_sec": 15, "tool_timeout_sec": 30,
                     # Native session/persistent grants cannot be revoked in-place
                     # in 0.153.4. Keep every batch promptable; Studio delegates only
@@ -248,12 +309,15 @@ class Bridge:
         with self.lock:
             self.scene_trust.reset()
             self.thread_id, self.turn_id = result["thread"]["id"], None
+            self.settings.bind(self.thread_id, result)
+            self.new_scene_thread = not thread_id
+            self.thread_scene_epoch = self.scene_epoch if self.new_scene_thread else None
             self.codex_state, self.stop_requested = "idle", False
             self.pending_requests.clear()
             self.completed_turns.clear()
             self.turn_revision += 1
             self._apply_native_state(result["thread"])
-        return result
+        return {**result, "thread_settings": self.settings.snapshot()["thread_settings"]}
 
     def start_turn(self, body):
         try:
@@ -275,7 +339,7 @@ class Bridge:
         for attachment in attachments:
             if not isinstance(attachment, str) or not re.fullmatch(r"[0-9a-f]{32}\.(png|jpg|jpeg|webp)", attachment):
                 raise StudioError("INVALID_ATTACHMENT", "Use an attachment returned by the image picker")
-            path = self.paths.local("workspaces", self.workspace_id, "attachments", attachment)
+            path = self.paths.workspace(self.workspace_id) / "attachments" / attachment
             if not path.is_file() or path.parent != self.paths.workspace(self.workspace_id) / "attachments":
                 raise StudioError("ATTACHMENT_NOT_FOUND", "Reattach the missing image")
             inputs.append({"type": "localImage", "path": str(path)})
@@ -283,12 +347,25 @@ class Bridge:
             if body.get(key) is not None and (not isinstance(body[key], str) or len(body[key]) > 160):
                 raise StudioError("INVALID_INPUT", "Model and effort must be native advertised strings")
         with self.lock:
+            self.settings.check_binding(body, self.thread_id)
             if self._has_unknown_response():
                 raise StudioError("APPROVAL_RESPONSE_UNKNOWN", "上次许可回复尚未确认，暂不能发送新请求。", 409)
             if self.codex_state in {"starting", "running", "stopping", "unknown", "unavailable", "selecting"}:
                 raise StudioError("TURN_ACTIVE", "Wait for native turn confirmation or reconcile the conversation", 409)
             if not self.thread_id:
                 raise StudioError("THREAD_REQUIRED", "Create or select a conversation first", 409)
+        account_revision = self.account.revision
+        if body.get("model") or body.get("effort"):
+            model = body.get("model") or self.settings.thread["model"]
+            if not model:
+                raise StudioError("MODEL_UNCONFIRMED", "请先确认本次使用的模型。", 409)
+            self.models.validate(model, body.get("effort"), bool(attachments))
+        with self.lock:
+            self.settings.check_binding(body, self.thread_id)
+            if self._has_unknown_response() or self.codex_state in {"starting", "running", "stopping", "unknown", "unavailable", "selecting"}:
+                raise StudioError("TURN_ACTIVE", "原生状态已变化，请先查询当前对话。", 409)
+            if account_revision != self.account.revision:
+                raise StudioError("ACCOUNT_CHANGED", "账号已变化，请确认模型后再发送。", 409)
             if self.owner_stopped:
                 try:
                     self.runtime().call("POST", "/owner/resume", {"owner_id": self.owner_id})
@@ -297,6 +374,7 @@ class Bridge:
                     if exc.code not in {"HOUDINI_STARTING", "CONNECTION_LOST"}:
                         raise
             self.codex_state, self.stop_requested = "starting", False
+            self.settings.requested(self.thread_id, body)
         params = {"threadId": self.thread_id, "input": inputs}
         for key in ("model", "effort"):
             if body.get(key):
@@ -310,13 +388,14 @@ class Bridge:
             raise
         with self.lock:
             turn_id = result["turn"]["id"]
+            self.settings.admitted(turn_id)
             if turn_id not in self.completed_turns:
                 self.turn_id = turn_id
                 self.codex_state = "stopping" if self.stop_requested else "running"
             should_interrupt = self.stop_requested and self.turn_id is not None
         if should_interrupt:
             self.client.request("turn/interrupt", {"threadId": self.thread_id, "turnId": turn_id})
-        return result
+        return {**result, "turn_settings": self.settings.snapshot()["turn_settings"]}
 
     def reconcile(self):
         """Read native Codex state; this never infers a Houdini mutation outcome."""
@@ -489,11 +568,24 @@ class Bridge:
             if method == "POST" and path == "/attachments":
                 return self.attach(body["path"])
             if method == "GET" and path == "/models":
-                return self.client.request("model/list", {})
+                return self.models.read()
             if method == "GET" and path == "/account":
-                return self.client.request("account/read", {"refreshToken": False})
+                revision = self.account.revision
+                value = self.account.read()
+                if revision != self.account.revision:
+                    with self.lock:
+                        self.scene_trust.reset()
+                        self.models.invalidate()
+                return value
             if method == "POST" and path == "/account/login":
-                return self.client.request("account/login/start", {"type": "chatgpt"})
+                return self.account.start_login()
+            if method == "POST" and path == "/account/login/cancel":
+                return self.account.cancel_login()
+            if method == "POST" and path == "/account/logout":
+                with self.lock:
+                    self.scene_trust.reset()
+                    self.models.invalidate()
+                return self.account.logout()
             if method == "POST" and path == "/requests/respond":
                 return self._respond_request(str(body["request_id"]), body["result"])
         except BridgeError as exc:

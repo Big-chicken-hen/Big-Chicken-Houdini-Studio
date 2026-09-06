@@ -35,14 +35,18 @@ class SessionTrust:
         self.enabled = False
         self.revision = 0
         self.calls = {}
+        self.scene_epoch = self.runtime_id = None
 
     def reset(self):
         self.enabled = False
         self.revision += 1
         self.calls = {}
+        self.scene_epoch = self.runtime_id = None
 
-    def change(self, enabled):
+    def change(self, enabled, scene_epoch=None, runtime_id=None):
         self.enabled = enabled
+        self.scene_epoch = scene_epoch if enabled else None
+        self.runtime_id = runtime_id if enabled else None
         self.revision += 1
 
     def observe(self, method, params, turn_id):

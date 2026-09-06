@@ -151,7 +151,8 @@ class BridgeTests(unittest.TestCase):
             config = self.bridge.thread_config()["config"]
         self.assertEqual(config["project_doc_max_bytes"], 0)
         self.assertTrue(config["mcp_servers"]["big_chicken"]["command"].endswith("python.exe"))
-        self.assertIn("HIA_RENDER_OUTPUT_DIR", config["mcp_servers"]["big_chicken"]["env_vars"])
+        self.assertIn("BCS_DATA_ROOT", config["mcp_servers"]["big_chicken"]["env_vars"])
+        self.assertIn("BCS_CACHE_ROOT", config["mcp_servers"]["big_chicken"]["env_vars"])
 
     def test_native_unmaterialized_history_keeps_metadata_and_context_settings(self):
         def read(method, params):
