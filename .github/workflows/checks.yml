@@ -75,9 +75,9 @@ jobs:
       - name: Render native UI review fixtures
         run: .runtime/venv/Scripts/python.exe scripts/preview_ui.py
       - name: Render launcher states
-        run: .runtime/venv/Scripts/python.exe scripts/preview_launcher.py --out .runtime/previews/launcher
+        run: .runtime/venv/Scripts/python.exe scripts/preview_launcher.py --out .runtime/previews/launcher/dpi-100
       - name: Render launcher at high DPI
-        run: .runtime/venv/Scripts/python.exe scripts/preview_launcher.py --case high-dpi --scale 2 --out .runtime/previews/launcher
+        run: .runtime/venv/Scripts/python.exe scripts/preview_launcher.py --case high-dpi --scale 2 --out .runtime/previews/launcher/dpi-200
       - name: Upload UI evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -88,6 +88,8 @@ jobs:
             .runtime/review/environment.json
             .runtime/previews/*.png
             .runtime/previews/preview-report.json
-            .runtime/previews/launcher/*.png
-            .runtime/previews/launcher/report-*.json
+            .runtime/previews/launcher/**/*.png
+            .runtime/previews/launcher/**/report.json
+            .runtime/previews/panel-productization/*.png
+            .runtime/previews/panel-productization/report-scale-*.json
           if-no-files-found: error

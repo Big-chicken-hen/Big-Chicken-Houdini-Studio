@@ -125,6 +125,12 @@ One integrated Ruff check passed. Launcher previews at 100%, 125%, 150% and 200%
 and Panel working-state previews at widths 360, 440 and 720 were generated from
 isolated fixtures and reviewed. Local logs and previews remain under `.runtime`.
 
+The [initial UI candidate CI](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio/actions/runs/34018288515)
+passed all four backend jobs and all 57 Qt tests. Its high-DPI preview step failed
+because two scales shared an output filename. The workflow now gives each scale
+its own directory and includes the nested Launcher and Panel reports in uploaded
+evidence. This was an evidence-output collision, not a successful overall CI run.
+
 A separate clean-profile probe of the real Codex 0.153.4 executable completed
 `initialize` and `account/read`, reported signed out and closed its owned client.
 It did not sign in, call a model or start Houdini. Official browser sign-in,
