@@ -11,7 +11,7 @@ import zlib
 from studio.artifacts import ArtifactStore, capture_resolution, png_dimensions
 from studio.common import StudioError
 from studio.mcp import Adapter
-from studio.scene import HoudiniScene
+from studio.scene import HoudiniScene, validate_arguments
 
 
 def png_bytes(width=64, height=64, rgb=(72, 104, 136)):
@@ -39,6 +39,88 @@ class Settings:
         return lambda value: self.values.__setitem__(name, value)
 
 
+class ViewSettings:
+    def __init__(self):
+        self.guides = dict.fromkeys(("XYPlane", "XZPlane", "YZPlane", "OriginGnomon", "FloatingGnomon",
+                                    "CurrentGeometry", "DisplayNodes", "TemplateGeometry"), True)
+        self.ortho = True
+        self.writes = []
+        self.fail_restore = False
+
+    def colorScheme(self): return "Light"
+    def displayBackgroundImage(self): return True
+    def displayEnvironmentBackgroundImage(self): return True
+    def guideEnabled(self, guide): return self.guides[guide]
+    def displayOrthoGrid(self): return self.ortho
+
+    def setDisplayOrthoGrid(self, enabled):
+        self.writes.append(("ortho_grid", enabled))
+        self.ortho = enabled
+
+    def enableGuide(self, guide, enabled):
+        self.writes.append((guide, enabled))
+        if self.fail_restore and guide == "XZPlane" and enabled:
+            raise RuntimeError("guide restore failure")
+        self.guides[guide] = enabled
+
+
+class ViewCamera:
+    def __init__(self, position=4.0, width=6.0):
+        self.position, self.width = position, width
+
+    def stash(self): return ViewCamera(self.position, self.width)
+    def orthoWidth(self): return self.width
+
+
+class Viewport:
+    def __init__(self):
+        self.options = ViewSettings()
+        self.view = ViewCamera()
+        self.camera_node = None
+        self.locked = False
+        self.extra = False
+        self.node_writes = 0
+        self.fail_default_restore = False
+        self.fail_unlock = False
+        self.framed = []
+
+    def size(self): return (0, 0, 320, 180)
+    def name(self): return "persp1"
+    def type(self): return "Perspective"
+    def settings(self): return self.options
+    def camera(self): return self.camera_node
+    def cameraPath(self): return self.camera_node.path() if self.camera_node else ""
+    def isViewingThroughExtraCamera(self): return self.extra
+    def isCameraLockedToView(self): return self.locked
+    def defaultCamera(self): return self.camera_node.view if self.camera_node else self.view
+    def draw(self): pass
+
+    def lockCameraToView(self, value):
+        if not value and self.fail_unlock:
+            return
+        self.locked = value
+
+    def useDefaultCamera(self): self.camera_node = None
+    def setCamera(self, camera): self.camera_node = camera
+
+    def setDefaultCamera(self, saved):
+        if self.camera_node and self.locked:
+            self.node_writes += 1
+        if self.fail_default_restore:
+            raise RuntimeError("view restore failure")
+        self.view = saved.stash()
+
+    def viewTransform(self):
+        return SimpleNamespace(asTuple=lambda: (self.defaultCamera().position,) + (0.0,) * 15)
+
+    def frameBoundingBox(self, bounds):
+        self.framed.append(bounds)
+        if self.camera_node and self.locked:
+            self.node_writes += 1
+        self.defaultCamera().position = 42.0
+        self.defaultCamera().width = 100.0
+
+
 class FakeHou:
     def __init__(self):
         self.current_frame, self.original_frame = 7.0, 7.0
@@ -50,9 +132,14 @@ class FakeHou:
         self.original = Settings({"initializeSimulations": True, "useMotionBlur": True,
                                   "scopeChannelKeyframesOnly": True, "renderAllViewports": True,
                                   "gamma": 1.8, "lut": "existing-display-transform", "leaveFrameAtEnd": False})
-        self.viewport = SimpleNamespace(size=lambda: (0, 0, 320, 180))
+        self.viewport = Viewport()
+        self.viewportGuide = SimpleNamespace(**{key: key for key in self.viewport.options.guides})
+        self.BoundingBox = lambda *bounds: tuple(bounds)
+        self.plane_visible = True
+        self.plane = SimpleNamespace(isVisible=lambda: self.plane_visible,
+                                     setIsVisible=lambda value: setattr(self, "plane_visible", value))
         self.viewer = SimpleNamespace(curViewport=lambda: self.viewport, flipbookSettings=lambda: self.original,
-                                      flipbook=self.flipbook)
+                                      flipbook=self.flipbook, constructionPlane=lambda: self.plane)
         self.ui = SimpleNamespace(paneTabOfType=lambda kind: self.viewer)
         self.paneTabType = SimpleNamespace(SceneViewer="SceneViewer")
         self.hipFile = SimpleNamespace(path=lambda: "untitled.hip", hasUnsavedChanges=lambda: False,
@@ -75,6 +162,9 @@ class FakeHou:
     def flipbook(self, viewport, settings, open_dialog):
         assert viewport is self.viewport and open_dialog is False
         self.used.append(settings.values)
+        self.captured_view = {"guides": dict(self.viewport.options.guides), "ortho": self.viewport.options.ortho,
+                              "plane": self.plane_visible, "position": self.viewport.defaultCamera().position,
+                              "camera": self.viewport.cameraPath()}
         if self.capture_error:
             raise RuntimeError("original capture failure")
         width, height = self.output_size or settings.values["resolution"]
@@ -101,6 +191,151 @@ class CaptureTests(unittest.TestCase):
 
     def capture(self, **arguments):
         return self.scene.capture({"frame": 2.5, **arguments})
+
+    def test_diagnostic_default_preserves_view_and_review_restores_only_known_decorations(self):
+        diagnostic = self.capture()
+        self.assertEqual(diagnostic.detail["purpose"], "diagnostic")
+        self.assertEqual(self.hou.viewport.options.writes, [])
+        self.assertTrue(self.hou.captured_view["plane"])
+        before = dict(self.hou.viewport.options.guides)
+        review = self.capture(purpose="review", bounds=[-1, 0, -1, 1, 2, 1])
+        self.assertEqual(review.state, "finished")
+        self.assertEqual(self.hou.captured_view["position"], 42)
+        self.assertFalse(self.hou.captured_view["plane"])
+        self.assertFalse(self.hou.captured_view["ortho"])
+        for name in ("XYPlane", "XZPlane", "YZPlane", "OriginGnomon", "FloatingGnomon"):
+            self.assertFalse(self.hou.captured_view["guides"][name])
+        for name in ("CurrentGeometry", "DisplayNodes", "TemplateGeometry"):
+            self.assertTrue(self.hou.captured_view["guides"][name])
+        self.assertEqual(self.hou.viewport.options.guides, before)
+        self.assertTrue(self.hou.plane_visible)
+        self.assertEqual(self.hou.viewport.view.position, 4)
+        self.assertEqual(self.hou.viewport.view.width, 6)
+        self.assertTrue(review.detail["view"]["restored"]["transform_matches"])
+        self.assertTrue(review.detail["view"]["restored"]["ortho_width_matches"])
+        self.assertTrue(all(r["restored"] == r["before"] for r in review.detail["display_adjustments"]))
+        self.assertEqual(review.detail["background"], {"color_scheme": "Light", "images_enabled": True,
+                         "environment_enabled": True, "horizon": "unclassified", "policy": "preserved"})
+
+    def test_locked_camera_is_detached_and_rebound_without_camera_parameter_writes(self):
+        vp = self.hou.viewport
+        original = SimpleNamespace(path=lambda: "/obj/user_camera", view=ViewCamera(12, 8))
+        vp.camera_node, vp.locked = original, True
+        result = self.capture(purpose="review", bounds=[-1, 0, -1, 1, 2, 1])
+        self.assertEqual(result.state, "finished")
+        self.assertEqual(self.hou.captured_view["camera"], "")
+        self.assertIs(vp.camera_node, original)
+        self.assertEqual((vp.node_writes, original.view.position, original.view.width), (0, 12, 8))
+        self.assertEqual((vp.view.position, vp.view.width), (4, 6))
+        self.assertTrue(vp.locked)
+
+        vp.fail_unlock = True
+        vp.framed.clear()
+        result = self.capture(purpose="review", bounds=[-1, 0, -1, 1, 2, 1])
+        self.assertEqual(result.error["code"], "REVIEW_CAMERA_LOCKED")
+        self.assertEqual(vp.framed, [])
+        self.assertEqual(vp.node_writes, 0)
+        self.assertTrue(all(vp.options.guides.values()))
+
+    def test_review_restores_originally_disabled_guide_if_capture_changes_it(self):
+        self.hou.viewport.options.guides["XYPlane"] = False
+        original_flipbook = self.hou.viewer.flipbook
+        def drift(*args, **kwargs):
+            original_flipbook(*args, **kwargs)
+            self.hou.viewport.options.guides["XYPlane"] = True
+        self.hou.viewer.flipbook = drift
+        outcome = self.capture(purpose="review")
+        self.assertEqual(outcome.state, "finished")
+        self.assertFalse(self.hou.viewport.options.guides["XYPlane"])
+        self.assertEqual(outcome.detail["display_adjustments"][0],
+                         {"setting": "XYPlane", "before": False, "during": False, "restored": False})
+
+    def test_review_capture_and_each_restore_failure_keep_independent_evidence(self):
+        self.hou.capture_error = True
+        self.hou.viewport.fail_default_restore = True
+        self.hou.viewport.options.fail_restore = True
+        result = self.capture(purpose="review", bounds=[-1, 0, -1, 1, 2, 1])
+        self.assertEqual(result.state, "failed")
+        self.assertEqual(result.mutation_outcome, "unknown")
+        self.assertIn("original capture failure", result.detail["capture_error"]["message"])
+        phases = [e["phase"] for e in result.detail["restore_errors"]]
+        self.assertIn("default_view", phases)
+        self.assertIn("verify_view", phases)
+        self.assertIn("XZPlane", phases)
+        self.assertTrue(self.hou.viewport.options.guides["XYPlane"])
+        self.assertTrue(self.hou.plane_visible)
+        self.assertEqual(result.detail["restored_frame"], 7)
+
+        self.hou.capture_error = False
+        self.hou.viewport.options.guides["XZPlane"] = True
+        result = self.capture(purpose="review")
+        self.assertEqual(result.state, "failed")
+        self.assertIsNone(result.detail["capture_error"])
+        self.assertIn("artifact_id", result.detail)
+        self.assertEqual(png_dimensions(self.scene.artifact(result.detail["artifact_id"])), (320, 180))
+
+    def test_review_bounds_are_validated_before_view_changes(self):
+        for arguments in ({"bounds": [-1, 0, -1, 1, 2, 1]},
+                          {"purpose": "review", "bounds": [1, 0, 0, -1, 1, 1]},
+                          {"purpose": "review", "bounds": [0] * 6},
+                          {"purpose": "review", "bounds": [False, 0, 0, 1, 1, 1]},
+                          {"purpose": "review", "bounds": [0, 0, 0, float("inf"), 1, 1]},
+                          {"purpose": "review", "bounds": [0, 1]}, {"purpose": []}):
+            with self.subTest(arguments=arguments), self.assertRaises(StudioError):
+                validate_arguments("capture", arguments)
+        self.hou.viewport.extra = True
+        outcome = self.capture(purpose="review", bounds=[-1, 0, -1, 1, 2, 1])
+        self.assertEqual(outcome.error["code"], "REVIEW_FRAMING_UNSUPPORTED")
+        self.assertEqual(self.hou.viewport.options.writes, [])
+        self.assertEqual(self.hou.used, [])
+
+    def test_optional_arguments_cross_schema_adapter_router_runtime_and_scene(self):
+        from studio.ledger import Ledger
+        from studio.runtime import OperationRuntime
+        from studio.runtime_server import runtime_router
+        from urllib.parse import parse_qs, urlsplit
+
+        class InstalledCamera:
+            def setRotation(self, mat): pass
+            setRotation.__annotations__ = {"mat": "Matrix3", "return": "void"}
+
+        self.hou.GeometryViewportCamera = InstalledCamera
+        dispatched, submitted = [], []
+        def dispatch(callback):
+            dispatched.append(True)
+            return callback()
+        runtime = OperationRuntime(Ledger(self.root / "route.sqlite"), self.scene, dispatch,
+                                   workspace_id="workspace", session_id="session")
+        self.addCleanup(runtime.close)
+        route = runtime_router(runtime)
+        def call(method, path, payload=None):
+            parts = urlsplit(path)
+            if method == "POST" and path == "/operations": submitted.append(payload)
+            return route(method, parts.path, parse_qs(parts.query), payload or {})
+        adapter = Adapter(SimpleNamespace(call=call), None,
+                          {"workspace_id": "workspace", "runtime_id": runtime.runtime_id}, "owner")
+        adapter.scene_epoch = self.scene.epoch  # Represents an existing explicit observation.
+        lookup = adapter.call("hia_lookup", {"source": "hom", "symbol": "hou.GeometryViewportCamera",
+                              "members": True, "query": "Rotation", "offset": 0, "limit": 1})
+        info = json.loads(lookup["content"][0]["text"])
+        self.assertIn("Matrix3", info["members"][0]["signature"])
+        self.assertEqual(dispatched, [])  # Static metadata never invokes a HOM callback.
+        arguments = {"purpose": "review", "bounds": [-1, 0, -1, 1, 2, 1],
+                     "frame": 2.5, "resolution": [128, 96]}
+        reply = adapter.call("hia_capture", arguments)
+        receipt = json.loads(reply["content"][0]["text"])
+        self.assertFalse(reply["isError"])
+        self.assertEqual(submitted[0]["arguments"], arguments)
+        self.assertEqual(receipt["result"]["view"]["bounds"], arguments["bounds"])
+        self.assertEqual(receipt["result"]["actual_resolution"], [128, 96])
+        self.assertEqual(receipt["scene_epoch"], self.scene.epoch)
+        self.assertEqual(reply["content"][1]["type"], "image")
+        self.assertEqual(len(dispatched), 1)
+        self.assertEqual(runtime.get(receipt["operation_id"]), receipt)
+        adapter.scene_epoch = "stale-observation"
+        rejected = adapter.call("hia_capture", arguments)
+        self.assertTrue(rejected["isError"])
+        self.assertEqual(len(self.hou.used), 1)
 
     def test_stashed_settings_actual_png_dimensions_and_fractional_frame(self):
         original = dict(self.hou.original.values)
