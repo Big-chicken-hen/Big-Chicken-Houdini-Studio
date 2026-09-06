@@ -65,15 +65,20 @@ def start():
         raise
     scene = ledger = runtime = server = None
     try:
-        scene = HoudiniScene(hou, paths.workspace(workspace_id) / "artifacts", secrets=(token,))
+        scene = HoudiniScene(hou, paths.workspace(workspace_id) / "artifacts", secrets=(token,),
+                             paths=paths, workspace_id=workspace_id, session_id=session_id)
         ledger = Ledger(paths.workspace(workspace_id) / "operations.sqlite", redact=scene.redact)
         runtime = OperationRuntime(ledger, scene, hdefereval.executeInMainThreadWithResult,
                                    workspace_id=workspace_id, session_id=session_id, ownership=ownership)
         server = serve(runtime_router(runtime), token)
-        atomic_json(paths.session(session_id) / "runtime.json", {
+        descriptor = {
             "url": "http://127.0.0.1:" + str(server.server_port),
             "runtime_id": runtime.runtime_id, "workspace_id": workspace_id,
-            "launcher_session_id": session_id, "houdini_pid": os.getpid()})
+            "launcher_session_id": session_id, "houdini_pid": os.getpid()}
+        def publish_file_state(snapshot):
+            atomic_json(paths.session(session_id) / "runtime.json", {**descriptor, "scene": snapshot})
+        scene.file_publisher = publish_file_state
+        publish_file_state(scene.cached())
     except BaseException:
         try:
             atomic_json(paths.session(session_id) / "runtime-error.json", {
