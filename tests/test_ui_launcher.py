@@ -12,6 +12,62 @@ from PySide6 import QtCore, QtWidgets  # noqa: E402
 from scripts.preview_launcher import PreviewWorkspaces, configure_fonts, process_until  # noqa: E402
 from studio.common import AppPaths  # noqa: E402
 from studio.ui.launcher import StudioLauncher  # noqa: E402
+from studio.common import StudioError  # noqa: E402
+from studio.ui.shared import ApiFailure, ErrorDetails, Task  # noqa: E402
+from studio.ui.theme import apply_theme  # noqa: E402
+
+
+class ThemeTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        configure_fonts(cls.app)
+
+    def test_theme_is_local_and_error_details_preserve_the_original_failure(self):
+        app_font, app_style = self.app.font().toString(), self.app.styleSheet()
+        unrelated = QtWidgets.QLabel("Host label")
+        old_font = unrelated.font().toString()
+        root = QtWidgets.QWidget()
+        root.setObjectName("studioLauncher")
+        layout = QtWidgets.QVBoxLayout(root)
+        error = ErrorDetails()
+        layout.addWidget(error)
+        apply_theme(root)
+        root.show()
+        failure = ApiFailure("<not markup> Cannot confirm launch\nPrivate detail", code="LAUNCH_UNKNOWN",
+                             status=503, submission_state="unknown")
+        error.set_failure(failure, {"request_id": "fixture-request"})
+        self.app.processEvents()
+        self.assertIs(error.failure, failure)
+        self.assertEqual(error.summary.textFormat(), QtCore.Qt.PlainText)
+        self.assertEqual(error.summary.text(), "<not markup> Cannot confirm launch")
+        self.assertTrue(error.body.isHidden())
+        error.toggle.click()
+        self.assertFalse(error.body.isHidden())
+        self.assertIn('"submission_state": "unknown"', error.details.toPlainText())
+        self.assertIn("fixture-request", error.details.toPlainText())
+        error.set_failure(None)
+        self.assertTrue(error.isHidden())
+        self.assertIsNone(error.failure)
+        self.assertEqual((self.app.font().toString(), self.app.styleSheet()), (app_font, app_style))
+        self.assertEqual(unrelated.font().toString(), old_font)
+        root.close()
+        root.deleteLater()
+        unrelated.deleteLater()
+
+    def test_worker_error_keeps_submission_classification(self):
+        def fail():
+            raise StudioError("LAUNCH_UNKNOWN", "Launch result unknown", 503,
+                              submission_state="unknown", request_id="fixture-request")
+        values = []
+        task = Task(fail)
+        task.signals.error.connect(values.append)
+        task.run()
+        self.assertEqual(len(values), 1)
+        self.assertIsInstance(values[0], ApiFailure)
+        self.assertEqual((values[0].code, values[0].status, values[0].submission_state),
+                         ("LAUNCH_UNKNOWN", 503, "unknown"))
+        self.assertEqual(values[0].details["request_id"], "fixture-request")
 
 
 class LauncherTests(unittest.TestCase):
