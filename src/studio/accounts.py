@@ -69,10 +69,12 @@ class NativeAccount:
             self.invalidate("暂时无法确认账号，请重新检查。")
             raise
         if not isinstance(result, dict) or "account" not in result:
+            self.invalidate("原生账号响应不完整，请重新检查。")
             raise StudioError("ACCOUNT_RESPONSE_INVALID", "原生账号响应不完整，请重新检查。", 502)
         account = result["account"]
         if account is not None:
             if not isinstance(account, dict) or not isinstance(account.get("type"), str):
+                self.invalidate("原生账号类型尚未确认，请重新检查。")
                 raise StudioError("ACCOUNT_RESPONSE_INVALID", "原生账号类型尚未确认。", 502)
             # Keep identity labels only; credentials never belong to this projection.
             account = {key: account[key] for key in ("type", "email", "planType")

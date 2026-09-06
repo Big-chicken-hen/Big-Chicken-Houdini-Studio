@@ -137,6 +137,14 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(value.login_start()["auth_url"], AUTH_URL)
         client = self.clients[-1]
         self.assertEqual(client.login_number, 1)
+        client.fail = "account/read"
+        interrupted = value.account_read()["account"]
+        self.assertEqual(interrupted["status"], "unknown")
+        self.assertTrue(interrupted["login_pending"])
+        self.assertFalse(interrupted["action_unknown"])
+        self.assertEqual(value.reopen_login(), AUTH_URL)
+        client.fail = None
+        value.account_read()
         client.notify("account/login/completed", loginId="old", success=True)
         self.assertEqual(value.snapshot()["account"]["status"], "waiting")
         client.notify("account/login/completed", loginId="1", success=True)
@@ -165,6 +173,9 @@ class OnboardingTests(unittest.TestCase):
         client.fail = "account/read"
         self.assertEqual(value.account_read()["account"]["status"], "unknown")
         client.fail = None
+        self.assertEqual(value.account_read()["account"]["status"], "signed_in")
+        client.identity["account"] = []
+        self.assertEqual(value.account_read()["account"]["status"], "unknown")
         client.identity["account"] = {"type": "apiKey"}
         self.assertEqual(value.account_read()["account"]["status"], "other")
         with self.assertRaises(StudioError):

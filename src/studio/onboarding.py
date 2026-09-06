@@ -82,7 +82,8 @@ class Onboarding:
                 account = {"status": native["status"], "message": native["message"],
                            "type": identity.get("type"), "email": identity.get("email"),
                            "plan_type": identity.get("planType"),
-                           "account_revision": native["account_revision"]}
+                           "account_revision": native["account_revision"],
+                           "login_pending": native["login_pending"], "action_unknown": native["action_unknown"]}
             return copy.deepcopy({"revision": self.revision, "codex": self.codex,
                                   "houdini": self.houdini, "account": account, "error": self.error})
 

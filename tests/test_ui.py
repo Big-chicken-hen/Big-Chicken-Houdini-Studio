@@ -242,7 +242,8 @@ class PanelTest(unittest.TestCase):
                 time.sleep(0.12)
                 rejected = self.path == "/reject"
                 data = json.dumps({"error": {"code": "INVALID_INPUT", "message": "Correct the input",
-                                             "submission_state": "not_submitted"}} if rejected else
+                                             "submission_state": "not_submitted",
+                                             "details": {"attachment_id": "missing-image"}}} if rejected else
                                   receipts.get(self.path, {"ready": True})).encode()
                 self.send_response(400 if rejected else 200)
                 self.send_header("Content-Type", "application/json")
@@ -274,6 +275,7 @@ class PanelTest(unittest.TestCase):
             process_until(lambda: bool(failures))
             self.assertEqual(str(failures[0]), "Correct the input")
             self.assertEqual(failures[0].submission_state, "not_submitted")
+            self.assertEqual(failures[0].details["details"], {"attachment_id": "missing-image"})
             for path, receipt in receipts.items():
                 returned, errors = [], []
                 api.call("GET", path, done=returned.append, failed=errors.append)

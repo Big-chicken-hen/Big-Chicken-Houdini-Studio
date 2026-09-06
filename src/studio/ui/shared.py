@@ -165,7 +165,8 @@ class Api(QtCore.QObject):
                     if failed:
                         failed(ApiFailure(message, code=error.get("code") if isinstance(error, dict) else None,
                                           status=status, submission_state=error.get("submission_state")
-                                          if isinstance(error, dict) else None))
+                                          if isinstance(error, dict) else None,
+                                          details=error if isinstance(error, dict) else value))
                 elif done:
                     done(value)
             except (ValueError, TypeError) as exc:
