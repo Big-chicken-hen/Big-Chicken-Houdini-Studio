@@ -2,15 +2,17 @@
 
 Product: **Big-Chicken Houdini Studio**. New folder and new Git history; original HIA stays intact.
 Source diagnosis: [the user's complete Pro diagnosis](pro-diagnosis.md). Do not lose its execution semantics while redesigning the UI.
-Current delivery scope: [authoring review](authoring-review.md). Preserve the architecture; protect Runtime execution ownership, complete a reusable asset's create/modify/image workflow, bound history resynchronization, and verify the release through a cold launch.
+The [authoring review](authoring-review.md) established the execution and input foundation. The current Pro UI scope is a HIP-oriented Launcher with native ChatGPT onboarding, shared restrained Qt styling, native model/effort settings, draft preservation and the storage/output changes those interactions require. PR #4 closed as the foundation; its pending real authoring acceptance continues in this UI stage.
+
+The user's latest UI constraints are binding: use official assets or Qt standard icons, never self-designed icons; no additional entries or workflows beyond the Pro requirements. In particular, remove the proposed legacy-context browser and profile-switching UI. Existing data remains preserved in place. Do not add rendering capabilities, new MCP tools, animation or simulation work.
 
 ## Required outcomes
 
 1. Runtime alone owns scene identity, a bounded main-thread queue and durable operation receipts. HIP load/clear advances scene_epoch; check it inside the same main-thread callback that executes HOM. Query by operation_id never runs a script. Payload identity guards different scripts sharing one ID. Crashes between side effect and commit remain explicitly unknown.
 2. Ordinary edits take one meaningful batch with optional targeted observations/checks. No default full snapshots, mandatory knowledge search, repeated validations or automatic capture. Keep general HOM and installed metadata; do not invent a node allowlist or Python sandbox.
 3. Optional knowledge cannot block launcher, bridge or memory. FTS is opt-in, memory is workspace-scoped and explicitly written. No embedding installer or importer in the launch path.
-4. Completely new native launcher and Panel. Launcher: workspace entrance, installation selection, optional HIP, owned process lifecycle. Panel: conversation, scene state, operation receipts, images and explicit decisions. Show Codex stop request/terminal separately from running or unknown Houdini work.
-5. Preserve Codex App Server, native Thread/Turn persistence, native MCP images, loopback authentication, project-local data and user work. No auto recovery/reload, no second reasoning service, no legacy B2/FX startup contracts.
+4. Completely new native launcher and Panel. Launcher: Recent HIP, Open HIP, Start Empty, environment/account status, one launch action and secondary settings/diagnostics. Panel: current HIP, conversation, visible native model/effort controls, local per-thread drafts, images, operation receipts and explicit decisions. Show Codex stop request/terminal separately from running or unknown Houdini work.
+5. Preserve Codex App Server, native Thread/Turn persistence, native MCP images, loopback authentication and user work. Separate installation resources, persistent user state and disposable cache, with containment per root and checkout-local development fixtures. No auto recovery/reload, no second reasoning service, no legacy B2/FX startup contracts.
 
 ## Current implementation map
 
@@ -23,16 +25,16 @@ Current delivery scope: [authoring review](authoring-review.md). Preserve the ar
 
 ## Integration/API contract for the Panel
 
-Use authenticated Qt network calls through `ui.shared.Api`. Bridge URL is in `.runtime/sessions/<BCS_SESSION_ID>/bridge.json`; token is only in BCS_SESSION_TOKEN environment. Do not block Qt's main thread.
+Use authenticated Qt network calls through `ui.shared.Api`. Bridge URL is in `sessions/<BCS_SESSION_ID>/bridge.json` beneath the selected persistent data root; token is only in BCS_SESSION_TOKEN environment. Do not block Qt's main thread.
 
-GET `/state`: workspace, thread_id, turn_id, codex {state, alive, stop_requested}, runtime {connection, scene, main_thread_busy, active_operation_id, queue_depth}, pending_requests.
+GET `/state`: workspace, thread_id, turn_id, codex {state, alive, stop_requested}, runtime {connection, scene, main_thread_busy, active_operation_id, queue_depth}, pending_requests, thread_settings, turn_settings, account_revision and scene_context. File state follows confirmed HIP events; Save As preserves execution identity.
 GET `/events?after=N`: native Codex projections, monotonic sequence, cursor, resync_required. No separate durable chat history. GET `/thread` rehydrates native thread history.
 Before a new native thread has a rollout, `/thread` can return `history_available: false` with native metadata. Preserve existing rendered items; this is not evidence of empty history.
-POST `/threads/select` {thread_id?}; GET `/threads`; POST `/turn` {text, attachments: [attachment_id], model?, effort?}; POST `/stop` {}.
+POST `/threads/select` {thread_id?}; GET `/threads`; POST `/turn` {text, attachments: [attachment_id], model?, effort?, expected_thread_id?, settings_revision?}; POST `/stop` {}. The Panel binds submitted settings to the selected native thread revision; requested and natively rerouted current-turn models stay separate from the next-turn choice.
 POST `/reconcile` reads native state without inferring Houdini outcomes. POST `/selection` submits one queued context read, returning nodes and epoch or an operation ID to query. This Panel read does not bind the MCP adapter's observation.
 GET `/operations`; GET `/operations/<id>`; GET `/operations/<id>/detail?offset=N`; POST `/operations/<id>/cancel` {}.
 POST `/attachments` {path}: explicitly selected image copied into workspace, returns attachment_id, name, path.
-GET `/models`; GET `/account`; POST `/account/login` {} returns native ChatGPT login URL.
+GET `/models` aggregates native pagination and preserves native capability metadata; GET `/account`; POST `/account/login` {}, `/account/login/cancel` {}, `/account/logout` {}. Authentication URLs belong only to an explicit browser action, never diagnostics. Launcher onboarding has its own short-lived client using the production executable and native CODEX_HOME; it closes before launching the production supervisor.
 POST `/requests/respond` {request_id, result}: preserve native approval/input response schema. Never automatically approve.
 POST `/memory` {action: list|record|supersede|delete, body?, record_id?}. No auto memory.
 

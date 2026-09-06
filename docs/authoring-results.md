@@ -93,11 +93,45 @@ An honestly reported uninterruptible native call is a known limit; duplicate
 effects, lost receipts, wrong terminal states or camera pollution require fixes.
 
 These checks move with the explicit scope change; neither foundation PR claims
-they have been completed. The next short branch starts from main after PR #4
-closes and concentrates on scene entry, native account/model settings and editor
+they have been completed. PR #4 merged at `557a393`; `codex/ui-productization`
+starts from that main and concentrates on scene entry, native account/model settings and editor
 interaction. MaterialX, Solaris, Karma, animation and simulation are outside this
 UI stage. Runtime ownership, receipts and the bounded main-thread queue remain
 the execution authority throughout.
+
+## UI candidate verification, 2026-09-06
+
+The UI implementation at `55eeddc` replaces the ordinary workspace entrance with
+Recent HIP, Open HIP and Start Empty. Native onboarding checks the pinned Codex
+executable and account before launching Houdini. Installation resources, persistent
+user data and disposable cache are separate; successful HIP saves update file
+associations and subsequent default outputs without moving the active ledger or
+native cwd. Panel model/effort selection follows native settings, and local
+per-conversation documents retain drafts and attachment ownership.
+
+The user's final scope correction removes the proposed legacy-context browser,
+profile-switching launch flow and extra copy-details button. Icons use Qt standard
+resources or text controls; there is no custom brand mark or hand-drawn status
+icon. Unknown-source prompts and automatic restoration of the previous requested
+model were removed; confirmed scene replacement and explicit current user model
+choices retain the Pro brief's behavior. Existing private data was not migrated.
+
+After integration, 31 focused backend checks and 34 native Qt checks passed with
+process exit 0 on Python 3.10.11 / Qt 6.8.3. They cover storage containment,
+HIP association/output policy, account uncertainty, native model settings,
+launch-response loss without a second process, draft/attachment preservation,
+structured HTTP errors, scoped consent, history reuse and QObject teardown.
+One integrated Ruff check passed. Launcher previews at 100%, 125%, 150% and 200%
+and Panel working-state previews at widths 360, 440 and 720 were generated from
+isolated fixtures and reviewed. Local logs and previews remain under `.runtime`.
+
+A separate clean-profile probe of the real Codex 0.153.4 executable completed
+`initialize` and `account/read`, reported signed out and closed its owned client.
+It did not sign in, call a model or start Houdini. Official browser sign-in,
+ordinary end-to-end authoring, actual HIP Save/Save As events, native consent and
+model use, real input/clipboard behavior and cross-monitor DPI remain pending.
+Offscreen fixtures do not satisfy those acceptance conditions; this UI candidate
+is not approved for main on the strength of screenshots or CI alone.
 
 ## Repository cleanup
 
