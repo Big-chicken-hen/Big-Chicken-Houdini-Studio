@@ -12,7 +12,7 @@ class ProtocolPolicy:
     client_requests: frozenset = frozenset({
         "initialize", "thread/start", "thread/resume", "thread/list", "thread/read",
         "turn/start", "turn/interrupt", "model/list", "account/read", "account/login/start",
-        "account/login/cancel", "account/rateLimits/read"})
+        "account/login/cancel", "account/logout", "account/rateLimits/read"})
     client_notifications: frozenset = frozenset({"initialized"})
     server_requests: frozenset = frozenset({
         "item/commandExecution/requestApproval", "item/fileChange/requestApproval",
