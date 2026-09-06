@@ -16,7 +16,7 @@ class Workspaces:
         self.paths = paths
 
     def list(self):
-        base = self.paths.local("workspaces")
+        base = self.paths.data("workspaces")
         if not base.exists():
             return []
         values = []

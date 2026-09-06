@@ -59,7 +59,7 @@ class LauncherTests(unittest.TestCase):
             self.assertIn(self.paths.runtime, Path(env[key]).parents)
         self.assertEqual(os.environ["HIA_OLD_CONFIG"], "obsolete")
         os.environ.pop("HIA_RENDER_OUTPUT_DIR")
-        self.assertEqual(launcher.render_output_directory(self.paths), self.paths.local("cache"))
+        self.assertIsNone(launcher.render_output_directory(self.paths))
 
     def test_pythonw_uses_console_sibling_and_missing_console_is_an_error(self):
         pythonw = self.root / "pythonw.exe"
@@ -99,7 +99,7 @@ class LauncherTests(unittest.TestCase):
         self.assertNotIn(first_token, str(first))
         folder = Path(first["directory"])
         self.assertEqual(read_json(folder / "launch.json")["hip"], str(hip))
-        self.assertEqual(first["render_output_directory"], str(self.paths.local("cache")))
+        self.assertIsNone(first["render_output_directory"])
         for file in folder.iterdir():
             self.assertNotIn(first_token, file.read_text(encoding="utf-8"))
 

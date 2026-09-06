@@ -13,8 +13,9 @@ sys.path.insert(0, str(root / "src"))
 def start():
     from studio.common import AppPaths
     from studio.__main__ import main
-    paths = AppPaths(root)
-    folder = paths.local("logs")
+    paths = AppPaths.for_user(root)
+    os.environ.update({"BCS_DATA_ROOT": str(paths.data_root), "BCS_CACHE_ROOT": str(paths.cache_root)})
+    folder = paths.cache("logs")
     folder.mkdir(parents=True, exist_ok=True)
     with (folder / "launcher.log").open("a", encoding="utf-8") as log:
         sys.stdout = sys.stderr = log

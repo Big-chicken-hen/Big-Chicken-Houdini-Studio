@@ -32,23 +32,25 @@ def console_python(executable=None):
 
 
 def render_output_directory(paths):
+    """Legacy advanced override only; ordinary output is resolved in the scene."""
     value = os.environ.get("HIA_RENDER_OUTPUT_DIR")
-    path = Path(value) if value else paths.local("cache")
+    if not value:
+        return None
+    path = Path(value)
     return (path if path.is_absolute() else paths.root / path).resolve()
 
 
 def storage_environment(paths):
     """Child/process-local storage settings; never edit a user's global configuration."""
-    directories = {"CODEX_HOME": paths.local("codex-home"), "TEMP": paths.local("tmp"),
-                   "TMP": paths.local("tmp"), "TMPDIR": paths.local("tmp"),
-                   "PIP_CACHE_DIR": paths.local("cache", "pip"),
-                   "XDG_CACHE_HOME": paths.local("cache"),
-                   "XDG_CONFIG_HOME": paths.local("config"),
-                   "XDG_DATA_HOME": paths.local("data")}
+    directories = {"CODEX_HOME": paths.codex_home, "TEMP": paths.cache("tmp"),
+                   "TMP": paths.cache("tmp"), "TMPDIR": paths.cache("tmp"),
+                   "PIP_CACHE_DIR": paths.cache("pip"), "XDG_CACHE_HOME": paths.cache_root,
+                   "XDG_CONFIG_HOME": paths.data("config"), "XDG_DATA_HOME": paths.data("data")}
     for path in directories.values():
         path.mkdir(parents=True, exist_ok=True)
     return {**{key: str(value) for key, value in directories.items()},
-            "HIA_PROJECT_ROOT": str(paths.root), "PYTHONPATH": str(paths.root / "src"),
+            "HIA_PROJECT_ROOT": str(paths.root), "BCS_DATA_ROOT": str(paths.data_root),
+            "BCS_CACHE_ROOT": str(paths.cache_root), "PYTHONPATH": str(paths.install("src")),
             "PYTHONDONTWRITEBYTECODE": "1", "PYTHONNOUSERSITE": "1",
             "PIP_CONFIG_FILE": os.devnull, "PIP_DISABLE_PIP_VERSION_CHECK": "1"}
 
@@ -62,7 +64,9 @@ def helper_environment(paths):
                  "PIP_TARGET", "PIP_PREFIX", "PIP_ROOT", "PIP_USER"):
         env.pop(name, None)
     env.update(storage_environment(paths))
-    env["HIA_RENDER_OUTPUT_DIR"] = str(render_output_directory(paths))
+    output_override = render_output_directory(paths)
+    if output_override is not None:
+        env["HIA_RENDER_OUTPUT_DIR"] = str(output_override)
     return env
 
 
@@ -119,15 +123,15 @@ def preflight(houdini, codex, paths=None):
 
 def child_environment(paths, workspace_id, session_id, token):
     folder = paths.session(session_id)
-    for path in (folder, paths.local("tmp"), paths.local("houdini-prefs"), paths.local("cache")):
+    for path in (folder, paths.cache("tmp"), paths.data("houdini-prefs")):
         path.mkdir(parents=True, exist_ok=True)
     env = helper_environment(paths)
     env.update({"HIA_PROJECT_ROOT": str(paths.root), "BCS_WORKSPACE_ID": workspace_id,
                 "BCS_SESSION_ID": session_id, "BCS_SESSION_TOKEN": token, "BCS_AUTOSTART": "1",
                 "PYTHONPATH": str(paths.root / "src"), "HOUDINI_PACKAGE_DIR": str(paths.root / "houdini" / "packages"),
-                "HOUDINI_USER_PREF_DIR": str(paths.local("houdini-prefs", "__HVER__")),
-                "HOUDINI_TEMP_DIR": str(paths.local("tmp")), "TEMP": str(paths.local("tmp")),
-                "TMP": str(paths.local("tmp")), "PYTHONDONTWRITEBYTECODE": "1",
+                "HOUDINI_USER_PREF_DIR": str(paths.data("houdini-prefs", "__HVER__")),
+                "HOUDINI_TEMP_DIR": str(paths.cache("tmp")), "TEMP": str(paths.cache("tmp")),
+                "TMP": str(paths.cache("tmp")), "PYTHONDONTWRITEBYTECODE": "1",
                 "BCS_PYTHON_EXECUTABLE": console_python()})
     return env
 
@@ -141,7 +145,7 @@ def launch(paths, workspace_id, houdini, codex, hip=None):
     folder = paths.session(session_id)
     folder.mkdir(parents=True, exist_ok=False)
     env = child_environment(paths, workspace_id, session_id, token)
-    output = env["HIA_RENDER_OUTPUT_DIR"]
+    output = env.get("HIA_RENDER_OUTPUT_DIR")
     atomic_json(folder / "launch.json", {**checked, "workspace_id": workspace_id,
                 "launcher_session_id": session_id, "hip": str(Path(hip).resolve()) if hip else None,
                 "render_output_directory": output})
@@ -168,7 +172,7 @@ def supervise(paths, session_id):
     bridge = None
     process = None
     token = os.environ.get("BCS_SESSION_TOKEN", "")
-    status = {"supervisor_pid": os.getpid(), "render_output_directory": str(render_output_directory(paths))}
+    status = {"supervisor_pid": os.getpid()}
     try:
         config = read_json(folder / "launch.json")
         if (not token or os.environ.get("BCS_SESSION_ID") != session_id or
