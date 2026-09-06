@@ -1,5 +1,6 @@
 """Focused native Qt projections; no model, account action, or Houdini execution."""
 import copy
+import json
 import os
 import unittest
 from pathlib import Path
@@ -10,7 +11,6 @@ from PySide6 import QtCore, QtGui, QtWidgets  # noqa: E402
 
 from scripts.preview_ui import PreviewApi, configure_preview_fonts, fixture_image, process_until  # noqa: E402
 from studio.ui.conversation import image_sources  # noqa: E402
-from studio.ui.model_settings import ModelSettings  # noqa: E402
 from studio.ui.panel import StudioPanel  # noqa: E402
 
 
@@ -58,6 +58,12 @@ class PanelProductTest(unittest.TestCase):
         process_until(lambda: not self.panel.hydrating)
 
     def test_restore_uses_native_settings_and_catalog_refresh_keeps_user_intent(self):
+        self.api.state["turn_settings"].update(requested_model="second-model", requested_effort="adaptive-max",
+                                                model="rerouted-model", confirmation="rerouted")
+        self.panel.model_controls.reset_connection()
+        self.panel.apply_state(copy.deepcopy(self.api.state))
+        self.assertEqual(self.panel.model_controls.next_model, "preview-model")
+        self.assertEqual(self.panel.model_controls.next_effort, "high")
         self.select_thread("other_thread", "second-model", "adaptive-max")
         self.assertEqual(self.panel.model_controls.request_settings(), {
             "expected_thread_id": "other_thread", "settings_revision": 2,
@@ -174,10 +180,17 @@ class PanelProductTest(unittest.TestCase):
     def test_save_as_keeps_reference_but_new_scene_marks_context_and_selection_stale(self):
         self.panel.input.insertPlainText("keep the local draft")
         self.panel.set_selection({"nodes": ["/obj/asset"], "scene_epoch": "preview_epoch"})
+        self.api.state["scene_context"].update(scene_epoch=None, changed=True)
+        self.panel.apply_state(copy.deepcopy(self.api.state))
+        self.assertTrue(self.panel.scene_context_note.isHidden())
+        diagnostics = json.loads(self.panel.scene_label.toolTip())
+        self.assertIsNone(diagnostics["scene_context"]["scene_epoch"])
+        self.api.state["scene_context"]["scene_epoch"] = "preview_epoch"
         scene = self.api.state["runtime"]["scene"]
         scene.update(display_name="B.hip", hip_path=str(self.root / "B.hip"), saved_hip_path=str(self.root / "B.hip"))
         self.panel.apply_state(copy.deepcopy(self.api.state))
         self.assertIn("B.hip", self.panel.workspace_name.text())
+        self.assertTrue(self.panel.scene_context_note.isHidden())
         self.assertIn("已引用：1 个节点", self.panel.reference_label.text())
         self.assertTrue(self.panel.send_button.isEnabled())
         scene.update(scene_epoch="replacement_epoch", display_name="未保存场景", is_new_file=True, saved_hip_path=None)
@@ -255,20 +268,6 @@ class PanelProductTest(unittest.TestCase):
         account_done({"account_revision": 1000, "status": "signed_out", "account": None})
         self.assertEqual(self.panel.account_revision, 1)
         old.close()
-
-    def test_reopened_panel_restores_requested_choice_without_adopting_reroute(self):
-        controls = ModelSettings()
-        controls.set_account_revision(1)
-        controls.set_thread("preview_thread")
-        controls.apply_native(self.api.state["thread_settings"], last_requested={
-            "thread_id": "preview_thread", "requested_model": "second-model", "requested_effort": "adaptive-max",
-            "model": "rerouted-model", "effort": "unknown", "confirmation": "rerouted"})
-        controls.apply_catalog(self.api.models)
-        self.assertEqual(controls.request_settings(), {"expected_thread_id": "preview_thread", "settings_revision": 1,
-                                                       "model": "second-model", "effort": "adaptive-max"})
-        self.assertIn("上次提交", controls.note.text())
-        controls.deleteLater()
-
 
 if __name__ == "__main__":
     unittest.main()

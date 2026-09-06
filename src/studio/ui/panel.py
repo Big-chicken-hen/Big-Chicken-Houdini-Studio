@@ -287,7 +287,7 @@ class StudioPanel(QtWidgets.QWidget):
         layout.addWidget(self.request_area)
         status_row = QtWidgets.QBoxLayout(QtWidgets.QBoxLayout.LeftToRight)
         self.status_layout = status_row
-        self.work_status = label("连接工作空间后即可发送；现在可以先写草稿。", "workStatus", True)
+        self.work_status = label("连接 Studio 后即可发送；现在可以先写草稿。", "workStatus", True)
         status_row.addWidget(self.work_status, 1)
         self.reconcile_button = button("查询上次提交", self.reconcile, "quiet")
         status_row.addWidget(self.reconcile_button)
@@ -421,7 +421,7 @@ class StudioPanel(QtWidgets.QWidget):
         self.decisions.currentItemChanged.connect(self.decision_selected)
         layout.addWidget(self.decisions, 1)
         self.decision_input = QtWidgets.QPlainTextEdit()
-        self.decision_input.setPlaceholderText("例如：场景以米为单位；最终输出放在工作空间的 renders 目录。")
+        self.decision_input.setPlaceholderText("例如：场景以米为单位。")
         self.decision_input.setMaximumHeight(150)
         self.decision_input.textChanged.connect(self.update_controls)
         layout.addWidget(self.decision_input)
@@ -516,10 +516,10 @@ class StudioPanel(QtWidgets.QWidget):
                     raise ValueError("请从 Studio Launcher 启动 Houdini，再打开此 Panel。")
                 descriptor = read_json(self.paths.session(session_id) / "bridge.json")
                 if descriptor.get("launcher_session_id") != session_id:
-                    raise ValueError("Bridge 会话身份不匹配。请重新打开当前工作空间。")
+                    raise ValueError("Studio 会话身份不匹配，请检查当前连接。")
                 self.api = Api(descriptor["url"], token, self)
             except (OSError, ValueError, KeyError, StudioError) as exc:
-                self.account_label.setText("工作空间尚未连接")
+                self.account_label.setText("Studio 尚未连接")
                 self.show_notice(str(exc))
                 self.update_controls()
                 return
@@ -627,7 +627,8 @@ class StudioPanel(QtWidgets.QWidget):
         self.workspace_name.setToolTip(str(path or "") if runtime.get("connection") == "connected" else "Houdini 连接未确认")
         self.scene_label.setText((Path(path).name + "  ·  帧 " + str(scene.get("frame", "?")) +
                                  ("  ·  有未保存修改" if scene.get("dirty") else "") + "  ·  最近快照") if path else "场景快照尚不可用")
-        self.scene_label.setToolTip(json.dumps(scene, ensure_ascii=False, indent=2))
+        self.scene_label.setToolTip(json.dumps({"scene": scene, "scene_context": value.get("scene_context")},
+                                              ensure_ascii=False, indent=2))
         if not self.switching and value.get("thread_id") != self.thread_id:
             self.thread_id = value.get("thread_id")
             self.activate_draft(self.thread_id)
@@ -638,12 +639,12 @@ class StudioPanel(QtWidgets.QWidget):
                 self.load_threads()
         elif recovered and self.thread_id:
             self.load_history()
-        self.model_controls.apply_native(value.get("thread_settings"), last_requested=value.get("turn_settings"))
+        self.model_controls.apply_native(value.get("thread_settings"))
         context = value.get("scene_context") or {}
-        changed_scene = context.get("thread_id") == self.thread_id and context.get("changed") is True
-        context_text = ("此对话来自之前的场景；请确认旧约定是否适用，或新建对话。" if context.get("scene_epoch") else
-                        "此对话的场景来源尚未确认；请检查旧约定是否适用，或新建对话。")
-        self.scene_context_note.setText(context_text if changed_scene else "")
+        source_epoch, current_epoch = context.get("scene_epoch"), context.get("current_scene_epoch")
+        changed_scene = bool(context.get("thread_id") == self.thread_id and source_epoch and current_epoch
+                             and source_epoch != current_epoch)
+        self.scene_context_note.setText("此对话来自之前的场景；请确认旧约定是否适用，或新建对话。" if changed_scene else "")
         self.scene_context_note.setVisible(changed_scene)
         self.sync_requests(value.get("pending_requests", []))
         self.render_reference()
@@ -778,7 +779,7 @@ class StudioPanel(QtWidgets.QWidget):
         elif any(r.get("state") == "unknown" or r.get("receipt_confirmed") is False
                  or r.get("mutation_outcome") == "unknown" and r.get("state") in {"finished", "failed"}
                  for r in self.receipts.values()):
-            fact = "工作空间仍有结果未确认的 Houdini 操作；请查看执行详情。"
+            fact = "仍有结果未确认的 Houdini 操作；请查看执行详情。"
         elif any(self.receipts.get(key, {}).get("state") in {None, "queued", "running"}
                  for key in self.observed_operations):
             fact = "Houdini 队列已空闲，上次操作的结果仍待确认。"
@@ -1595,7 +1596,7 @@ class StudioPanel(QtWidgets.QWidget):
             if record["id"] == selected_id:
                 self.decisions.setCurrentItem(item)
         if not value.get("records"):
-            item = QtWidgets.QListWidgetItem("这个工作空间还没有保存项目决策。")
+            item = QtWidgets.QListWidgetItem("尚未保存项目约定。")
             item.setFlags(QtCore.Qt.NoItemFlags)
             self.decisions.addItem(item)
         self.decisions.blockSignals(False)

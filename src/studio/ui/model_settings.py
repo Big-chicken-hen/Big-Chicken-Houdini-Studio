@@ -88,11 +88,10 @@ class ModelSettings(QtWidgets.QWidget):
     def reset_connection(self):
         self.settings_revision = None
         self.native_source = "unknown"
-        self.user_override = self.next_model is not None
         self.current.hide()
         self.render()
 
-    def apply_native(self, settings, *, restore=False, last_requested=None):
+    def apply_native(self, settings, *, restore=False):
         if not isinstance(settings, dict) or settings.get("thread_id") != self.thread_id:
             return False
         revision = settings.get("revision")
@@ -100,7 +99,6 @@ class ModelSettings(QtWidgets.QWidget):
             return False
         if revision == self.settings_revision and not restore:
             return True
-        first = self.settings_revision is None
         self.settings_revision = revision
         self.native_source = settings.get("source", "unknown")
         if restore or not self.user_override:
@@ -108,15 +106,6 @@ class ModelSettings(QtWidgets.QWidget):
             self.next_effort = settings.get("effort")
             self.user_override = False
             self._adjustment = ""
-            if (first and not restore and isinstance(last_requested, dict)
-                    and last_requested.get("thread_id") == self.thread_id
-                    and isinstance(last_requested.get("requested_model"), str)
-                    and last_requested["requested_model"]
-                    and (last_requested["requested_model"], last_requested.get("requested_effort")) != (self.next_model, self.next_effort)):
-                self.next_model = last_requested["requested_model"]
-                self.next_effort = last_requested.get("requested_effort")
-                self.user_override = True
-                self._adjustment = "下一轮选择 · 已恢复上次提交的选择"
         self.render()
         return True
 
