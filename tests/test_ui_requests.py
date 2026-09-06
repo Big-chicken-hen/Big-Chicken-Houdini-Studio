@@ -1,7 +1,11 @@
 """Explicit permission choices and late scene-trust responses, using offscreen Qt."""
 import copy
 import os
+from pathlib import Path
+import secrets
+import tempfile
 import unittest
+from unittest.mock import Mock
 
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
@@ -111,6 +115,47 @@ class RequestControlsTest(unittest.TestCase):
         self.assertTrue(self.control.revoke.isEnabled())
         self.control.revoke.click()
         self.assertEqual(self.api.calls[0][2]["enabled"], False)
+
+    def test_control_and_bridge_share_binding_revision_and_revocation_contract(self):
+        from studio.bridge import Bridge
+        from studio.common import AppPaths, StudioError
+        from studio.workspace import Workspaces
+
+        root = Path(__file__).resolve().parents[1] / ".runtime" / "request-ui-tests"
+        root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=root) as directory:
+            path = Path(directory)
+            (path / "pyproject.toml").write_text("# fixture", encoding="utf-8")
+            paths = AppPaths(path)
+            workspace = Workspaces(paths).create("Local approval UI fixture")
+            bridge = Bridge(paths, workspace["workspace_id"], "fixture", secrets.token_hex(24), "codex",
+                            Mock(is_running=True))
+            bridge.thread_id = "thread_a"
+            bridge._runtime = Mock()
+            bridge._runtime.call.return_value = {"alive": True}
+
+            class DirectApi:
+                def call(self, method, route, body=None, done=None, failed=None):
+                    try:
+                        value = bridge.route(method, route, {}, body or {})
+                    except StudioError as exc:
+                        if failed:
+                            failed(str(exc))
+                    else:
+                        if done:
+                            done(value)
+                    return True
+
+            self.control.set_api(DirectApi())
+            self.control.apply_state(bridge.state())
+            self.control.grant.click()
+            self.assertTrue(bridge.scene_trust.enabled)
+            self.assertEqual(self.control.trust["revision"], bridge.scene_trust.revision)
+            bridge._runtime.call.side_effect = StudioError("CONNECTION_LOST", "offline")
+            self.control.apply_state(bridge.state())
+            self.control.revoke.click()
+            self.assertFalse(bridge.scene_trust.enabled)
+            self.assertIn("逐次确认", self.control.status.text())
 
     def test_native_permission_session_choice_is_separate_and_explicit(self):
         permissions = {"fileSystem": {"write": ["C:/explicit-output"]}}

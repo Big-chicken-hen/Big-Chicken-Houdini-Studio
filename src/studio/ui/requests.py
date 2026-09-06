@@ -222,6 +222,14 @@ class SessionTrustControl(QtWidgets.QFrame):
         self.render()
 
     def set_api(self, api):
+        if api is not self.api:
+            # A new authenticated endpoint has its own consent revision space,
+            # even when it resumes a conversation with the same native ID.
+            self.request_revision += 1
+            self.thread_id, self.trust = None, {}
+            self.busy = self.uncertain = self.querying = False
+            self.details.hide()
+            self.feedback.hide()
         self.api = api
         self.render()
 
