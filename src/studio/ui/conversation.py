@@ -213,7 +213,7 @@ class MessageCard(QtWidgets.QFrame):
                 tile.deleteLater()
         self.image_scroll.setVisible(bool(sources))
         if text_changed:
-            QtCore.QTimer.singleShot(0, self.fit_text)
+            QtCore.QTimer.singleShot(0, self, self.fit_text)
         return True
 
     def set_recovering(self, recovering):
@@ -449,7 +449,7 @@ class Transcript(QtWidgets.QScrollArea):
             bar.setValue(bar.maximum() if bottom else anchor.y() + offset if anchor else value)
         # QTextDocument height changes post another Qt LayoutRequest. Preserve
         # the anchor through that pass, while allowing user scrolling to cancel.
-        QtCore.QTimer.singleShot(0, after_layout)
+        QtCore.QTimer.singleShot(0, self, after_layout)
 
     def to_bottom(self):
         self.cancel_scroll_restore()

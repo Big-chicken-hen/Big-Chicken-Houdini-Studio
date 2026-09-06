@@ -14,8 +14,19 @@ from studio.launcher import helper_environment, hidden_flags  # noqa: E402
 
 
 _TEST_RUNNER = """
+import faulthandler
 import sys
 import unittest
+faulthandler.enable(all_threads=True)
+if sys.platform == 'win32':
+    import ctypes
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.GetErrorMode.restype = ctypes.c_uint
+    kernel.SetErrorMode.argtypes = [ctypes.c_uint]
+    kernel.SetErrorMode.restype = ctypes.c_uint
+    # This isolated worker reports native faults through stderr/exit status,
+    # without leaving a Windows error dialog blocking a background check.
+    kernel.SetErrorMode(kernel.GetErrorMode() | 0x0002)  # SEM_NOGPFAULTERRORBOX
 loader = unittest.TestLoader()
 suite = unittest.TestSuite()
 for pattern in sys.argv[1:]:

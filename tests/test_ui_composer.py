@@ -17,6 +17,8 @@ class ComposerTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        if cls.app.platformName() != "offscreen":
+            raise RuntimeError("Clipboard fixtures require an isolated offscreen QApplication")
         configure_preview_fonts(cls.app)
         cls.root = Path(__file__).resolve().parents[1] / ".runtime" / "composer-tests"
         cls.root.mkdir(parents=True, exist_ok=True)
@@ -30,8 +32,13 @@ class ComposerTest(unittest.TestCase):
         process_until(lambda: self.panel.transcript.history_known and self.panel.models_loaded)
 
     def tearDown(self):
+        self.api.close()
         self.panel.close()
+        # The offscreen clipboard owns our QMimeData. Release that test data
+        # while QApplication/Python are alive, not during interpreter shutdown.
+        self.app.clipboard().clear()
         self.panel.deleteLater()
+        self.app.sendPostedEvents(None, QtCore.QEvent.DeferredDelete)
         self.app.processEvents()
 
     def test_native_input_paste_undo_and_local_shortcuts(self):
@@ -103,6 +110,22 @@ class ComposerTest(unittest.TestCase):
         self.panel.send()
         posted = [body for _, path, body in self.api.calls if path == "/turn"][-1]
         self.assertEqual(posted["attachments"], ["preview_attachment.png"])
+        process_until(lambda: not self.panel.submitting)
+
+    def test_queued_layout_callbacks_are_cancelled_when_widgets_are_destroyed(self):
+        from studio.ui.conversation import MessageCard, Transcript
+
+        card = MessageCard({"id": "pending", "type": "agentMessage", "text": "Queued layout"}, self.root)
+        transcript = Transcript(self.root)
+        transcript._scroll_target = (True, None, 0, 0)
+        transcript.restore_scroll()
+        destroyed = []
+        for widget in (card, transcript):
+            widget.destroyed.connect(lambda: destroyed.append(True))
+            widget.deleteLater()
+        self.app.sendPostedEvents(None, QtCore.QEvent.DeferredDelete)
+        self.assertEqual(len(destroyed), 2)
+        self.app.processEvents()
 
     def test_poll_failures_and_running_turn_never_disable_draft(self):
         editor = self.panel.input
