@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
+from studio import launcher as launcher_module
 from studio.common import AppPaths, StudioError, atomic_json, read_json
 from studio.launcher import launch_status, launch_target
 from studio.targets import SceneCatalog, SceneTarget
@@ -103,6 +104,89 @@ class SceneTargetTests(unittest.TestCase):
         self.assertEqual(check.call_count, 1)
         spawn.assert_not_called()
         self.assertEqual(Workspaces(self.paths).list(), [])
+
+    def test_explicit_legacy_context_keeps_original_profile_and_stable_launch_identity(self):
+        legacy = AppPaths.for_legacy(self.root)
+        old = Workspaces(legacy).create("Unrelated name is not a HIP association")
+        legacy.codex_home.mkdir()
+        profile = legacy.codex_home / "fixture-profile-marker"
+        profile.write_text("preserve this original profile", encoding="utf-8")
+        user = AppPaths(self.root, data_root=self.root / "user-state", cache_root=self.root / "user-cache")
+        rows = SceneCatalog(user).legacy_workspaces()
+        self.assertEqual([row["workspace_id"] for row in rows], [old["workspace_id"]])
+        self.assertEqual(rows[0]["work_directory"], str(legacy.workspace(old["workspace_id"]) / "work"))
+        self.assertNotIn("hip_path", rows[0])
+        self.assertFalse(user.data_root.exists())
+        self.assertFalse(SceneCatalog(legacy).path.exists())
+
+        def launch_old(paths, workspace_id, request_id="old-request"):
+            return launch_target(paths, SceneTarget.hip(self.a), self.checked["houdini"], self.checked["codex"],
+                                 request_id=request_id, legacy_workspace_id=workspace_id)
+
+        with patch("studio.launcher.preflight", return_value=self.checked), \
+                patch("studio.launcher.subprocess.Popen", return_value=Mock(pid=11)) as spawn:
+            first = launch_old(legacy, old["workspace_id"])
+            again = launch_old(legacy, old["workspace_id"])
+            self.assertEqual(first["session_id"], again["session_id"])
+            self.assertEqual(first["workspace_id"], old["workspace_id"])
+            self.assertEqual(spawn.call_count, 1)
+            self.assertEqual(Path(spawn.call_args.kwargs["env"]["CODEX_HOME"]), legacy.codex_home)
+            with self.assertRaises(StudioError):
+                launch_old(legacy, "other-workspace")
+            with self.assertRaises(StudioError):
+                launch_target(legacy, SceneTarget.hip(self.a), self.checked["houdini"], self.checked["codex"],
+                              request_id="old-request")
+            wrong_profile = launch_old(user, old["workspace_id"], "wrong-profile")
+            self.assertEqual(wrong_profile["error"]["code"], "LEGACY_PROFILE_REQUIRED")
+            old_empty = launch_target(legacy, SceneTarget.empty(), self.checked["houdini"], self.checked["codex"],
+                                      request_id="old-empty", legacy_workspace_id=old["workspace_id"])
+            self.assertEqual(old_empty["error"]["code"], "LEGACY_HIP_REQUIRED")
+            self.assertEqual(spawn.call_count, 1)
+            normal = launch_target(user, SceneTarget.empty(), self.checked["houdini"], self.checked["codex"],
+                                   request_id="normal-empty")
+        self.assertNotEqual(normal["workspace_id"], old["workspace_id"])
+        self.assertEqual(len(Workspaces(legacy).list()), 1)
+        self.assertEqual(profile.read_text(encoding="utf-8"), "preserve this original profile")
+        self.assertFalse((user.codex_home / profile.name).exists())
+        self.assertFalse(SceneCatalog(legacy).path.exists())  # User selection is not a load/save fact.
+
+    def test_spawn_close_or_return_loss_stays_unknown_and_same_id_never_spawns_again(self):
+        original_spawn, original_open = launcher_module._spawn_session, Path.open
+
+        def lose_return(*args, **kwargs):
+            original_spawn(*args, **kwargs)
+            raise OSError("Fixture lost the reply after Popen returned")
+
+        class CloseFailure:
+            def __init__(self, stream): self.stream = stream
+            def __enter__(self): return self.stream
+            def __exit__(self, *_args):
+                self.stream.close()
+                raise OSError("Fixture could not close the supervisor log")
+
+        def open_with_close_failure(path, *args, **kwargs):
+            stream = original_open(path, *args, **kwargs)
+            return CloseFailure(stream) if path.name == "supervisor.log" else stream
+
+        faults = {"close-loss": patch.object(Path, "open", open_with_close_failure),
+                  "return-loss": patch.object(launcher_module, "_spawn_session", side_effect=lose_return)}
+        for request_id, fault in faults.items():
+            with self.subTest(fault=request_id), fault, \
+                    patch("studio.launcher.preflight", return_value=self.checked), \
+                    patch("studio.launcher.subprocess.Popen", return_value=Mock(pid=11)) as spawn:
+                first = self.launch(SceneTarget.empty(), request_id)
+                again = self.launch(SceneTarget.empty(), request_id)
+                self.assertEqual((first["state"], again["state"]), ("unknown", "unknown"))
+                self.assertTrue(first["process_may_exist"])
+                self.assertTrue(again["process_may_exist"])
+                self.assertEqual(spawn.call_count, 1)
+        self.assertEqual(len(Workspaces(self.paths).list()), 2)
+        with patch("studio.launcher.preflight", return_value=self.checked), \
+                patch("studio.launcher.subprocess.Popen", side_effect=OSError("fixture executable missing")) as spawn:
+            failed = self.launch(SceneTarget.empty(), "spawn-failed")
+            self.launch(SceneTarget.empty(), "spawn-failed")
+        self.assertEqual((failed["state"], failed["process_may_exist"]), ("rejected", False))
+        self.assertEqual(spawn.call_count, 1)
 
     def test_registration_needs_matching_runtime_scene_and_closed_status_wins(self):
         with patch("studio.launcher.preflight", return_value=self.checked), \

@@ -170,5 +170,7 @@ class SceneCatalog:
 
     def legacy_workspaces(self):
         legacy = AppPaths.for_legacy(self.paths.root)
-        return [{**entry, "data_root": str(legacy.data_root), "cache_root": str(legacy.cache_root)}
+        return [{**entry, "data_root": str(legacy.data_root), "cache_root": str(legacy.cache_root),
+                 "work_directory": str(legacy.workspace(entry["workspace_id"]) / "work"),
+                 "codex_home": str(legacy.codex_home)}
                 for entry in Workspaces(legacy).list()]

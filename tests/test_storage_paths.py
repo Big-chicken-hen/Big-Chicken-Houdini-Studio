@@ -1,6 +1,8 @@
 """Storage-role separation without touching real user profiles or native clients."""
 import os
 from pathlib import Path
+import runpy
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -67,6 +69,24 @@ class StoragePathsTests(unittest.TestCase):
         self.assertNotEqual(second.local("venv"), first.local("venv"))
         with patch.dict(os.environ, {"HIA_RENDER_OUTPUT_DIR": ""}):
             self.assertNotIn("HIA_RENDER_OUTPUT_DIR", helper_environment(second))
+
+    def test_windowed_bootstrap_uses_explicit_user_cache_before_opening_ui(self):
+        def launcher_main(args):
+            self.assertEqual(args, ["launcher"])
+            self.assertEqual(Path(os.environ["TEMP"]), self.cache / "tmp")
+            self.assertEqual(Path(os.environ["CODEX_HOME"]), self.data / "codex-home")
+            self.assertEqual(Path(sys.stderr.name), self.cache / "logs/launcher.log")
+            print("Fixture reached the launcher entry")
+            return 0
+
+        script = Path(__file__).resolve().parents[1] / "scripts/launch_window.pyw"
+        with patch.dict(os.environ, {"HIA_PROJECT_ROOT": str(self.install),
+                                     "BCS_DATA_ROOT": str(self.data), "BCS_CACHE_ROOT": str(self.cache)}), \
+                patch.object(sys, "path", list(sys.path)), patch("studio.__main__.main", side_effect=launcher_main):
+            entry = runpy.run_path(str(script), run_name="bootstrap_fixture")
+            self.assertEqual(entry["start"](), 0)
+        self.assertIn("Fixture reached", (self.cache / "logs/launcher.log").read_text(encoding="utf-8"))
+        self.assertEqual([path.name for path in self.install.iterdir()], ["pyproject.toml"])
 
 
 if __name__ == "__main__":
