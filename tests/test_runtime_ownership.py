@@ -161,6 +161,7 @@ class RuntimeOwnershipTests(unittest.TestCase):
                     "workspace_id": self.workspace, "houdini": fixture_python, "codex": "unused-fixture",
                     "hip": str(Path(__file__).resolve())})
                 env = {**os.environ, "HIA_PROJECT_ROOT": str(self.root), "PYTHONPATH": str(APP_ROOT / "src"),
+                       "BCS_DATA_ROOT": str(self.paths.data_root), "BCS_CACHE_ROOT": str(self.paths.cache_root),
                        "PYTHONDONTWRITEBYTECODE": "1", "BCS_SESSION_ID": session_id,
                        "BCS_WORKSPACE_ID": self.workspace, "BCS_SESSION_TOKEN": "fixture-only-no-service",
                        "BCS_OWNERSHIP_CONTROL": str(self.control)}
