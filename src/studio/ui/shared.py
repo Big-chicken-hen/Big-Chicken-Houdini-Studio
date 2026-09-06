@@ -5,6 +5,7 @@ import json
 from PySide6 import QtCore, QtNetwork, QtWidgets
 from shiboken6 import isValid
 
+from .icons import icon_diagnostics, set_button_icon
 from .theme import studio_stylesheet
 
 FONT = "Microsoft YaHei UI"
@@ -67,8 +68,7 @@ class ErrorDetails(QtWidgets.QFrame):
         self.toggle.setCheckable(True)
         self.toggle.setMinimumSize(32, 32)
         self.toggle.setAccessibleName("展开错误详情")
-        self.toggle.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
-        self.toggle.setArrowType(QtCore.Qt.RightArrow)
+        set_button_icon(self.toggle, "chevron-right", text="查看详情", size=16)
         layout.addWidget(self.toggle, 0, QtCore.Qt.AlignLeft)
         self.body = QtWidgets.QWidget()
         body = QtWidgets.QVBoxLayout(self.body)
@@ -105,6 +105,9 @@ class ErrorDetails(QtWidgets.QFrame):
         self.summary.setText(message.splitlines()[0] if message else "需要处理一个问题")
         if details is not None:
             record["details"] = details
+        resources = icon_diagnostics()
+        if resources:
+            record["ui_resources"] = resources
         rendered = message + ("\n\n" + json.dumps(record, ensure_ascii=False, indent=2, default=str) if record else "")
         if self.details.toPlainText() != rendered:
             self.details.setPlainText(rendered)
@@ -113,7 +116,8 @@ class ErrorDetails(QtWidgets.QFrame):
 
     def set_expanded(self, expanded):
         self.body.setVisible(expanded and self.failure is not None)
-        self.toggle.setArrowType(QtCore.Qt.DownArrow if expanded else QtCore.Qt.RightArrow)
+        set_button_icon(self.toggle, "chevron-down" if expanded else "chevron-right",
+                        text="收起详情" if expanded else "查看详情", size=16)
         self.toggle.setAccessibleName("收起错误详情" if expanded else "展开错误详情")
 
 class Api(QtCore.QObject):
@@ -208,21 +212,3 @@ class Task(QtCore.QRunnable):
             if isValid(self.signals):
                 raise
 
-
-class StudioGlyph(QtWidgets.QLabel):
-    """Qt's standard computer icon; not a custom product logo."""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFixedSize(36, 36)
-        self.setAccessibleName("Big-Chicken Studio")
-        self.setAlignment(QtCore.Qt.AlignCenter)
-        self.refresh_icon()
-
-    def refresh_icon(self):
-        icon = self.style().standardIcon(QtWidgets.QStyle.SP_ComputerIcon)
-        self.setPixmap(icon.pixmap(QtCore.QSize(32, 32), self.devicePixelRatioF()))
-
-    def changeEvent(self, event):
-        super().changeEvent(event)
-        if event.type() in {QtCore.QEvent.StyleChange, QtCore.QEvent.DevicePixelRatioChange}:
-            self.refresh_icon()

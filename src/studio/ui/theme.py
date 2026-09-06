@@ -8,7 +8,7 @@ COLORS = MappingProxyType({
     "background": "#17181C", "surface": "#202127", "surface_elevated": "#292B33",
     "surface_hover": "#343641", "surface_pressed": "#1B1C22",
     "text_primary": "#F4F4F6", "text_secondary": "#C3C5CE", "text_muted": "#989CAA",
-    "border_subtle": "#454956", "border_control": "#6E7382",
+    "border_subtle": "#333640", "border_control": "#6E7382",
     "primary_pink": "#EFA2BD", "primary_hover": "#F6B6CC", "primary_pressed": "#D980A4",
     "on_primary": "#27141F", "selected_surface": "#392A34", "focus_ring": "#F7BCD2",
     "disabled_surface": "#292B31", "disabled_text": "#797E89",
@@ -31,44 +31,62 @@ def studio_stylesheet(root_name):
         rules.append(", ".join(scoped) + " { " + declarations + " }")
 
     rule("", f"background: {c['background']}; color: {c['text_primary']};")
-    rule("QWidget", f"font-family: 'Segoe UI', 'Microsoft YaHei UI', sans-serif; font-size: 11pt; color: {c['text_primary']};")
+    rule("QWidget", f"font-size: 11pt; color: {c['text_primary']};")
     rule("QLabel", "background: transparent;")
     rule("QLabel#muted,QLabel#hint,QLabel#eyebrow", f"color: {c['text_muted']};")
-    rule("QLabel#eyebrow", "font-size: 9.5pt;")
+    rule("QLabel#eyebrow,QLabel#hint,QLabel[studioRole='meta']", "font-size: 10pt;")
     rule("QLabel#heading,QLabel#title", "font-size: 19pt; font-weight: 600;")
     rule("QLabel#brand,QLabel#sectionTitle", "font-size: 13pt; font-weight: 600;")
     rule("QLabel[tone='error']", f"color: {c['error']};")
     rule("QLabel[tone='warning'],QLabel[tone='unknown']", f"color: {c['warning']};")
     rule("QLabel[tone='success']", f"color: {c['success']};")
-    rule("QFrame#card,QFrame#surface", f"background: {c['surface']}; border: 1px solid {c['border_subtle']}; border-radius: 8px;")
-    rule("QFrame#composer,QFrame#studioError", f"background: {c['surface_elevated']}; border: 1px solid {c['border_subtle']}; border-radius: 10px;")
-    rule("QPushButton,QToolButton", f"background: {c['surface_elevated']}; border: 2px solid {c['border_subtle']}; border-radius: 6px; padding: 5px 10px; min-height: 16px;")
-    rule("QPushButton:hover,QToolButton:hover", f"background: {c['surface_hover']}; border-color: {c['border_control']};")
+    rule("QFrame#card,QFrame#surface", f"background: {c['surface']}; border: 0; border-radius: 8px;")
+    rule("QFrame#panelHeader,QWidget#header,QFrame#messageCard,QFrame#imageTile,QWidget#imageBody",
+         "background: transparent; border: 0;")
+    rule("QFrame#messageCard[studioRole='user']", f"background: {c['surface']}; border: 0; border-radius: 8px;")
+    rule("QFrame#composer", f"background: {c['surface_elevated']}; border: 1px solid {c['border_subtle']}; border-radius: 10px;")
+    rule("QFrame#studioError,QFrame#requestCard", f"background: {c['surface_elevated']}; border: 1px solid {c['border_control']}; border-radius: 8px;")
+    rule("QPushButton,QToolButton", f"background: {c['surface_elevated']}; border: 0; border-radius: 6px; padding: 6px 10px; min-height: 16px;")
+    rule("QPushButton:hover,QToolButton:hover", f"background: {c['surface_hover']};")
     rule("QPushButton:pressed,QToolButton:pressed", f"background: {c['surface_pressed']};")
-    rule("QPushButton:checked,QToolButton:checked", f"background: {c['selected_surface']}; border-color: {c['primary_pink']};")
-    primary = "QPushButton#primary,QPushButton#stop,QPushButton[studioRole='primary']"
-    rule(primary, f"background: {c['primary_pink']}; color: {c['on_primary']}; border-color: {c['primary_pink']}; font-weight: 600;")
-    rule(",".join(s + ":hover" for s in primary.split(",")), f"background: {c['primary_hover']}; border-color: {c['primary_hover']};")
-    rule(",".join(s + ":pressed" for s in primary.split(",")), f"background: {c['primary_pressed']}; border-color: {c['primary_pressed']};")
-    rule("QPushButton#quiet,QToolButton#quiet,QPushButton[studioRole='quiet']", f"background: transparent; color: {c['text_secondary']}; border-color: transparent;")
-    rule("QPushButton#quiet:hover,QToolButton#quiet:hover,QPushButton[studioRole='quiet']:hover", f"background: {c['surface_hover']};")
-    rule("QPushButton#quiet:pressed,QToolButton#quiet:pressed,QPushButton[studioRole='quiet']:pressed", f"background: {c['surface_pressed']};")
+    rule("QPushButton:checked,QToolButton:checked", f"background: {c['selected_surface']};")
+    primary = "QPushButton#primary,QPushButton[studioRole='primary'],QToolButton[studioRole='primary']"
+    rule(primary, f"background: {c['primary_pink']}; color: {c['on_primary']}; font-weight: 600;")
+    rule(",".join(s + ":hover" for s in primary.split(",")), f"background: {c['primary_hover']};")
+    rule(",".join(s + ":pressed" for s in primary.split(",")), f"background: {c['primary_pressed']};")
+    quiet = "QPushButton#quiet,QToolButton#quiet,QPushButton[studioRole='quiet'],QToolButton[studioRole='quiet'],QPushButton[studioRole='icon'],QToolButton[studioRole='icon']"
+    rule(quiet, f"background: transparent; color: {c['text_secondary']};")
+    rule(",".join(s + ":hover" for s in quiet.split(",")), f"background: {c['surface_hover']};")
+    rule(",".join(s + ":pressed" for s in quiet.split(",")), f"background: {c['surface_pressed']};")
+    rule("QPushButton[studioIconOnly='true'],QToolButton[studioIconOnly='true']", "padding: 0; min-width: 32px; min-height: 32px;")
+    stop = "QPushButton#stop,QPushButton[studioRole='stop'],QToolButton[studioRole='stop']"
+    rule(stop, f"background: {c['text_secondary']}; color: {c['background']};")
+    rule(",".join(s + ":hover" for s in stop.split(",")), f"background: {c['text_primary']};")
     rule("QPushButton[studioRole='danger']", f"color: {c['error']};")
-    rule("QPushButton:focus,QToolButton:focus", f"border-color: {c['focus_ring']};")
-    rule(",".join(s + ":focus" for s in primary.split(",")), f"border-color: {c['focus_ring']};")
-    rule("QPushButton:disabled,QToolButton:disabled", f"background: {c['disabled_surface']}; color: {c['disabled_text']}; border-color: {c['border_subtle']};")
-    rule(",".join(s + ":disabled" for s in primary.split(",")), f"background: {c['disabled_surface']}; color: {c['disabled_text']}; border-color: {c['border_subtle']};")
-    rule("QLineEdit,QComboBox,QTextEdit,QPlainTextEdit", f"background: {c['surface_elevated']}; border: 2px solid {c['border_control']}; border-radius: 6px; padding: 5px 8px; selection-background-color: {c['selected_surface']}; selection-color: {c['text_primary']};")
+    rule("QPushButton:focus,QToolButton:focus", f"border: 1px solid {c['focus_ring']};")
+    rule(",".join(s + ":focus" for s in (primary + "," + quiet + "," + stop).split(",")), f"border: 1px solid {c['focus_ring']};")
+    rule("QPushButton:disabled,QToolButton:disabled", f"background: {c['disabled_surface']}; color: {c['disabled_text']}; border: 0;")
+    rule(",".join(s + ":disabled" for s in (primary + "," + stop + "," + quiet).split(",")), f"background: {c['disabled_surface']}; color: {c['disabled_text']}; border: 0;")
+    rule("QLineEdit,QComboBox,QTextEdit,QPlainTextEdit", f"background: {c['surface_elevated']}; border: 1px solid {c['border_control']}; border-radius: 6px; padding: 5px 8px; selection-background-color: {c['selected_surface']}; selection-color: {c['text_primary']};")
     rule("QLineEdit:focus,QComboBox:focus,QTextEdit:focus,QPlainTextEdit:focus", f"border-color: {c['focus_ring']};")
     rule("QLineEdit:disabled,QComboBox:disabled,QTextEdit:disabled,QPlainTextEdit:disabled", f"color: {c['disabled_text']}; background: {c['disabled_surface']}; border-color: {c['border_subtle']};")
     rule("QComboBox::drop-down", "border: 0; width: 24px;")
     rule("QComboBox QAbstractItemView", f"background: {c['surface_elevated']}; color: {c['text_primary']}; selection-background-color: {c['selected_surface']}; selection-color: {c['text_primary']};")
     rule("QTextBrowser,QScrollArea", "background: transparent; border: 0;")
-    rule("QPlainTextEdit#statusDetails", "background: transparent; border: 0; font-size: 9.5pt;")
-    rule("QListWidget", f"background: {c['surface']}; border: 1px solid {c['border_subtle']}; border-radius: 8px; outline: 0; padding: 4px;")
-    rule("QListWidget::item", "border: 2px solid transparent; border-radius: 6px; padding: 8px; margin: 2px;")
+    rule("QFrame#composer QTextEdit,QFrame#composer QPlainTextEdit", "background: transparent; border: 0; padding: 2px;")
+    rule("QFrame#composer QTextEdit:focus,QFrame#composer QPlainTextEdit:focus", "border: 0;")
+    rule("QPlainTextEdit#statusDetails", "background: transparent; border: 0; font-size: 10pt;")
+    rule("QListWidget", "background: transparent; border: 0; outline: 0; padding: 0;")
+    rule("QListWidget::item", "border: 0; border-radius: 6px; padding: 8px; margin: 2px;")
     rule("QListWidget::item:hover", f"background: {c['surface_hover']};")
-    rule("QListWidget::item:selected", f"background: {c['selected_surface']}; border-color: {c['primary_pink']};")
+    rule("QListWidget::item:selected", f"background: {c['selected_surface']};")
+    rule("QListWidget::item:focus", f"border-bottom: 1px solid {c['focus_ring']};")
+    rule("QListWidget#recentList::item,QListWidget#recentList::item:focus", "padding: 0; margin: 0; border: 0;")
+    rule("QListWidget#recentList::item:selected,QListWidget#recentList::item:hover", "background: transparent;")
+    rule("QWidget[studioRole='recentRow']", "background: transparent; border: 0; border-radius: 6px;")
+    rule("QWidget[studioRole='recentRow']:hover", f"background: {c['surface_hover']};")
+    rule("QWidget[studioRole='recentRow'][selected='true']", f"background: {c['selected_surface']};")
+    rule("QWidget[studioRole='recentRow'][focused='true']", f"border-bottom: 1px solid {c['focus_ring']};")
     rule("QTabWidget::pane", "border: 0;")
     rule("QTabBar::tab", f"background: transparent; color: {c['text_secondary']}; padding: 8px 12px; border-bottom: 2px solid transparent;")
     rule("QTabBar::tab:selected", f"color: {c['text_primary']}; border-bottom-color: {c['primary_pink']};")
@@ -77,9 +95,20 @@ def studio_stylesheet(root_name):
     rule("QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical", "height: 0;")
     rule("QScrollBar::add-page:vertical,QScrollBar::sub-page:vertical", "background: transparent;")
     rule("QCheckBox", f"spacing: 8px; color: {c['text_secondary']};")
+    rules.append(root + f"[studioRole='popup'] {{ background: {c['surface_elevated']}; border: 1px solid {c['border_subtle']}; border-radius: 8px; }}")
+    menu = "QMenu#" + root_name
+    rules.extend([
+        menu + f" {{ background: {c['surface_elevated']}; color: {c['text_primary']}; border: 1px solid {c['border_subtle']}; padding: 4px; }}",
+        menu + "::item { padding: 7px 12px; border-radius: 6px; }",
+        menu + f"::item:selected {{ background: {c['selected_surface']}; }}",
+        menu + f"::item:disabled {{ color: {c['disabled_text']}; }}",
+        menu + f"::separator {{ height: 1px; background: {c['border_subtle']}; margin: 4px 8px; }}",
+    ])
     return "\n".join(rules)
 
 
-def apply_theme(root):
+def apply_theme(root, *, popup=False):
     """Theme one Studio root. Host application font/style/palette remain untouched."""
+    if popup:
+        root.setProperty("studioRole", "popup")
     root.setStyleSheet(studio_stylesheet(root.objectName()))
