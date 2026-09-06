@@ -4,6 +4,8 @@ Product: **Big-Chicken Houdini Studio**. New folder and new Git history; origina
 Source diagnosis: [the user's complete Pro diagnosis](pro-diagnosis.md). Do not lose its execution semantics while redesigning the UI.
 The [authoring review](authoring-review.md) established the execution and input foundation. PR #5 implemented native ChatGPT onboarding, HIP targets, native model/effort settings and the required storage/output boundaries. The [approved presentation specification](ui-presentation-brief.md) now requires a staged Launcher and integrated Panel while freezing those backend contracts. Continue in PR #5; its real official-login and Houdini user-flow acceptance cannot be transferred to a later PR.
 
+The [latest closure decision](pr5-closure-brief.md) freezes further PR #5 features and UI redesign. Finish one compact ordinary-user workflow and fix only defects it exposes. Cross-monitor DPI is recorded separately; lack of a full matrix alone does not block merging. After #5 merges, the sole next direction is maintainable procedural editing in an existing HIP, with bounded improvements to the existing lookup. Do not start that implementation on the UI branch.
+
 The approved Lucide Outline 0.468.0 subset is the only product icon source. Keep its original geometry and license notices; no graphic logo, QStyle product icons, emoji or substitute artwork. Use text for unapproved uses and missing resources. The specification fixes page actions, component layout and visual roles; do not invent alternatives or restore a legacy-context/profile-switching UI. Existing data remains preserved in place. No new rendering capabilities, MCP tools or Houdini animation/simulation features.
 
 ## Required outcomes

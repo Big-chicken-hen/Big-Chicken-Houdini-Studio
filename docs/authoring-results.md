@@ -86,6 +86,9 @@ Those historical input-helper focus failures did not establish a Composer defect
 The UI stage carries real input and draft behavior, native consent grant/revoke, three
 ordinary Panel requests that create and twice modify the same asset, native image
 feedback, and continuation in an existing HIP copy after a manual scene change.
+The [latest closure brief](pr5-closure-brief.md) combines these into one short
+edit/capture/continue/Save As/reopen workflow for #5; no separate complex asset
+project is required to close the UI stage.
 Review capture must preserve the original view, camera binding/lock and frame.
 The actual running-HOM Stop boundary still needs one bounded user check: when the
 request can arrive, whether subsequent work stops, and the final original receipt.
@@ -183,12 +186,83 @@ The presentation correction has no source changes to the existing backend
 onboarding, accounts, storage, native protocol, receipt or Houdini capability
 contracts. The formal installation and private user data were not changed.
 
-PR #5 remains Draft. Actual official browser sign-in, first-use and returning-user
-flows, Microsoft Pinyin and clipboard input in a real Panel, native model/consent
-use, a small scene edit followed by another turn, actual Save/Save As and the
-running-HOM Stop boundary remain pending. Real cross-monitor DPI is also pending.
-These checks are a merge gate of this PR and cannot be transferred to a later PR.
-Neither passing CI nor offscreen screenshots satisfy that gate.
+PR #5 remains Draft. The [latest Pro closure decision](pr5-closure-brief.md)
+freezes features and further UI redesign. Its compact real workflow is the merge
+gate: official browser sign-in with Launcher/production account continuity;
+first-use and returning-user startup; Microsoft Pinyin and text/image clipboard
+input in the real Panel; native model/effort and consent grant, reuse and revoke;
+a small edit, production capture and a second edit of the same asset; real
+Save/Save As into another test directory, Recent reopen and continued editing;
+and one bounded Stop check after execute is actually running.
+
+These items remain unverified for the candidate until user actions and the
+corresponding records are reconciled. Record an image reaching the model and
+Panel separately from the model using that image. Save As must retain the active
+workspace, ledger and native cwd while updating confirmed associations and later
+default outputs; existing output parameters must remain intact. For Stop, record
+reachability, delivery time, subsequent work and the original final receipt.
+An uninterruptible native call with honest final facts can be a known limitation;
+duplicate effects, uncontrolled later writes, wrong terminal state, missing
+receipts or a false claim of scene rollback require fixes.
+
+Real cross-monitor DPI also remains unverified, but a missing full matrix is not
+an unconditional merge prerequisite. Any observed wrong click coordinates,
+off-screen model popup or unreachable Stop control is a correctness blocker.
+Do not relabel untested DPI behavior as passed. Neither passing CI nor offscreen
+screenshots satisfy the real workflow gate, and it cannot move to another PR.
+
+The closure review reconfirmed source candidate `06b2c5c` directly against main
+`557a393`, a clean worktree and all five successful jobs in
+[its CI run](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio/actions/runs/34025648571),
+including 68 native Qt tests. The gate clarification itself changes documentation;
+the bounded user-flow fixes below have their own validation.
+Only confirmed defects from real use may reopen implementation. After the gate
+passes, current candidate CI is valid and no known blocker remains, close #5;
+do not wait for more visual polish or next-stage capabilities.
+
+After #5 merges, create `codex/scene-authoring-quality` from the resulting main.
+Its sole direction is maintainable procedural editing in an existing HIP. The
+approved preparation is small additions to existing node lookup and a short
+new-network versus legacy-maintenance principle. No lookup implementation or
+new capability is included in this closure change. Copy Stamp's reported use is
+an authoring-quality signal. Its underlying selection cause remains unconfirmed;
+user-specific trace notes and native records stay local.
+
+## Bounded user-flow fixes after the closure review
+
+Studio's Windows onboarding and production clients now both start native Codex
+with `--enable respect_system_proxy`. Their isolated CODEX_HOME had left this
+feature at its default disabled value while Windows had a system proxy
+configured. Real workflow logs contained five WebSocket timeouts before HTTP
+fallback. This fixes the confirmed startup-configuration gap without copying
+desktop configuration or credentials, writing global proxy variables, changing
+the system proxy, forcing an HTTP-only provider or increasing retry limits.
+The installed Codex 0.153.4 accepted the feature and initialized once in isolated
+test state; no login, model request, config.toml or auth.json was created there.
+The failing WebSocket's exact route and success in a new ordinary user session
+are not established by this parameter check alone.
+
+An isolated production-entry regression reproduced a Windows MCP encoding defect:
+with a legacy-code-page stdout pipe, a finished context operation could produce
+JSONL that was not valid UTF-8. MCP now fixes its stdout wire encoding and strictly
+decodes incoming UTF-8 after the existing byte limit. The regression checks a
+Chinese request ID and HIP path, equality with the single durable receipt, and
+recovery after rejecting non-UTF-8 input. It uses a fake scene and isolated roots;
+it establishes the protocol defect, not the cause of every real tool timeout.
+
+An existing real Qt HTTP fixture also reproduced cleanup after an owner had been
+destroyed by its success or rejection callback. The HTTP adapter now finishes
+reading and schedules reply deletion before delivering a callback, then never
+accesses that reply afterward. Both callback-destroys-owner cases pass. This
+does not establish a cause or fix for unrelated host event-wrapper symptoms.
+No page structure, icon geometry, native scene queue or operation identity changed.
+
+After integration, 21 operation/MCP checks, 10 native UI checks and 20
+launcher/onboarding checks passed locally with process exit 0. One integrated
+Ruff check passed. Existing fixtures were extended for the reproduced defects;
+no acceptance framework, live Houdini run or model-authenticated test was added.
+The current candidate still requires the compact real workflow above, including
+confirmation of upstream reconnection behavior in a newly started Studio session.
 
 ## Repository cleanup
 
@@ -197,3 +271,9 @@ and smoke implementation remains at tag `archive/product-readiness-draft-2026090
 (`36081143f9fbe6f365fc01dcda57fff981cc3507`). The completed remote PR #1 and PR #2
 branches were removed. Local worktrees and unrelated drafts were preserved;
 public main history was not rewritten.
+
+The latest closure review also checked the remote `codex/authoring-cycle`
+(`9ad3e26`) and `codex/usable-authoring-integration` (`36da952`) tips against main
+`557a393`: both were ancestors with zero unique commits. Those two remote refs
+were removed with their observed tips guarded; local branches, worktrees and
+user data were preserved.

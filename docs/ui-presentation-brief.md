@@ -2,6 +2,8 @@
 
 User-supplied Pro review, 2026-09-06. Review head: 99761e99c94588e4876297992836a78ae8c1596d. The operative specification below is preserved from the review. It supersedes the earlier Dashboard layout and permission to use Qt system icons in product UI. Existing backend contracts remain frozen.
 
+**Current status:** the [later Pro closure approval](pr5-closure-brief.md), reviewed at `06b2c5c`, supersedes this document's construction stages and Merge Gate. UI implementation is frozen; the original text below remains the approved visual specification and a record of the completed construction stage. The current compact gate includes real account continuity, input, model/consent, image-informed editing, Save/Save As/reopen and bounded running-HOM Stop. An untested full cross-monitor DPI matrix alone is not a merge blocker. Only confirmed user-flow defects authorize further PR #5 code changes.
+
 # 第二部分｜我决定的现代产品方向
 
 ## 1. Launcher：分阶段、非向导式的 Scene Launcher

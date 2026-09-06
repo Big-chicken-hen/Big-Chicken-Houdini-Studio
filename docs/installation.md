@@ -31,6 +31,8 @@ setup 在 `.runtime/venv` 建 venv，pip 缓存在 `.runtime/cache/pip`，构建
 
 官方 [Codex CLI 说明](https://learn.chatgpt.com/docs/codex/cli) 提供安装方式；从官方分发渠道取得所需版本。项目使用原生 [Codex App Server](https://learn.chatgpt.com/docs/app-server) 的会话与账户接口；当前官方文档不代替固定版本的实际协议核对。首次使用在 Launcher 点击“使用 ChatGPT 继续”，由官方返回的地址打开系统浏览器；等待期间可取消或重新打开当前登录页，只有原生账号查询确认后才进入首页。网络失败显示尚未确认。setup 与 smoke 不登录、不发模型请求。
 
+Windows 下，Studio 自有的登录和正式会话 Codex 进程都启用原生 `respect_system_proxy`，采用 Windows 已配置的系统代理。此开关仅通过子进程启动参数传入，不复制桌面 Codex 配置或认证，也不写入全局代理环境变量。启动参数的修复在新启动的 Studio 会话中生效。
+
 短生命周期 onboarding 只查询账号及处理官方登录，不创建 Thread、模型任务、MCP 或 Houdini。它在正式启动前关闭，生产进程使用同一个已验证的 Codex 程序和同一个用户持久数据根下 `codex-home`。此目录由 Codex 管理认证与历史；Studio 不复制 token 或编辑凭证。旧安装的 `.runtime/codex-home` 原地保留，不自动迁移；界面不提供旧上下文浏览或 profile 切换流程。
 
 ## 启动与进程

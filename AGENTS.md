@@ -2,6 +2,7 @@
 
 This is a new repository. The old HIA checkout is reference material, never a write target.
 The architectural acceptance briefs are `docs/pro-diagnosis.md` and `docs/stage-readiness-review.md`.
+The latest scope and acceptance decision is `docs/pr5-closure-brief.md`: freeze PR #5 features, finish its compact real user workflow, and only then begin existing-HIP authoring work.
 Read `docs/rebuild-brief.md` before changing a subsystem. Do not replace this effort with a generic agent platform.
 
 - Resolve the installation root from this checkout or HIA_PROJECT_ROOT. Installation resources and dependencies remain under it. Normal user state and disposable cache use separate platform roots, resolved by the launcher and passed explicitly to children. Preserve containment for each root. Development fixtures, previews and logs stay in this checkout's .runtime; tests must never use real user state.
@@ -18,5 +19,7 @@ Read `docs/rebuild-brief.md` before changing a subsystem. Do not replace this ef
 - Panel and launcher must be substantially new interactions and layouts, not a skin over the old UI. Panel projects facts; it does not infer HOM completion from Codex events.
 - Launcher and Panel follow docs/ui-presentation-brief.md and the user's explicit corrections. Product icons use only the approved Lucide Outline 0.468.0 SVG subset at f12b0de177fbc2a6795e99be065887e72b237123, with original geometry and bundled license notices. No custom icons, graphic logo, emoji or QStyle.SP_* product fallback; missing icons fall back to text. Native OS dialogs and title bars keep their system icons. Do not add unapproved controls, a legacy-context browser or profile-switching UI.
 - This PR's presentation correction does not reopen storage, native protocol, permission policy or Houdini capability scope. Page transitions project existing facts and cannot create a probe, login or launch. Keep PR #5 draft until its real official-login and ordinary Houdini Panel acceptance is complete; do not transfer that gate to another PR.
+- PR #5 now accepts only fixes for definite defects exposed by that real workflow and their minimal regressions. An untested cross-monitor DPI matrix alone is not a merge blocker; observed wrong clicks, an off-screen model popup or an inaccessible Stop control are blockers. Do not mark untested behavior passed.
+- Do not use redesign-existing-projects as a default step. For a confirmed local UI blocker, read the latest closure brief and the approved presentation specification first; any Skill advice remains subordinate to them. Keep the page structure, font system, pink direction, approved icons and PySide6 architecture.
 - Do not control Houdini with Computer Use. Native Qt offscreen UI review is allowed for development, and does not constitute a real Houdini GUI test.
 - Use a small meaningful fault-test set, one static check and focused UI checks. Do not repeatedly run full test suites, compute arbitrary hashes or create process-heavy verification scaffolding. Report what is actually verified and what remains unverified.
