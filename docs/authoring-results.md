@@ -277,3 +277,7 @@ The latest closure review also checked the remote `codex/authoring-cycle`
 `557a393`: both were ancestors with zero unique commits. Those two remote refs
 were removed with their observed tips guarded; local branches, worktrees and
 user data were preserved.
+
+## 待审核问题：项目约定
+
+当前项目约定能持久保存并按需查询，但不会自动进入模型指令。用户希望讨论：是否将它作为类似 AGENTS.md 的功能，仅针对当前 Studio 对话生效。本次仅附上这个问题供审核，尚未实现或改变现有行为。
