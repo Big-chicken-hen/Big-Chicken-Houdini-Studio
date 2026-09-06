@@ -30,13 +30,14 @@ def studio_stylesheet(root_name):
         scoped = [root + (" " + selector if selector else "") for selector in selectors.split(",")]
         rules.append(", ".join(scoped) + " { " + declarations + " }")
 
-    rule("", f"background: {c['background']}; color: {c['text_primary']};")
+    rule("", f"background: {c['background']}; color: {c['text_primary']}; font-size: 11pt;")
     rule("QWidget", f"font-size: 11pt; color: {c['text_primary']};")
     rule("QLabel", "background: transparent;")
     rule("QLabel#muted,QLabel#hint,QLabel#eyebrow", f"color: {c['text_muted']};")
     rule("QLabel#eyebrow,QLabel#hint,QLabel[studioRole='meta']", "font-size: 10pt;")
     rule("QLabel#heading,QLabel#title", "font-size: 19pt; font-weight: 600;")
     rule("QLabel#brand,QLabel#sectionTitle", "font-size: 13pt; font-weight: 600;")
+    rule("QLabel#recentName", "font-weight: 600;")
     rule("QLabel[tone='error']", f"color: {c['error']};")
     rule("QLabel[tone='warning'],QLabel[tone='unknown']", f"color: {c['warning']};")
     rule("QLabel[tone='success']", f"color: {c['success']};")

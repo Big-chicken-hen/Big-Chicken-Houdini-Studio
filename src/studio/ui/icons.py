@@ -129,7 +129,7 @@ class _ButtonIcon(QtCore.QObject):
             previous = self._window() if self._window else None
             window = button.window()
             if previous is not window:
-                if previous is not None and isValid(previous):
+                if previous is not None and previous is not button and isValid(previous):
                     previous.removeEventFilter(self)
                 if window is not button:
                     window.installEventFilter(self)

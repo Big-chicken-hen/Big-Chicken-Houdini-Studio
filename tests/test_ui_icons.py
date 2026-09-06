@@ -81,8 +81,13 @@ class IconTests(unittest.TestCase):
         root = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(root)
         button = QtWidgets.QPushButton("发送")
-        layout.addWidget(button)
         icons.set_button_icon(button, "arrow-up", text="发送", icon_only=True)
+        layout.addWidget(button)
+        # Attaching a previously parentless button must keep its own event filter.
+        before_disable = button.icon().cacheKey()
+        button.setEnabled(False)
+        self.assertNotEqual(button.icon().cacheKey(), before_disable)
+        button.setEnabled(True)
         previous = button.icon().cacheKey()
         with patch.object(button, "devicePixelRatioF", return_value=2.0):
             QtWidgets.QApplication.sendEvent(button, QtCore.QEvent(QtCore.QEvent.DevicePixelRatioChange))
