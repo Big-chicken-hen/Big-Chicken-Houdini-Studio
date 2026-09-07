@@ -1,10 +1,28 @@
 # PR #5 closure and existing-HIP authoring direction
 
-Latest user-supplied Pro approval, 2026-09-06, reviewed head
-`06b2c5c9620e13d87c8c13e0683b1eab7f239d88`.
-This approval freezes PR #5 features and supersedes the earlier presentation
-brief's construction stages and acceptance gate. The approved page structure,
+Latest user-supplied Pro review, recorded 2026-09-07, reviewed head
+`6a755ecef0908bf76d439a3012fa2474366a3cf5` (last production change `6711d3b`).
+It preserves the PR #5 feature freeze and compact gate established at
+`06b2c5c9620e13d87c8c13e0683b1eab7f239d88`. The approved page structure,
 pink visual direction, 23 Lucide assets and native architecture remain in force.
+
+Before closing #5, fix the confirmed project-decisions asynchronous draft loss
+with document/content-version and record-identity snapshots. Preserve later
+edits, preedit, selection drafts and failure content. Investigate the user's
+idle Microsoft Pinyin interruption separately; native editing regressions do
+not replace real host input. Retest the `6711d3b` reply-lifetime fix in a fresh
+process. The existing page may clarify: "保存到当前项目资料，供按需查询；不会自动作为本对话的持续要求。"
+Reuse and version the real results in [authoring results](authoring-results.md);
+do not reset completed checks to pending or label untested behavior passed.
+
+After #5 merges, the approved existing-HIP branch may add a small, separate
+"本对话要求" capability: explicit user enablement, native Thread scope within
+its workspace, default off, and an 8 KiB UTF-8 body limit. Use existing storage
+for body/enabled/revision and freeze the requirement revision, actual user text,
+images and settings with each normal submission. Unknown results reconcile the
+original snapshot. Keep project material on-demand; do not inject all memory,
+write shared AGENTS.md, add a new store/service or turn user text into developer
+policy. This is future scope, not a PR #5 feature or additional merge gate.
 
 The merge gate is one compact real workflow: official browser login and matching
 Launcher/production account; first use; real Panel Chinese IME and text/image
@@ -19,7 +37,8 @@ coordinates, an off-screen model popup or an inaccessible Stop control are
 correctness defects and do block merging. CI and offscreen fixtures do not
 replace the real workflow. Do not carry this gate to another PR.
 
-The operative execution brief below is preserved from the supplied review.
+The earlier execution brief below is preserved as historical approved direction;
+the latest-review clarifications above take precedence where they differ.
 Next-stage implementation starts only after PR #5 closes and merges; the future
 branch is `codex/scene-authoring-quality`, created from the resulting main.
 
@@ -275,4 +294,3 @@ test(authoring): verify iterative procedural editing in an existing HIP
 [1]: https://www.sidefx.com/docs/houdini/nodes/sop/copy "https://www.sidefx.com/docs/houdini/nodes/sop/copy"
 [2]: https://www.sidefx.com/docs/houdini/nodes/sop/copyxform.html "https://www.sidefx.com/docs/houdini/nodes/sop/copyxform.html"
 [3]: https://www.sidefx.com/docs/houdini/hom/hou/OpNodeType.html "https://www.sidefx.com/docs/houdini/hom/hou/OpNodeType.html"
-

@@ -438,14 +438,20 @@ class StudioPanel(QtWidgets.QWidget):
         page = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(page)
         layout.setContentsMargins(0, 8, 0, 0)
-        layout.addWidget(label("留下项目的明确约定。仅在你点击保存时写入，可独立于 Houdini 使用。", "muted", True))
+        layout.addWidget(label("保存到当前项目资料，供按需查询；不会自动作为本对话的持续要求。", "muted", True))
         self.decisions = QtWidgets.QListWidget()
         self.decisions.currentItemChanged.connect(self.decision_selected)
         layout.addWidget(self.decisions, 1)
-        self.decision_input = QtWidgets.QPlainTextEdit()
+        # Use the same native plain-text editing path as the main Composer,
+        # without its send shortcuts or attachment handling.
+        self.decision_input = QtWidgets.QTextEdit()
+        self.decision_input.setAcceptRichText(False)
+        self.decision_edit_version = 0
+        self.decision_record_id = None
+        self.decision_saved_text = ""
         self.decision_input.setPlaceholderText("例如：场景以米为单位。")
         self.decision_input.setMaximumHeight(150)
-        self.decision_input.textChanged.connect(self.update_controls)
+        self.decision_input.textChanged.connect(self.decision_edited)
         layout.addWidget(self.decision_input)
         row = QtWidgets.QHBoxLayout()
         self.decision_refresh = button("刷新", self.load_decisions)
@@ -1675,15 +1681,42 @@ class StudioPanel(QtWidgets.QWidget):
         self.decisions.blockSignals(False)
         self.update_controls()
 
+    def decision_edited(self):
+        self.decision_edit_version += 1
+        self.update_controls()
+
+    def decision_has_preedit(self):
+        layout = self.decision_input.textCursor().block().layout()
+        return bool(layout and layout.preeditAreaText())
+
     def decision_selected(self, current, _previous=None):
-        if current and current.data(QtCore.Qt.UserRole):
-            self.decision_input.setPlainText(current.data(QtCore.Qt.UserRole)["body"])
+        record = current.data(QtCore.Qt.UserRole) if current else None
+        record_id = record["id"] if record else None
+        if record_id == self.decision_record_id:
+            return
+        text = self.decision_input.toPlainText()
+        if self.decision_has_preedit() or (text and text != self.decision_saved_text):
+            # A list click must not silently replace the current local draft.
+            row = next((i for i in range(self.decisions.count())
+                        if (self.decisions.item(i).data(QtCore.Qt.UserRole) or {}).get("id") == self.decision_record_id), -1)
+            blocked = self.decisions.blockSignals(True)
+            self.decisions.setCurrentRow(row)
+            self.decisions.blockSignals(blocked)
+            self.show_notice("未保存的项目资料已保留；请先保存或清空输入，再切换记录。")
+            self.update_controls()
+            return
+        self.decision_record_id = record_id
+        self.decision_saved_text = record["body"] if record else ""
+        self.decision_edit_version += 1  # Also fence record switches with identical text.
+        self.decision_input.setPlainText(self.decision_saved_text)
         self.update_controls()
 
     def save_decision(self, replace):
         if self.memory_busy:
             return
-        text = self.decision_input.toPlainText().strip()
+        document = self.decision_input.document()
+        original = self.decision_input.toPlainText()
+        text = original.strip()
         if not text:
             return
         body = {"action": "supersede" if replace else "record", "body": text}
@@ -1692,14 +1725,27 @@ class StudioPanel(QtWidgets.QWidget):
             if not item or not item.data(QtCore.Qt.UserRole):
                 return
             body["record_id"] = item.data(QtCore.Qt.UserRole)["id"]
+        version, record_id = self.decision_edit_version, self.decision_record_id
         self.memory_busy = True
         self.update_controls()
 
         def saved(value):
             self.memory_busy = False
             if value.get("committed"):
-                self.decision_input.clear()
-                self.show_notice("项目决策已保存。")
+                same_editor = self.decision_input.document() is document and self.decision_record_id == record_id
+                if same_editor:
+                    self.decision_saved_text = original
+                if (same_editor and self.decision_edit_version == version
+                        and self.decision_input.toPlainText() == original and not self.decision_has_preedit()):
+                    self.decision_saved_text = ""
+                    cursor = QtGui.QTextCursor(document)
+                    cursor.beginEditBlock()
+                    cursor.select(QtGui.QTextCursor.Document)
+                    cursor.removeSelectedText()
+                    cursor.endEditBlock()
+                    self.show_notice("项目资料已保存。")
+                else:
+                    self.show_notice("项目资料已保存；当前输入已保留。")
             self.load_decisions()
         self.call("POST", "/memory", body, done=saved, failed=self.memory_failed)
 

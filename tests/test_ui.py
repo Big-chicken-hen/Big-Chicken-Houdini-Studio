@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
-from PySide6 import QtCore, QtNetwork, QtWidgets  # noqa: E402
+from PySide6 import QtCore, QtGui, QtNetwork, QtWidgets  # noqa: E402
 from shiboken6 import delete as delete_qobject, isValid  # noqa: E402
 
 from scripts.preview_ui import PreviewApi, configure_preview_fonts, fixture_image, process_until  # noqa: E402
@@ -74,6 +74,91 @@ class PanelTest(unittest.TestCase):
         self.assertIn("等待主线程", self.panel.runtime_label.text())
         self.assertFalse(self.panel.send_button.isEnabled())
         self.assertIs(self.panel.action_slot.currentWidget(), self.panel.stop_button)
+
+    def test_decision_save_preserves_later_draft_and_failure(self):
+        editor = self.panel.decision_input
+        editor.setPlainText("保存 A")
+        self.api.hold["/memory"] = []
+        self.panel.save_decision(False)
+        done, _, body = self.api.hold["/memory"].pop()
+        self.assertEqual(body, {"action": "record", "body": "保存 A"})
+        editor.setPlainText("后来输入 B")
+        done({"committed": True, "id": "saved_a"})
+        self.assertEqual(editor.toPlainText(), "后来输入 B")
+        self.assertFalse(self.panel.memory_busy)
+        listed = self.api.hold["/memory"].pop()[0]
+        listed({"records": [{"id": "saved_a", "body": "保存 A"}]})
+        self.assertEqual(editor.toPlainText(), "后来输入 B")
+        self.panel.save_decision(False)
+        _, failed, body = self.api.hold["/memory"].pop()
+        self.assertEqual(body["body"], "后来输入 B")
+        failed("fixture save failed")
+        self.assertEqual(editor.toPlainText(), "后来输入 B")
+        self.assertFalse(self.panel.memory_busy)
+        self.panel.save_decision(False)
+        done = self.api.hold["/memory"].pop()[0]
+        done({"committed": True, "id": "saved_b"})
+        self.assertEqual(editor.toPlainText(), "")
+        editor.undo()
+        self.assertEqual(editor.toPlainText(), "后来输入 B")
+
+    def test_decision_save_cannot_clear_another_record_or_reselected_draft(self):
+        records = [{"id": "a", "body": "same text"}, {"id": "b", "body": "same text"}]
+        self.panel.apply_decisions({"records": records})
+        self.panel.decisions.setCurrentRow(0)
+        self.api.hold["/memory"] = []
+        self.panel.save_decision(True)
+        done, _, body = self.api.hold["/memory"].pop()
+        self.assertEqual(body["record_id"], "a")
+        self.panel.decisions.setCurrentRow(1)
+        done({"committed": True, "id": "replacement_a"})
+        self.assertEqual(self.panel.decision_input.toPlainText(), "same text")
+        self.assertEqual(self.panel.decisions.currentItem().data(QtCore.Qt.UserRole)["id"], "b")
+        self.api.hold["/memory"].pop()[0]({"records": records})
+        self.panel.save_decision(False)
+        done = self.api.hold["/memory"].pop()[0]
+        self.panel.decisions.setCurrentRow(0)
+        self.panel.decisions.setCurrentRow(1)
+        done({"committed": True, "id": "saved_copy"})
+        self.assertEqual(self.panel.decision_input.toPlainText(), "same text")
+
+    def test_decision_preedit_and_unsaved_input_survive_ack_and_selection(self):
+        self.panel.tabs.setCurrentIndex(2)
+        self.panel.activateWindow()
+        editor = self.panel.decision_input
+        editor.setFocus()
+        self.app.processEvents()
+        editor.setPlainText("A")
+        editor.moveCursor(QtGui.QTextCursor.End)
+        self.api.hold["/memory"] = []
+        self.panel.save_decision(False)
+        done = self.api.hold["/memory"].pop()[0]
+        # Synthetic preedit tests callback safety, not Windows Microsoft Pinyin.
+        self.app.sendEvent(editor, QtGui.QInputMethodEvent("zhongwen", []))
+        self.assertEqual(editor.toPlainText(), "A")
+        self.assertEqual(editor.textCursor().block().layout().preeditAreaText(), "zhongwen")
+        done({"committed": True, "id": "saved_a"})
+        self.assertEqual(editor.toPlainText(), "A")
+        self.assertEqual(editor.textCursor().block().layout().preeditAreaText(), "zhongwen")
+        commit = QtGui.QInputMethodEvent()
+        commit.setCommitString("中文")
+        self.app.sendEvent(editor, commit)
+        self.assertEqual(editor.toPlainText(), "A中文")
+        records = [{"id": "saved_a", "body": "A"}, {"id": "b", "body": "record B"}]
+        self.api.hold["/memory"].pop()[0]({"records": records})
+        self.panel.decisions.setCurrentRow(1)
+        self.assertIsNone(self.panel.decisions.currentItem())
+        self.assertEqual(editor.toPlainText(), "A中文")
+        self.assertIn("请先保存或清空", self.panel.notice.text())
+        editor.clear()  # Explicitly discard this local draft before switching.
+        self.panel.decisions.setCurrentRow(1)
+        self.assertEqual(editor.toPlainText(), "record B")
+        editor.moveCursor(QtGui.QTextCursor.End)
+        mime = QtCore.QMimeData()
+        mime.setText("\n中文 plain")
+        mime.setHtml("<b>unwanted rich text</b>")
+        editor.insertFromMimeData(mime)
+        self.assertEqual(editor.toPlainText(), "record B\n中文 plain")
 
     def test_stop_keeps_runtime_fact_and_native_history_does_not_duplicate(self):
         self.assertIn("已中断", self.panel.codex_label.text())

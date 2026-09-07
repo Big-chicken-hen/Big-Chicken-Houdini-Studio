@@ -195,8 +195,8 @@ a small edit, production capture and a second edit of the same asset; real
 Save/Save As into another test directory, Recent reopen and continued editing;
 and one bounded Stop check after execute is actually running.
 
-These items remain unverified for the candidate until user actions and the
-corresponding records are reconciled. Record an image reaching the model and
+The versioned real-workflow results below supersede the earlier blanket pending
+status. Uncompleted items remain open. Record an image reaching the model and
 Panel separately from the model using that image. Save As must retain the active
 workspace, ledger and native cwd while updating confirmed associations and later
 default outputs; existing output parameters must remain intact. For Stop, record
@@ -261,8 +261,75 @@ After integration, 21 operation/MCP checks, 10 native UI checks and 20
 launcher/onboarding checks passed locally with process exit 0. One integrated
 Ruff check passed. Existing fixtures were extended for the reproduced defects;
 no acceptance framework, live Houdini run or model-authenticated test was added.
-The current candidate still requires the compact real workflow above, including
-confirmation of upstream reconnection behavior in a newly started Studio session.
+The compact real workflow remains the merge gate. The new-process results below
+establish the observed networking outcome for the first real `b9d229c` turn.
+
+## Real PR #5 workflow: versioned results, 2026-09-07
+
+The ordinary Launcher started the `b9d229c` session on 2026-09-06 at 21:39 +08:00.
+The user entered the actual Houdini 22.0.368 Panel and performed the requests;
+reviewers reconciled native history, persisted Runtime receipts and the capture.
+These are real results for that version, not fresh-process acceptance of later
+fixes. User-specific paths, original logs, Thread/Turn/operation IDs and images
+remain in the existing local review record under `.runtime/reviews`.
+
+| Version and behavior | Established result | Remaining limit |
+| --- | --- | --- |
+| `b9d229c`: normal Empty-scene entry and first edit | User confirmed entering Panel, creation of `test_box` and a normal reply. One execute finished with completed mutation and passed checks. | Official browser login and Launcher/production account identity continuity are not fully verified. Matching executable/native home alone is insufficient. |
+| `b9d229c`: main Composer IME | User confirmed manual Microsoft Pinyin, mixed Chinese/English and line breaks worked normally. | Text/image clipboard actions and unsent-draft preservation still lack user confirmation. This does not cover the project-decisions editor. |
+| `b9d229c`: networking and MCP | Fresh production App Server used the system-proxy flag, connected over WebSocket and completed the first turn in about 42.7 seconds with no retry, timeout or HTTP-fallback marker in the scoped logs. Chinese native return receipts equal the durable ledger values. | This first-turn result does not guarantee future networking. |
+| `b9d229c`: continuous edit | The next completed turn changed the same box from 1 x 1 x 1 to 2 x 1 x 1, preserved its other dimensions and returned nonempty geometry with no reported node errors. | Save/reopen continuation is not yet tested. |
+| `b9d229c`: production image feedback | Capture completed with passed checks, preserved frame 1 and reported no capture/restore error. Native tool output contained actual image content; the model described visible top/side faces and distinguished perspective silhouette from the 2:1 dimensions, matching the reviewed capture. | Panel image display still needs user confirmation; this is separate from native image delivery and the model's visual response. |
+| Model/effort and consent | Native model metadata exists, but the user forgot the first approval choice. | Actual selection behavior and consent grant/reuse/revoke remain unverified. |
+| Save A / Save As B / Recent reopen / continue | Not performed. | Must preserve the active workspace, ledger and native cwd, and existing output parameters. |
+| Running-HOM Stop | Not performed. The earlier reported interruption was explicitly manual and occurred without a running execute receipt. | It proves neither an automatic application failure nor cancellation during running HOM. |
+
+The same `b9d229c` session later exposed a Qt completion callback trying to read
+and delete an already destroyed QNetworkReply. Commit `6711d3b` preserves the
+native lifetime boundary: a closed/deleted owner receives no stale callback;
+a surviving Api with a missing reply receives `REPLY_UNAVAILABLE` with unknown
+submission state. A real Qt/local HTTP fixture reproduced the posted-callback
+ordering and passed after the fix. It does not identify Houdini's actual
+destroyer or establish an IME cause. A fresh-process user follow-up remains open.
+
+For `6711d3b`, [CI run 34038544913](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio/actions/runs/34038544913)
+initially hit the unchanged Windows/Python 3.10 process-ownership fixture's
+eight-second readiness deadline. Its four focused local tests passed. One
+failed-job rerun request caused GitHub to regenerate the matrix and dependent UI
+jobs; all five passed without source changes. The original timeout's CI-only
+cause remains unconfirmed. No timeout or ownership check was relaxed.
+The later documentation-only `6a755ec` also passed all five jobs in
+[its own CI run](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio/actions/runs/34040638800).
+
+## Project-decisions editor follow-up, 2026-09-07
+
+The Pro review of `6a755ec` identified a separate definite data-loss defect:
+saving A, then typing B or selecting another record before acknowledgment, let
+the old success callback clear the current editor. Three focused native Qt
+regressions failed against the old source and pass with this follow-up. Saves
+now bind the original document, edit version, text and record identity. Later
+text, active preedit and reselected records survive; failures and list refreshes
+preserve drafts. An unchanged acknowledged save clears as an undoable native edit.
+Selecting another record preserves nonempty unsaved text and explains that it
+must first be saved or explicitly cleared, using the existing notice area.
+
+The user also confirmed that project-decisions Microsoft Pinyin is interrupted
+before candidate selection even while idle, without saving or changing records.
+That is separate from asynchronous draft loss. This editor now uses the main
+Composer's native QTextEdit plain-text base, without its send shortcuts or image
+handling. This is a candidate correction, not proof that QPlainTextEdit caused
+the host issue. Actual candidate selection, newlines, paste, editing during save,
+record switching and resumed editing require a fresh-process Houdini retest.
+The page now states that saved project material is queried on demand and does
+not automatically become persistent requirements for the current conversation.
+
+All 13 focused `test_ui.py` checks pass on Python 3.10.11 / Qt 6.8.3 with process
+exit 0, including the existing reply-lifetime cases. One integrated Ruff check
+passes. A single 440-pixel native Qt preview confirms the changed page text and
+editor remain visible in the approved layout. Synthetic preedit and clipboard
+fixtures do not establish Windows Microsoft Pinyin or real clipboard behavior.
+PR #5 remains Draft until the missing real-workflow items and affected new-process
+checks are complete; no new authoring capability is included in this follow-up.
 
 ## Repository cleanup
 
@@ -278,6 +345,6 @@ The latest closure review also checked the remote `codex/authoring-cycle`
 were removed with their observed tips guarded; local branches, worktrees and
 user data were preserved.
 
-## 待审核问题：项目约定
+## 已批准的后续提议：本对话要求
 
-当前项目约定能持久保存并按需查询，但不会自动进入模型指令。用户希望讨论：是否将它作为类似 AGENTS.md 的功能，仅针对当前 Studio 对话生效。本次仅附上这个问题供审核，尚未实现或改变现有行为。
+Pro 对 `6a755ec` 的审阅批准在 #5 合并后提供独立的“本对话要求”：由用户明确启用，绑定当前 workspace 内的原生 Thread，默认关闭，正文上限 8 KiB UTF-8。保留现有项目资料的显式存储与按需查询，不自动导入或注入全部 memory；每次正常提交冻结要求版本与实际发送内容，结果未知时核对原快照。它服务于下一阶段既有 HIP 的连续编辑，本次仅记录审批结论，未实现新功能，也不作为 #5 的合并条件。
