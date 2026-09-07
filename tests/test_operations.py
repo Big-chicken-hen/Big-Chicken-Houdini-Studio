@@ -5,7 +5,10 @@ import base64
 import contextlib
 import io
 import json
+import os
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -14,7 +17,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from studio.common import StudioError, encoded, new_id
+from studio.common import AppPaths, StudioError, atomic_json, encoded, new_id
 from studio.http import MAX_BODY, Client, serve
 from studio.ledger import Ledger
 from studio.mcp import Adapter, serve_stdio, validate_schema
@@ -531,6 +534,65 @@ class OperationsTests(unittest.TestCase):
         adapter.call("hia_context", {})
         adapter.call("hia_operation", {"action": "get", "operation_id": own_id})
         self.assertEqual(adapter.scene_epoch, "latest-scene")
+
+    def test_stdio_production_entry_uses_utf8_with_legacy_pipe_encoding(self):
+        hip_path = "/same/中文场景.hip"
+        self.hou.hipFile.path = lambda: hip_path
+        self.hou.ui = SimpleNamespace(paneTabOfType=lambda kind: None)
+        self.hou.paneTabType = SimpleNamespace(NetworkEditor="network")
+        self.hou.selectedNodes = lambda: ()
+        runtime = self.start()
+        token = new_id() + new_id()
+        server = serve(runtime_router(runtime), token)
+        try:
+            url = "http://127.0.0.1:" + str(server.server_port)
+            (self.root / "pyproject.toml").touch()
+            paths = AppPaths(self.root)
+            directory = paths.session("session")
+            atomic_json(directory / "bridge.json", {"url": url})
+            atomic_json(directory / "runtime.json", {"url": url, "launcher_session_id": "session",
+                        "workspace_id": "workspace", "runtime_id": runtime.runtime_id})
+            env = {key: value for key, value in os.environ.items()
+                   if key.upper() in {"SYSTEMROOT", "WINDIR", "COMSPEC", "PATH", "PATHEXT"}}
+            env.update(HIA_PROJECT_ROOT=str(self.root), BCS_DATA_ROOT=str(paths.data_root),
+                       BCS_CACHE_ROOT=str(paths.cache_root), CODEX_HOME=str(paths.codex_home),
+                       BCS_SESSION_ID="session", BCS_WORKSPACE_ID="workspace", BCS_OWNER_ID="owner",
+                       BCS_SESSION_TOKEN=token, PYTHONPATH=str(Path(__file__).resolve().parents[1] / "src"),
+                       PYTHONIOENCODING="cp936", PYTHONUTF8="0", PYTHONNOUSERSITE="1",
+                       TEMP=str(self.root), TMP=str(self.root), TMPDIR=str(self.root))
+            request = {"jsonrpc": "2.0", "id": "中文请求", "method": "tools/call",
+                       "params": {"name": "hia_context", "arguments": {}}}
+            result = subprocess.run([getattr(sys, "_base_executable", sys.executable), "-B", "-m", "studio.mcp"],
+                                    input=(encoded(request) + "\n").encode("utf-8"),
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=self.root, env=env,
+                                    timeout=10, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", errors="replace"))
+            self.assertEqual(result.stderr, b"")
+            lines = result.stdout.decode("utf-8").splitlines()
+            self.assertEqual(len(lines), 1)
+            message = json.loads(lines[0])
+            self.assertEqual(message["id"], request["id"])
+            self.assertFalse(message["result"]["isError"])
+            receipt = json.loads(message["result"]["content"][0]["text"])
+            self.assertEqual(receipt["state"], "finished")
+            self.assertEqual(receipt["result"]["hip_path"], hip_path)
+            self.assertEqual(runtime.get(receipt["operation_id"]), receipt)
+            self.assertEqual(len(runtime.recent()), 1)
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_stdio_rejects_non_utf8_and_continues(self):
+        request = encoded({"id": "中文请求", "method": "ping"})
+        for encoding in ("cp936", "utf-16", "utf-32"):
+            with self.subTest(encoding=encoding):
+                source = io.BytesIO(request.encode(encoding) + b'\n{"id":1,"method":"ping"}\n')
+                output = io.StringIO()
+                serve_stdio(None, source, output)
+                messages = [json.loads(line) for line in output.getvalue().splitlines()]
+                self.assertEqual(len(messages), 2)
+                self.assertEqual(messages[0]["error"]["code"], -32700)
+                self.assertEqual(messages[1], {"jsonrpc": "2.0", "id": 1, "result": {}})
 
     def test_stdio_bounded_lines_and_http_partial_response_are_uncertain(self):
         class BoundedSource(io.BytesIO):

@@ -108,7 +108,7 @@ def dispatch(args, paths):
 def main(argv=None):
     args = parser().parse_args(argv)
     try:
-        paths = AppPaths(args.app_root)
+        paths = AppPaths.for_user(args.app_root) if args.command == "launcher" else AppPaths(args.app_root)
         from .launcher import storage_environment
         os.environ.update(storage_environment(paths))
         result = dispatch(args, paths)

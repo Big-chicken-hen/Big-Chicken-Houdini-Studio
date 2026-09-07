@@ -24,6 +24,7 @@ def setup(args):
     env = helper_environment(paths)
     # venv/ensurepip uses this process's temporary directory too.
     os.environ.update(env)
+    paths.local("tmp").mkdir(parents=True, exist_ok=True)
     tempfile.tempdir = str(paths.local("tmp"))
     target = paths.local("venv")
     executable = target / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
@@ -67,8 +68,7 @@ def setup(args):
         'import os, sys; sys.path.insert(0, os.path.abspath(os.path.join(sys.prefix, "..", "..", "src")))\n',
         encoding="utf-8")
     result = {"installed": True, "python": str(executable), "extras": extras,
-              "codex_version": "0.153.4", "app_root": str(paths.root),
-              "render_output_directory": env["HIA_RENDER_OUTPUT_DIR"]}
+              "codex_version": "0.153.4", "app_root": str(paths.root)}
     atomic_json(paths.local("setup.json"), result)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0

@@ -1,387 +1,1022 @@
-"""Native workspace entrance. Process ownership remains in the launcher backend."""
+"""Staged scene Launcher. Pages project facts; explicit actions own side effects."""
 from __future__ import annotations
 
+import json
+import os
 from pathlib import Path
+import threading
 
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
-from ..common import AppPaths, StudioError, read_json
+from ..common import AppPaths, StudioError, atomic_json, new_id, read_json
 from ..codex.protocol import SUPPORTED_CODEX_VERSION
-from ..launcher import codex_executable, discover_houdini, launch, render_output_directory
-from ..workspace import Workspaces
-from .launcher_visuals import LAUNCHER_STYLE, LaunchActivity, StationArtwork
-from .shared import Task, button, label
+from .launcher_pages import project_page
+from .launcher_visuals import LAUNCHER_STYLE, RecentRow
+from .shared import ApiFailure, ErrorDetails, Task, button, label
+from .theme import apply_theme
+from .icons import LoadingIcon, icon_diagnostics, set_button_icon
+
+
+def read_minimize_preference(paths):
+    try:
+        value = read_json(paths.data("launcher-preferences.json"))
+        return value.get("minimize_after_open", True) is not False
+    except FileNotFoundError:
+        return True
+
+
+def write_minimize_preference(paths, enabled):
+    atomic_json(paths.data("launcher-preferences.json"), {"minimize_after_open": bool(enabled)})
+
+
+class _OnboardingOwner:
+    """One generation's client; the guard is acquired only by worker functions."""
+    def __init__(self, factory, guard, previous=None):
+        self.factory, self.guard = factory, guard
+        self.cancelled = threading.Event()
+        self.backend = None
+        self.previous = previous
+
+    def _close_previous(self):
+        if self.previous is not None:
+            self.previous._close()
+            self.previous = None
+
+    def _close(self):
+        self._close_previous()
+        if self.backend is not None:
+            backend = self.backend
+            backend.close()
+            self.backend = None
+
+    def probe(self, overrides):
+        with self.guard:
+            self._close_previous()
+            if self.cancelled.is_set():
+                return None
+            self.backend = self.factory()
+            try:
+                result = self.backend.probe(**overrides)
+                return None if self.cancelled.is_set() else result
+            finally:
+                if self.cancelled.is_set():
+                    self._close()
+
+    def call(self, method, *args):
+        with self.guard:
+            if self.cancelled.is_set():
+                self._close()
+                return None
+            if self.backend is None:
+                raise StudioError("ONBOARDING_REQUIRED", "请重新检查启动环境")
+            try:
+                result = getattr(self.backend, method)(*args)
+                return None if self.cancelled.is_set() else result
+            finally:
+                if self.cancelled.is_set():
+                    self._close()
+
+    def close(self):
+        with self.guard:
+            self._close()
+
+
+class _TaskReply(QtCore.QObject):
+    """Bound QObject slots disconnect when the window is destroyed."""
+    def __init__(self, owner, kind, serial, generation, done, failed):
+        super().__init__(owner)
+        self.owner, self.kind, self.serial, self.generation = owner, kind, serial, generation
+        self.done, self.failed = done, failed
+        self.task = None
+
+    @QtCore.Slot(object)
+    def success(self, value):
+        self.owner._completed(self, value, False)
+
+    @QtCore.Slot(object)
+    def failure(self, value):
+        self.owner._completed(self, value, True)
 
 
 class StudioLauncher(QtWidgets.QWidget):
-    def __init__(self, paths=None, *, workspaces=None, installations=None, codex_path=None, launch_function=None):
+    def __init__(self, paths=None, *, onboarding_factory=None, catalog=None, target_factory=None,
+                 launch_function=None, status_function=None, browser_open=None, reveal_path=None,
+                 preference_reader=None, preference_writer=None, auto_probe=True):
         super().__init__()
-        self.paths = paths or AppPaths()
-        self.workspaces = workspaces if workspaces is not None else Workspaces(self.paths)
-        self._launch = launch_function or launch
-        self.busy = False
-        self.status_pending = False
-        self.sessions = {}
-        self.errors = {}
-        self.launch_workspace = None
-        self._closed = False
+        self.paths = paths if paths is not None else AppPaths.for_user()
+        if onboarding_factory is None:
+            from ..onboarding import Onboarding
+            onboarding_factory = lambda bound=self.paths: Onboarding(bound)
+        if catalog is None or target_factory is None:
+            from ..targets import SceneCatalog, SceneTarget
+            catalog = catalog if catalog is not None else SceneCatalog(self.paths)
+            target_factory = target_factory or SceneTarget
+        if launch_function is None or status_function is None:
+            from ..launcher import launch_target, launch_status
+            launch_function, status_function = launch_function or launch_target, status_function or launch_status
+        self.catalog, self.target_factory = catalog, target_factory
+        self._factory, self._launch, self._query = onboarding_factory, launch_function, status_function
+        self._browser_open = browser_open or QtGui.QDesktopServices.openUrl
+        self._reveal_path = reveal_path or self.reveal_in_folder
+        self._preference_reader = preference_reader or read_minimize_preference
+        self._preference_writer = preference_writer or write_minimize_preference
+        self._guard, self._preference_guard = threading.Lock(), threading.Lock()
+        self._onboarding = None
+        self._generation, self._serial, self._preference_revision = 0, 0, 0
+        self._pending, self._tasks = {}, {}
+        self._closed, self._checking_visible = False, False
+        self._snapshot, self._overrides_dirty = {}, set()
+        self._needs_probe = False
+        self._target = self._deferred_target = None
+        self._recent_records, self._recent_rows = [], []
+        self._recent_path = None
+        self._request_id = self._launch_target = self._launch_paths = None
+        self._launch_record = self._launch_error = self._launch_phase = self._prepared = None
+        self._launch_label = ""
+        self._launch_version, self._remembered = 0, False
+        self._failure = None
+        self._secondary = self._secondary_return = None
+        self._minimize_after_open, self._preference_loaded = True, False
+        self._minimize_attempted_id = self._minimize_scheduled_id = None
         self.setObjectName("studioLauncher")
-        self.setWindowTitle("Big-Chicken · Houdini Studio")
+        self.setWindowTitle("Big-Chicken Studio")
+        self.setMinimumSize(600, 480)
+        self.resize(760, 560)
+        self.setAcceptDrops(True)
+        self.build_ui()
         self.setStyleSheet(LAUNCHER_STYLE)
-        self.resize(1180, 850)
-        self.setMinimumSize(800, 620)
-        self.build_ui(installations if installations is not None else discover_houdini(),
-                      codex_path if codex_path is not None else codex_executable(self.paths))
+        for widget in self.findChildren(QtWidgets.QPushButton):
+            if widget.property("studioRole") == "primary":
+                widget.setFixedHeight(40)
+        self.probe_delay = QtCore.QTimer(self)
+        self.probe_delay.setSingleShot(True)
+        self.probe_delay.setInterval(250)
+        self.probe_delay.timeout.connect(self.probe)
+        self.checking_delay = QtCore.QTimer(self)
+        self.checking_delay.setSingleShot(True)
+        self.checking_delay.setInterval(250)
+        self.checking_delay.timeout.connect(self.reveal_checking)
         self.poll = QtCore.QTimer(self)
         self.poll.setInterval(1500)
-        self.poll.timeout.connect(self.session_status)
-        self.reload_workspaces()
+        self.poll.timeout.connect(self.query_launch)
+        self.account_poll = QtCore.QTimer(self)
+        self.account_poll.setInterval(2000)
+        self.account_poll.timeout.connect(self.refresh_account)
+        self.minimize_timer = QtCore.QTimer(self)
+        self.minimize_timer.setSingleShot(True)
+        self.minimize_timer.setInterval(500)
+        self.minimize_timer.timeout.connect(self.minimize_opened_request)
+        self._account_polls = 0
+        self.reload_recents()
+        self._submit("preference", lambda: self._preference_reader(self.paths),
+                     self.preference_loaded, self.preference_failed)
+        self.render()
+        if auto_probe:
+            self.probe()
 
-    def build_ui(self, installations, codex_path):
-        root = QtWidgets.QHBoxLayout(self)
-        root.setContentsMargins(18, 18, 18, 18)
-        root.setSpacing(18)
-        self.artwork = StationArtwork()
-        self.hero_layout = QtWidgets.QVBoxLayout(self.artwork)
-        self.hero_layout.setContentsMargins(30, 30, 30, 27)
-        self.hero_layout.setSpacing(8)
-        self.hero_layout.addWidget(label("BC /  BIG-CHICKEN", "brand"))
-        self.hero_layout.addWidget(label("HOUDINI STUDIO", "heroEyebrow"))
-        self.hero_layout.addSpacing(36)
-        self.hero_title = label("让灵感\n亮一盏灯。", "heroTitle")
-        self.hero_layout.addWidget(self.hero_title)
-        self.hero_layout.addWidget(label("一个想法，一处新的创作现场。", "heroSubtitle", True))
-        self.hero_layout.addStretch(1)
-        self.hero_layout.addWidget(label("AFTER HOURS / CREATIVE STUDIO", "heroEyebrow"))
-        self.hero_layout.addSpacing(3)
-        self.workspace_identity = label("今晚，从这里开始。", "heroCaption", True)
-        self.workspace_identity.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
-        self.hero_layout.addWidget(self.workspace_identity)
-        self.hero_layout.addSpacing(7)
-        self.hero_layout.addWidget(label("由 Codex 驱动  ·  在 Houdini 创作", "heroSubtitle", True))
-        root.addWidget(self.artwork, 5)
+    def action_button(self, text, callback, icon=None, *, primary=False, icon_only=False):
+        widget = button(text, callback, "primary" if primary else "quiet")
+        widget.setProperty("studioRole", "primary" if primary else "icon" if icon_only else "quiet")
+        if primary:
+            widget.setMinimumHeight(40)
+        if icon:
+            set_button_icon(widget, icon, text=text, icon_only=icon_only)
+        return widget
 
-        deck = QtWidgets.QFrame()
-        deck.setObjectName("launchDeck")
-        deck.setMinimumWidth(440)
-        layout = QtWidgets.QVBoxLayout(deck)
-        layout.setContentsMargins(27, 26, 27, 23)
-        layout.setSpacing(10)
-        heading = QtWidgets.QHBoxLayout()
-        heading.addWidget(label("SESSION ENTRY", "eyebrow"), 1)
-        heading.addWidget(label("STUDIO / 0.1", "eyebrow"))
-        layout.addLayout(heading)
-        layout.addWidget(label("进入工作室", "deckTitle"))
-        layout.addWidget(label("选择工作空间，接上你的 Houdini。", "muted"))
+    def center_page(self, name, width=420):
+        page = QtWidgets.QWidget()
+        page.setObjectName("launcherPage")
+        outer = QtWidgets.QVBoxLayout(page)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addStretch()
+        box = QtWidgets.QWidget()
+        box.setFixedWidth(width)
+        box.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
+        content = QtWidgets.QVBoxLayout(box)
+        content.setContentsMargins(0, 0, 0, 0)
+        content.setSpacing(16)
+        outer.addWidget(box, 0, QtCore.Qt.AlignHCenter)
+        outer.addStretch()
+        self.pages[name] = page
+        self.stack.addWidget(page)
+        return content, box
 
-        self.form_scroll = QtWidgets.QScrollArea()
-        self.form_scroll.setWidgetResizable(True)
-        self.form_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+    def secondary_page(self, name, title):
+        page = QtWidgets.QWidget()
+        outer = QtWidgets.QVBoxLayout(page)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(16)
+        back = self.action_button("返回", self.back_secondary, "arrow-left")
+        outer.addWidget(back, 0, QtCore.Qt.AlignLeft)
+        outer.addWidget(label(title, "sectionTitle"))
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         body = QtWidgets.QWidget()
-        body.setObjectName("deckBody")
-        form = QtWidgets.QVBoxLayout(body)
-        form.setContentsMargins(0, 0, 3, 0)
-        form.setSpacing(13)
-        row = self.section_heading("01", "工作空间")
-        self.create_button = button("＋ 新建", self.create_workspace, "quiet")
-        self.create_button.setAccessibleName("新建工作空间")
-        row.addWidget(self.create_button)
-        form.addLayout(row)
-        self.projects = QtWidgets.QListWidget()
-        self.projects.setAccessibleName("选择工作空间")
-        self.projects.setTextElideMode(QtCore.Qt.ElideRight)
-        self.projects.setMinimumHeight(86)
-        self.projects.setMaximumHeight(136)
-        self.projects.itemSelectionChanged.connect(self.update_selection)
-        form.addWidget(self.projects)
-        self.empty_workspace = QtWidgets.QFrame()
-        self.empty_workspace.setObjectName("emptyWorkspace")
-        empty = QtWidgets.QVBoxLayout(self.empty_workspace)
-        empty.setContentsMargins(17, 15, 17, 16)
-        empty.setSpacing(9)
-        empty.addWidget(label("为第一份作品，留一个位置。", "emptyTitle", True))
-        empty.addWidget(label("工作空间会保存你的会话、附件与项目决策。", "muted", True))
-        self.workspace_name = QtWidgets.QLineEdit()
-        self.workspace_name.setPlaceholderText("给这次创作起个名字")
-        self.workspace_name.setMaxLength(120)
-        self.workspace_name.setAccessibleName("首个工作空间名称")
-        self.workspace_name.returnPressed.connect(self.create_first_workspace)
-        empty.addWidget(self.workspace_name)
-        self.create_first = button("创建工作空间    ＋", self.create_first_workspace, "createPrimary")
-        empty.addWidget(self.create_first)
-        form.addWidget(self.empty_workspace)
+        content = QtWidgets.QVBoxLayout(body)
+        content.setContentsMargins(0, 0, 4, 0)
+        content.setSpacing(12)
+        scroll.setWidget(body)
+        outer.addWidget(scroll, 1)
+        self.pages[name] = page
+        self.stack.addWidget(page)
+        return content
 
-        environment = self.environment = QtWidgets.QFrame()
-        environment.setObjectName("environment")
-        env = QtWidgets.QVBoxLayout(environment)
-        env.setContentsMargins(17, 15, 17, 16)
-        env.setSpacing(11)
-        env.addLayout(self.section_heading("02", "启动现场"))
-        env.addWidget(label("Houdini", "hint"))
-        row = QtWidgets.QHBoxLayout()
-        self.houdini = QtWidgets.QComboBox()
-        self.houdini.setAccessibleName("Houdini 可执行文件")
-        self.houdini.setPlaceholderText("选择 Houdini 环境")
-        self.houdini.setMinimumContentsLength(12)
-        self.houdini.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToMinimumContentsLengthWithIcon)
-        for item in installations:
-            self.houdini.addItem(item["label"], item["path"])
-            self.houdini.setItemData(self.houdini.count() - 1, item["path"], QtCore.Qt.ToolTipRole)
-        if self.houdini.count():
-            self.houdini.setCurrentIndex(0)
-        self.houdini_browse = button("选择…", self.choose_houdini)
-        row.addWidget(self.houdini, 1)
-        row.addWidget(self.houdini_browse)
-        env.addLayout(row)
-        self.environment_hint = label("", "environmentHint", True)
-        env.addWidget(self.environment_hint)
-        env.addWidget(label("起始场景  /  可选", "hint"))
-        row = QtWidgets.QHBoxLayout()
-        self.hip = QtWidgets.QLineEdit()
-        self.hip.setPlaceholderText("从空白开始，或打开已有 HIP")
-        self.hip.setClearButtonEnabled(True)
-        self.hip.setAccessibleName("可选起始 HIP")
-        self.hip_browse = button("选择…", self.choose_hip)
-        row.addWidget(self.hip, 1)
-        row.addWidget(self.hip_browse)
-        env.addLayout(row)
-        form.addWidget(environment)
+    def build_ui(self):
+        root = QtWidgets.QVBoxLayout(self)
+        root.setContentsMargins(28, 24, 28, 24)
+        root.setSpacing(24)
+        header = QtWidgets.QHBoxLayout()
+        header.addWidget(label("Big-Chicken Studio", "brand"), 1)
+        self.more = self.action_button("更多", self.show_main_menu, "ellipsis", icon_only=True)
+        self.more.setMinimumWidth(36)
+        self.more.setFixedHeight(36)
+        header.addWidget(self.more)
+        root.addLayout(header)
+        self.stack = QtWidgets.QStackedWidget()
+        self.page_opacity = QtWidgets.QGraphicsOpacityEffect(self.stack)
+        self.page_opacity.setOpacity(1.0)
+        self.stack.setGraphicsEffect(self.page_opacity)
+        self.page_transition = QtCore.QPropertyAnimation(self.page_opacity, b"opacity", self)
+        self.page_transition.setDuration(150)
+        self.page_transition.setStartValue(0.0)
+        self.page_transition.setEndValue(1.0)
+        self.pages = {}
+        root.addWidget(self.stack, 1)
 
-        self.settings_toggle = QtWidgets.QToolButton()
-        self.settings_toggle.setObjectName("settingsToggle")
-        self.settings_toggle.setText("启动设置 · Codex 与输出目录")
-        self.settings_toggle.setCheckable(True)
-        self.settings_toggle.setArrowType(QtCore.Qt.RightArrow)
-        self.settings_toggle.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
-        self.settings_toggle.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
-        self.settings_toggle.toggled.connect(self.toggle_settings)
-        form.addWidget(self.settings_toggle)
-        self.settings = QtWidgets.QWidget()
-        settings = QtWidgets.QVBoxLayout(self.settings)
-        settings.setContentsMargins(0, 0, 0, 0)
-        settings.setSpacing(9)
-        settings.addWidget(label("Codex " + SUPPORTED_CODEX_VERSION + "  /  可执行文件", "hint"))
+        checking, self.checking_box = self.center_page("checking", 360)
+        self.checking_loader = LoadingIcon(size=24) if LoadingIcon else None
+        if self.checking_loader:
+            checking.addWidget(self.checking_loader, 0, QtCore.Qt.AlignHCenter)
+        checking.addWidget(label("正在检查必要条件", "title", True))
+        checking.addWidget(label("确认后即可继续。", "muted", True))
+
+        setup, _box = self.center_page("setup")
+        self.setup_title = label("", "title", True)
+        self.setup_message = label("", wrap=True)
+        setup.addWidget(self.setup_title)
+        setup.addWidget(self.setup_message)
+        self.install_guide = self.action_button("查看安装步骤", self.open_install_guide, "external-link", primary=True)
+        self.setup_codex = self.action_button("选择已有安装", self.choose_codex)
+        self.setup_retry = self.action_button("重新检查", self.probe, "refresh-cw", primary=True)
+        self.setup_houdini = self.action_button("选择 Houdini", self.choose_houdini, primary=True)
+        self.setup_details = self.action_button("查看详情", self.show_details)
+        self.setup_actions = QtWidgets.QVBoxLayout()
+        self.setup_actions.setSpacing(12)
+        self._setup_mode = None
+        for widget in (self.install_guide, self.setup_codex, self.setup_retry, self.setup_houdini, self.setup_details):
+            self.setup_actions.addWidget(widget)
+        setup.addLayout(self.setup_actions)
+
+        auth, _box = self.center_page("authentication", 360)
+        self.auth_title = label("", "title", True)
+        self.auth_message = label("", wrap=True)
+        auth.addWidget(self.auth_title)
+        auth.addWidget(self.auth_message)
+        self.login = self.action_button("使用 ChatGPT 继续", lambda: self.account_action("login_start"), primary=True)
+        self.auth_query = self.action_button("重新检查", self.refresh_account, "refresh-cw", primary=True)
+        self.reopen_login = self.action_button("重新打开登录页", lambda: self.account_action("reopen_login"), "external-link")
+        self.cancel_login = self.action_button("取消本次登录", lambda: self.account_action("cancel_login"))
+        self.auth_hint = label("登录将在系统浏览器中完成。", "muted", True)
+        for widget in (self.login, self.auth_query, self.reopen_login, self.cancel_login, self.auth_hint):
+            auth.addWidget(widget)
+        auth.addWidget(self.action_button("遇到问题？查看详情", self.show_details))
+
+        home = QtWidgets.QWidget()
+        home_layout = QtWidgets.QVBoxLayout(home)
+        home_layout.setContentsMargins(0, 0, 0, 0)
+        home_layout.setSpacing(16)
         row = QtWidgets.QHBoxLayout()
-        self.codex = QtWidgets.QLineEdit(codex_path)
-        self.codex.setAccessibleName("Codex 可执行文件")
-        self.codex.setPlaceholderText("选择本机 Codex 可执行文件")
-        self.codex_browse = button("选择…", self.choose_codex)
+        row.addWidget(label("最近场景", "sectionTitle"), 1)
+        self.open_button = self.action_button("打开 HIP…", self.choose_hip, "folder-open", primary=True)
+        self.empty_button = self.action_button("空场景", lambda: self.activate_target(self.target_factory.empty()), "file-plus-2")
+        row.addWidget(self.open_button)
+        row.addWidget(self.empty_button)
+        home_layout.addLayout(row)
+        self.deferred_row = QtWidgets.QWidget()
+        deferred = QtWidgets.QHBoxLayout(self.deferred_row)
+        deferred.setContentsMargins(0, 0, 0, 0)
+        self.deferred_label = label("", wrap=True)
+        self.deferred_label.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
+        deferred.addWidget(self.deferred_label, 1)
+        deferred.addWidget(self.action_button("打开待选场景", self.activate_deferred))
+        home_layout.addWidget(self.deferred_row)
+        self.drop_hint = label("释放以打开", "sectionTitle", True)
+        self.drop_hint.hide()
+        home_layout.addWidget(self.drop_hint)
+        self.recents = QtWidgets.QListWidget()
+        self.recents.setObjectName("recentList")
+        self.recents.setAccessibleName("最近场景")
+        self.recents.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self.recents.setSpacing(4)
+        self.recents.setAcceptDrops(False)
+        self.recents.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.recents.customContextMenuRequested.connect(self.recent_context_menu)
+        self.recents.currentItemChanged.connect(self.recent_selection_changed)
+        self.recents.itemDoubleClicked.connect(self.activate_recent)
+        self.recents.itemActivated.connect(self.activate_recent)
+        home_layout.addWidget(self.recents, 1)
+        self.empty_hint = label("打开已有 HIP，或从空场景开始", "muted", True)
+        home_layout.addWidget(self.empty_hint)
+        self.home_error = label("", wrap=True)
+        self.home_error.setProperty("tone", "error")
+        home_layout.addWidget(self.home_error)
+        home_layout.addStretch()
+        self.pages["home"] = home
+        self.stack.addWidget(home)
+        self.recent_menu_key = QtGui.QShortcut(QtGui.QKeySequence("Shift+F10"), self.recents)
+        self.recent_menu_key.setContext(QtCore.Qt.WidgetWithChildrenShortcut)
+        self.recent_menu_key.activated.connect(lambda: self.recent_context_menu(None))
+
+        launching, _box = self.center_page("launching", 460)
+        self.launch_loader = LoadingIcon(size=24) if LoadingIcon else None
+        if self.launch_loader:
+            launching.addWidget(self.launch_loader, 0, QtCore.Qt.AlignHCenter)
+        self.launch_title = label("", "title", True)
+        self.launch_message = label("", wrap=True)
+        launching.addWidget(self.launch_title)
+        launching.addWidget(self.launch_message)
+        self.launch_query = self.action_button("查询启动状态", self.query_launch, "refresh-cw", primary=True)
+        self.launch_back = self.action_button("返回首页，重新打开", self.return_after_launch)
+        launching.addWidget(self.launch_query)
+        launching.addWidget(self.launch_back)
+        launching.addWidget(self.action_button("查看详情", self.show_details))
+
+        settings = self.secondary_page("settings", "设置")
+        settings.addWidget(label("程序选择", "sectionTitle"))
+        settings.addWidget(label("Codex 路径覆盖 · 留空自动发现", "muted", True))
+        row = QtWidgets.QHBoxLayout()
+        self.codex = QtWidgets.QLineEdit()
+        self.codex.setAccessibleName("Codex 路径覆盖")
+        self.codex.textEdited.connect(lambda _value: self.overrides_changed("codex"))
+        self.codex_browse = self.action_button("选择…", self.choose_codex)
         row.addWidget(self.codex, 1)
         row.addWidget(self.codex_browse)
         settings.addLayout(row)
-        settings.addWidget(label("默认渲染输出目录", "hint"))
-        self.output_path = QtWidgets.QLineEdit(str(render_output_directory(self.paths)))
-        self.output_path.setAccessibleName("默认渲染输出目录")
-        self.output_path.setReadOnly(True)
-        self.output_path.setToolTip("新渲染的默认目录；已有 HIP 的输出参数保持原值。")
-        settings.addWidget(self.output_path)
-        settings.addWidget(label("这些设置仅供 Studio 启动使用。", "muted"))
-        self.settings.hide()
-        form.addWidget(self.settings)
-        form.addStretch(1)
-        self.form_scroll.setWidget(body)
-        layout.addWidget(self.form_scroll, 1)
+        settings.addWidget(label("Houdini 安装", "muted"))
+        row = QtWidgets.QHBoxLayout()
+        self.houdini = QtWidgets.QComboBox()
+        self.houdini.setMinimumContentsLength(12)
+        self.houdini.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.houdini.addItem("自动选择", "")
+        self.houdini.currentIndexChanged.connect(lambda _index: self.overrides_changed("houdini"))
+        self.houdini_browse = self.action_button("选择…", self.choose_houdini)
+        row.addWidget(self.houdini, 1)
+        row.addWidget(self.houdini_browse)
+        settings.addLayout(row)
+        self.recheck = self.action_button("重新检查环境", self.probe, "refresh-cw")
+        settings.addWidget(self.recheck, 0, QtCore.Qt.AlignLeft)
+        self.minimize_choice = QtWidgets.QCheckBox("启动成功后最小化")
+        self.minimize_choice.setChecked(True)
+        self.minimize_choice.toggled.connect(self.save_minimize_preference)
+        settings.addWidget(self.minimize_choice)
+        self.settings_error = label("", wrap=True)
+        self.settings_error.setProperty("tone", "error")
+        settings.addWidget(self.settings_error)
+        settings.addWidget(self.action_button("诊断", self.show_details), 0, QtCore.Qt.AlignLeft)
+        settings.addStretch()
 
-        self.status_card = QtWidgets.QFrame()
-        self.status_card.setObjectName("statusCard")
-        status_layout = QtWidgets.QVBoxLayout(self.status_card)
-        status_layout.setContentsMargins(13, 11, 13, 10)
-        status_layout.setSpacing(5)
-        row = QtWidgets.QHBoxLayout()
-        self.activity = LaunchActivity()
-        row.addWidget(self.activity)
-        self.status = label("准备你的创作空间", "statusTitle")
-        self.status.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
-        row.addWidget(self.status, 1)
-        self.status_code = label("STANDBY", "statusCode")
-        row.addWidget(self.status_code)
-        status_layout.addLayout(row)
-        self.status_details = QtWidgets.QPlainTextEdit()
-        self.status_details.setObjectName("statusDetails")
-        self.status_details.setAccessibleName("完整启动状态和错误详情，可选择并复制")
-        self.status_details.setReadOnly(True)
-        self.status_details.setFixedHeight(52)
-        self.status_details.setFrameShape(QtWidgets.QFrame.NoFrame)
-        self.status_details.setTabChangesFocus(True)
-        status_layout.addWidget(self.status_details)
-        row = QtWidgets.QHBoxLayout()
-        row.addStretch()
-        self.copy_status = button("复制详情", self.copy_details, "copyStatus")
-        self.copy_status.setAccessibleName("复制完整状态或错误信息")
-        self.copy_status.setMaximumHeight(26)
-        row.addWidget(self.copy_status)
-        status_layout.addLayout(row)
-        layout.addWidget(self.status_card)
-        self.launch_button = button("进入工作室    ↗", self.start_session, "launchPrimary")
-        self.launch_button.setAccessibleName("进入 Houdini 工作室")
-        self.launch_button.setMinimumHeight(55)
-        layout.addWidget(self.launch_button)
-        layout.addWidget(label("本地工作空间  /  原生 Houdini  /  Codex 会话", "eyebrow"))
-        root.addWidget(deck, 6)
-        self.configuration_controls = [self.houdini, self.houdini_browse, self.hip, self.hip_browse,
-                                       self.codex, self.codex_browse]
-        self.houdini.currentIndexChanged.connect(self.inputs_changed)
-        self.codex.textChanged.connect(self.inputs_changed)
-        self.hip.textChanged.connect(self.inputs_changed)
-        self.setTabOrder(self.projects, self.houdini)
-        self.setTabOrder(self.houdini, self.houdini_browse)
-        self.setTabOrder(self.houdini_browse, self.hip)
-        self.setTabOrder(self.hip, self.hip_browse)
-        self.setTabOrder(self.hip_browse, self.settings_toggle)
-        self.setTabOrder(self.settings_toggle, self.launch_button)
+        account = self.secondary_page("account", "账号")
+        self.account_summary = label("", wrap=True)
+        account.addWidget(self.account_summary)
+        self.account_query = self.action_button("重新检查账号", self.refresh_account, "refresh-cw")
+        self.logout = self.action_button("退出登录", lambda: self.account_action("logout"))
+        account.addWidget(self.account_query, 0, QtCore.Qt.AlignLeft)
+        account.addWidget(self.logout, 0, QtCore.Qt.AlignLeft)
+        account.addWidget(self.action_button("诊断", self.show_details), 0, QtCore.Qt.AlignLeft)
+        account.addStretch()
+
+        diagnostics = self.secondary_page("diagnostics", "诊断")
+        self.error_details = ErrorDetails()
+        diagnostics.addWidget(self.error_details)
+        self.diagnostics_text = QtWidgets.QPlainTextEdit()
+        self.diagnostics_text.setReadOnly(True)
+        self.diagnostics_text.setAccessibleName("原始启动诊断")
+        diagnostics.addWidget(self.diagnostics_text, 1)
+
+    def projection(self):
+        return project_page(self._snapshot, request_id=self._request_id, launch_record=self._launch_record,
+                            launch_phase=self._launch_phase, checking="probe" in self._pending)
+
+    @property
+    def current_page(self):
+        return self._secondary or self.projection().name
+
+    def reveal_checking(self):
+        self._checking_visible = True
+        self.render()
+
+    def show_main_menu(self):
+        menu = QtWidgets.QMenu(self)
+        menu.setObjectName("studioLauncherMenu")
+        apply_theme(menu, popup=True)
+        menu.addAction("账号", lambda: self.show_secondary("account"))
+        menu.addAction("设置", lambda: self.show_secondary("settings"))
+        menu.popup(self.more.mapToGlobal(self.more.rect().bottomLeft()))
+        self._menu = menu
+
+    def show_secondary(self, name):
+        if name not in {"account", "settings", "diagnostics"}:
+            return
+        self._secondary_return = self._secondary if name == "diagnostics" and self._secondary != "diagnostics" else None
+        self._secondary = name
+        self.minimize_timer.stop()
+        self.render()
+
+    def back_secondary(self):
+        self._secondary = self._secondary_return if self._secondary == "diagnostics" else None
+        self._secondary_return = None
+        self.render()
+
+    def show_details(self):
+        self.show_secondary("diagnostics")
+
+    def failure_message(self):
+        if isinstance(self._failure, dict):
+            return str(self._failure.get("message", "需要查看详情"))
+        return str(self._failure or "").splitlines()[0] if self._failure else ""
 
     @staticmethod
-    def section_heading(number, text):
-        row = QtWidgets.QHBoxLayout()
-        row.setSpacing(9)
-        row.addWidget(label(number, "sectionNumber"))
-        row.addWidget(label(text, "sectionTitle"), 1)
-        return row
+    def set_action_role(widget, primary):
+        role = "primary" if primary else "quiet"
+        if widget.property("studioRole") != role:
+            widget.setProperty("studioRole", role)
+            widget.setObjectName(role)
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
+        widget.setFixedHeight(40 if primary else 32)
 
-    def selected_workspace(self):
-        item = self.projects.currentItem()
-        return item.data(QtCore.Qt.UserRole) if item else None
-
-    def reload_workspaces(self):
-        selected = self.selected_workspace()
-        try:
-            values = self.workspaces.list()
-        except (OSError, ValueError, StudioError) as exc:
-            self.errors[selected] = str(exc)
-            self.update_selection()
+    def render(self):
+        if self._closed:
             return
-        self.projects.blockSignals(True)
-        self.projects.clear()
-        for value in values:
-            item = QtWidgets.QListWidgetItem(value["name"] + "\n会话 · 附件 · 项目决策")
-            item.setData(QtCore.Qt.UserRole, value["workspace_id"])
-            item.setToolTip(value["name"] + "\n" + value["workspace_id"])
-            self.projects.addItem(item)
-        if values:
-            self.projects.setCurrentRow(0)
-            for index in range(self.projects.count()):
-                if self.projects.item(index).data(QtCore.Qt.UserRole) == selected:
-                    self.projects.setCurrentRow(index)
-        self.projects.blockSignals(False)
-        self.update_selection()
+        view = self.projection()
+        account = self._snapshot.get("account", {})
+        status = account.get("status", "unknown")
+        active = self._launch_active()
+        busy = "probe" in self._pending or "account" in self._pending
+        self.checking_box.setVisible(self._checking_visible)
+        if self.checking_loader:
+            self.checking_loader.set_busy(view.name == "checking" and self._checking_visible)
+        if view.name == "setup":
+            modes = {
+                "codex_missing": ("需要 Codex", "安装 Codex 后即可继续。"),
+                "codex_incompatible": ("当前 Codex 版本不受支持", f"需要 Codex {SUPPORTED_CODEX_VERSION}，请选择兼容安装。"),
+                "codex_error": ("无法启动 Codex", "尚未确认可用的 Codex 连接，请重新检查或选择其他安装。"),
+                "codex_unconfirmed": ("无法确认可用安装", f"需要 Codex {SUPPORTED_CODEX_VERSION}。请选择已有安装，或查看要求。"),
+                "houdini": ("需要 Houdini 安装", "请选择本机已有的 Houdini 安装。"),
+            }
+            title, message = modes[view.mode]
+            self.setup_title.setText(title)
+            self.setup_message.setText(message)
+            self.install_guide.setVisible(view.mode == "codex_missing")
+            self.setup_details.setVisible(view.mode != "codex_missing")
+            self.setup_details.setText("查看要求" if view.mode in {"codex_incompatible", "codex_unconfirmed"} else "查看详情")
+            self.setup_details.setAccessibleName(self.setup_details.text())
+            self.setup_codex.setVisible(view.mode != "houdini")
+            self.setup_codex.setText("选择兼容安装" if view.mode == "codex_incompatible" else
+                                    "选择其他安装" if view.mode == "codex_error" else "选择已有安装")
+            self.setup_retry.setVisible(view.mode in {"codex_error", "houdini"})
+            self.setup_houdini.setVisible(view.mode == "houdini")
+            self.set_action_role(self.install_guide, view.mode == "codex_missing")
+            self.set_action_role(self.setup_codex, view.mode in {"codex_incompatible", "codex_unconfirmed"})
+            self.set_action_role(self.setup_retry, view.mode == "codex_error")
+            self.set_action_role(self.setup_houdini, True)
+            if self._setup_mode != view.mode:
+                ordered = {
+                    "codex_missing": (self.install_guide, self.setup_codex, self.setup_retry, self.setup_houdini),
+                    "codex_incompatible": (self.setup_codex, self.install_guide, self.setup_retry, self.setup_houdini),
+                    "codex_unconfirmed": (self.setup_codex, self.install_guide, self.setup_retry, self.setup_houdini),
+                    "codex_error": (self.setup_retry, self.setup_codex, self.install_guide, self.setup_houdini),
+                    "houdini": (self.setup_houdini, self.setup_retry, self.setup_codex, self.install_guide),
+                }[view.mode] + (self.setup_details,)
+                for widget in ordered:
+                    self.setup_actions.removeWidget(widget)
+                for widget in ordered:
+                    self.setup_actions.addWidget(widget)
+                self._setup_mode = view.mode
+        pending_login = bool(account.get("login_pending", status == "waiting"))
+        uncertain = bool(account.get("action_unknown"))
+        self.auth_title.setText("登录以继续" if view.mode == "signed_out" else
+                                "请在浏览器中完成登录" if view.mode == "waiting" else "暂时无法确认账号")
+        self.auth_message.setText("使用你的 ChatGPT 账号连接 Codex。" if view.mode == "signed_out" else
+                                  "完成后会自动继续。" if view.mode == "waiting" else
+                                  "先查询原账号状态，再决定下一步。")
+        self.login.setVisible(view.mode == "signed_out")
+        self.login.setEnabled(not busy and not uncertain and not pending_login)
+        self.auth_query.setVisible(view.mode == "attention")
+        self.auth_query.setEnabled(not busy)
+        self.reopen_login.setVisible(pending_login)
+        self.cancel_login.setVisible(pending_login)
+        self.reopen_login.setEnabled(not busy and not uncertain)
+        self.cancel_login.setEnabled(not busy and not uncertain)
+        self.auth_hint.setVisible(view.mode == "signed_out")
+        self.recents.setVisible(bool(self._recent_records))
+        self.empty_hint.setVisible(not self._recent_records)
+        self.deferred_row.setVisible(self._deferred_target is not None)
+        if self._deferred_target is not None:
+            self.deferred_label.setText("待打开 · " + Path(self._deferred_target.path).name + "\n准备完成，请主动打开。")
+        self.home_error.setText(self.failure_message())
+        self.home_error.setVisible(bool(self._failure))
+        self.open_button.setEnabled(view.name == "home" and not active)
+        self.empty_button.setEnabled(view.name == "home" and not active)
+        mode = view.mode
+        self.launch_title.setText("已在 Houdini 中打开" if mode == "opened" else
+                                  "尚未确认场景是否打开" if mode == "unknown" else
+                                  "未能打开场景" if mode == "failed" else "正在打开 " + self._launch_label)
+        messages = {"validate": "确认启动条件", "prepare": "确认启动条件", "submit": "启动 Houdini",
+                    "connecting": "连接 Studio", "scene": "正在确认场景",
+                    "unknown": "Houdini 可能已经启动。先查询原请求，避免重复打开。",
+                    "opened": self._launch_label + "\n关闭此窗口不会关闭 Houdini。",
+                    "failed": self.failure_message() or "已确认没有可能存活的启动进程，可以返回后重新打开。"}
+        self.launch_message.setText(messages.get(mode, "正在确认启动状态"))
+        self.launch_query.setVisible(mode == "unknown")
+        self.launch_query.setEnabled("status" not in self._pending)
+        self.launch_back.setVisible(mode == "failed")
+        if self.launch_loader:
+            self.launch_loader.set_busy(view.name == "launching" and mode in {"validate", "prepare", "submit", "connecting", "scene"})
+        for widget in (self.codex, self.codex_browse, self.houdini, self.houdini_browse, self.recheck):
+            widget.setEnabled(not active)
+        self.recheck.setEnabled(not active and not busy)
+        self.account_summary.setText(("已登录 ChatGPT\n" + str(account.get("email") or "")) if status == "signed_in" else
+                                     "等待浏览器登录" if pending_login else "尚未登录" if status == "signed_out" else "账号状态尚未确认")
+        if active:
+            self.account_summary.setText(self.account_summary.text() + "\n启动期间不能更改账号。")
+        self.account_query.setEnabled(not active and not busy)
+        self.logout.setVisible(status == "signed_in")
+        self.logout.setEnabled(not active and not busy and not uncertain)
+        self.settings_error.setText(self.failure_message())
+        self.settings_error.setVisible(bool(self._failure))
+        self._sync_environment_controls()
+        self.error_details.set_failure(self._failure)
+        details = {"requirements": {"codex_version": SUPPORTED_CODEX_VERSION},
+                   "environment": self._snapshot, "launch": self._launch_record,
+                   "request_id": self._request_id, "icons": icon_diagnostics()}
+        rendered = json.dumps(details, ensure_ascii=False, indent=2, default=str)
+        if self.diagnostics_text.toPlainText() != rendered:
+            self.diagnostics_text.setPlainText(rendered)
+        page = self.pages[self.current_page]
+        if self.stack.currentWidget() is not page:
+            self.page_transition.stop()
+            self.stack.setCurrentWidget(page)
+            if self.isVisible() and not self.isMinimized():
+                self.page_transition.start()
+            else:
+                self.page_opacity.setOpacity(1.0)
+        for widget in self.findChildren(QtWidgets.QPushButton):
+            if widget.property("studioRole") == "primary" and widget.isVisibleTo(self):
+                widget.setFixedHeight(40)
 
-    def update_selection(self):
-        workspace_id = self.selected_workspace()
-        session = self.sessions.get(workspace_id, {})
-        has_projects = self.projects.count() > 0
-        self.projects.setVisible(has_projects)
-        self.projects.setFixedHeight(min(136, max(68, self.projects.count() * 65)))
-        self.empty_workspace.setVisible(not has_projects)
-        self.environment.setVisible(has_projects)
-        self.settings_toggle.setVisible(has_projects)
-        self.create_button.setVisible(has_projects)
-        self.projects.setEnabled(not self.busy)
-        self.create_button.setEnabled(not self.busy)
-        self.create_first.setEnabled(not self.busy)
-        self.workspace_name.setEnabled(not self.busy)
-        self.output_path.setText(session.get("render_output_directory") or str(render_output_directory(self.paths)))
-        current = self.projects.currentItem()
-        title = current.text().split("\n", 1)[0] if workspace_id else "今晚，从这里开始。"
-        self.workspace_identity.setText(title if len(title) <= 30 else title[:29] + "…")
-        self.workspace_identity.setToolTip(title)
-        active = session.get("state") in {"starting", "ready", "unknown"} or bool(session.get("houdini_left_running"))
-        for control in self.configuration_controls:
-            control.setEnabled(not self.busy and not active)
-        missing = not self.houdini.currentData() or not self.codex.text().strip()
-        hint = ("尚未找到 Houdini，请选择安装中的可执行文件。" if not self.houdini.currentData() else
-                "尚未找到 Codex，请在「启动设置」中选择。" if not self.codex.text().strip() else "")
-        self.environment_hint.setText(hint)
-        self.environment_hint.setVisible(bool(hint))
-        self.launch_button.setEnabled(bool(workspace_id) and not self.busy and not active)
-        self.launch_button.setText("检查并启动中…" if self.busy else
-                                   "正在连接工作室…" if session.get("state") == "starting" else
-                                   "工作室已打开" if session.get("state") == "ready" else
-                                   "等待会话状态确认" if active else
-                                   "创建后即可进入" if not workspace_id else "补全启动环境    →" if missing else "进入工作室    ↗")
-        self.activity.set_active(self.busy or session.get("state") == "starting")
-        error = self.errors.get(workspace_id) or self.errors.get(None)
-        state = session.get("state")
-        if self.busy:
-            self.set_status("working", "检查并启动环境", "STARTING", "正在检查所选版本并启动 Studio。完成后会继续等待 Houdini 注册。")
-        elif error:
-            self.set_status("error", "启动遇到问题", "ATTENTION", error)
-        elif state == "failed":
-            message = session.get("message", "启动失败，请检查所选环境。")
-            if session.get("houdini_left_running"):
-                message += "\n上次状态确认 Houdini 仍在运行，当前工作空间保持占用。"
-            self.set_status("error", "会话未正常连接", "FAILED", message)
-        elif state == "starting":
-            self.set_status("working", "等待 Houdini 注册", "CONNECTING", "启动请求已交给 Studio。Houdini 注册 Runtime 后，这里会显示已连接。")
-        elif state == "ready":
-            self.set_status("ready", "工作室已连接", "CONNECTED", "在 Houdini 的 Python Panel 中选择 Big-Chicken Studio。")
-        elif state == "unknown":
-            self.set_status("error", "会话状态暂未确认", "UNKNOWN", session.get("message") or "暂时无法读取状态文件，正在等待下次更新。场景结果请查看原操作收据。")
-        elif state == "closed":
-            self.set_status("idle", "Houdini 已退出", "CLOSED", "会话与执行记录已保留，可以再次进入。场景操作结果以 Runtime 收据为准。")
-        elif not workspace_id:
-            self.set_status("idle", "先创建一个工作空间", "STANDBY", "写下工作空间名称，点击创建。这里会成为你的会话、参考图和项目决策的归处。")
-        elif missing:
-            self.set_status("error", "还需要选择启动环境", "SETUP", hint)
+    def _sync_environment_controls(self):
+        houdini = self._snapshot.get("houdini", {})
+        selected = self.houdini.currentData() if "houdini" in self._overrides_dirty else houdini.get("path")
+        self.houdini.blockSignals(True)
+        for item in houdini.get("installations", []):
+            if self.houdini.findData(item["path"]) < 0:
+                self.houdini.addItem(item["label"], item["path"])
+                self.houdini.setItemData(self.houdini.count() - 1, item["path"], QtCore.Qt.ToolTipRole)
+        index = self.houdini.findData(selected)
+        if index >= 0:
+            self.houdini.setCurrentIndex(index)
+        self.houdini.blockSignals(False)
+        if "codex" not in self._overrides_dirty:
+            self.codex.setText(self._snapshot.get("codex", {}).get("path") or "")
+
+    def show_failure(self, failure):
+        self._failure = failure
+
+    def _submit(self, kind, function, done, failed=None):
+        if self._closed:
+            return
+        self._serial += 1
+        relay = _TaskReply(self, kind, self._serial, self._generation, done, failed or self.show_failure)
+        task = relay.task = Task(function)
+        self._pending[kind] = relay.serial
+        self._tasks[relay.serial] = relay
+        task.signals.result.connect(relay.success)
+        task.signals.error.connect(relay.failure)
+        QtCore.QThreadPool.globalInstance().start(task)
+
+    def _completed(self, relay, value, failed):
+        same_generation = relay.kind not in {"probe", "account", "prepare", "remember"} or relay.generation == self._generation
+        current = (not self._closed and same_generation and
+                   self._pending.get(relay.kind) == relay.serial)
+        self._tasks.pop(relay.serial, None)
+        if self._pending.get(relay.kind) == relay.serial:
+            self._pending.pop(relay.kind, None)
+        if current:
+            (relay.failed if failed else relay.done)(value)
+            self.render()
+        relay.deleteLater()
+
+    def _launch_active(self):
+        return bool(self._request_id and (self._launch_phase or not self._launch_record or
+                    self._launch_record.get("state") not in {"closed", "rejected"} or
+                    self._launch_record.get("process_may_exist")))
+
+    def _ready(self):
+        return (self._snapshot.get("codex", {}).get("state") == "ready" and
+                self._snapshot.get("houdini", {}).get("state") == "found" and
+                self._snapshot.get("account", {}).get("status") == "signed_in" and
+                not self._snapshot.get("account", {}).get("action_unknown"))
+
+    def probe(self):
+        if self._closed or self._launch_active():
+            return
+        self.probe_delay.stop()
+        self._checking_visible = False
+        self.checking_delay.start()
+        self.account_poll.stop()
+        self._needs_probe = False
+        self._generation += 1
+        previous = self._onboarding
+        if previous:
+            previous.cancelled.set()
+        owner = self._onboarding = _OnboardingOwner(self._factory, self._guard, previous)
+        overrides = {"codex_override": self.codex.text().strip() if "codex" in self._overrides_dirty else None,
+                     "houdini_override": (self.houdini.currentData() or "") if "houdini" in self._overrides_dirty else None}
+        self._snapshot = {"codex": {"state": "checking"}, "account": {"status": "unknown"},
+                          "houdini": self._snapshot.get("houdini", {})}
+        self._submit("probe", lambda: owner.probe(overrides), self.apply_snapshot, self.probe_failed)
+        self.render()
+
+    def probe_failed(self, failure):
+        self._snapshot["codex"] = {**self._snapshot.get("codex", {}), "state": "error"}
+        self._snapshot["account"] = {"status": "unknown"}
+        self.show_failure(failure)
+
+    def overrides_changed(self, field):
+        if self._closed or self._launch_active():
+            return
+        self._generation += 1
+        self._overrides_dirty.add(field)
+        if self._onboarding:
+            self._onboarding.cancelled.set()
+        self._snapshot = {"codex": {"state": "checking"}, "account": {"status": "unknown"},
+                          "houdini": self._snapshot.get("houdini", {})}
+        self.probe_delay.start()
+        self.render()
+
+    def apply_snapshot(self, value):
+        if not isinstance(value, dict):
+            return
+        self._snapshot = {key: value.get(key) or {} for key in ("codex", "houdini", "account")}
+        self._snapshot.update(revision=value.get("revision"), error=value.get("error"))
+        if value.get("error"):
+            self.show_failure(value["error"])
         else:
-            self.set_status("idle", "可以进入工作室", "STANDBY", "从空白场景开始，或选择一份已有 HIP。点击进入时会检查所选环境。")
+            self._failure = None
+        account = value.get("account", {})
+        if account.get("login_pending", account.get("status") == "waiting"):
+            self.account_poll.start()
+        else:
+            self.account_poll.stop()
 
-    def set_status(self, tone, title, code, details):
-        if self.status_card.property("tone") != tone:
-            self.status_card.setProperty("tone", tone)
-            self.status_card.style().unpolish(self.status_card)
-            self.status_card.style().polish(self.status_card)
-        self.status.setText(title)
-        self.status_code.setText(code)
-        # Preserve selection and scroll position when a poll repeats the same text.
-        if self.status_details.toPlainText() != str(details):
-            self.status_details.setPlainText(str(details))
-        self.copy_status.setEnabled(bool(details))
-
-    def copy_details(self):
-        QtWidgets.QApplication.clipboard().setText(self.status_details.toPlainText())
-
-    def inputs_changed(self, *_args):
-        self.houdini.setToolTip(str(self.houdini.currentData() or ""))
-        self.hip.setToolTip(self.hip.text())
-        self.codex.setToolTip(self.codex.text())
-        self.update_selection()
-
-    def toggle_settings(self, checked):
-        self.settings.setVisible(checked)
-        self.settings_toggle.setArrowType(QtCore.Qt.DownArrow if checked else QtCore.Qt.RightArrow)
-        if checked:
-            QtCore.QTimer.singleShot(0, lambda: self.form_scroll.ensureWidgetVisible(self.settings))
-
-    def create_first_workspace(self):
-        self.record_workspace(self.workspace_name.text())
-
-    def create_workspace(self):
-        name, ok = QtWidgets.QInputDialog.getText(self, "新建工作空间", "给这次创作起个名字")
-        if ok:
-            self.record_workspace(name)
-
-    def record_workspace(self, name):
-        if self.busy:
+    def account_action(self, method):
+        if self._launch_active() or self._closed or self._onboarding is None:
             return
-        if not name.strip():
-            self.workspace_name.setFocus()
-            self.set_status("error", "给工作空间起个名字", "NAME", "输入一个名称后即可创建。")
+        account = self._snapshot.get("account", {})
+        if "account" in self._pending or account.get("action_unknown"):
             return
-        try:
-            value = self.workspaces.create(name.strip())
-        except (StudioError, OSError, ValueError) as exc:
-            self.errors[self.selected_workspace()] = str(exc)
-            self.update_selection()
+        if method == "login_start" and account.get("login_pending"):
             return
-        self.errors.pop(None, None)
-        self.workspace_name.clear()
-        self.reload_workspaces()
-        for index in range(self.projects.count()):
-            if self.projects.item(index).data(QtCore.Qt.UserRole) == value["workspace_id"]:
-                self.projects.setCurrentRow(index)
-        self.houdini.setFocus()
+        self._account_polls = 0
+        if method == "login_start":
+            self._secondary = None
+        owner = self._onboarding
+        def complete(value):
+            if isinstance(value, dict):
+                self.apply_snapshot(value)
+            if method == "logout":
+                self._secondary = None
+            if method in {"login_start", "reopen_login"}:
+                url = value.get("auth_url") if isinstance(value, dict) else value
+                if url:
+                    self.open_url(url)
+        self._submit("account", lambda: owner.call(method), complete,
+                     lambda failure: self.account_failed(failure, action_unknown=method in {
+                         "login_start", "cancel_login", "logout"}))
+        self.render()
+
+    def account_failed(self, failure, *, action_unknown=False):
+        self.account_poll.stop()
+        account = self._snapshot["account"] = {**self._snapshot.get("account", {}), "status": "unknown"}
+        if action_unknown:
+            account["action_unknown"] = True
+        self.show_failure(failure)
+
+    def refresh_account(self):
+        if self._closed or self._launch_active() or "account" in self._pending or self._onboarding is None:
+            return
+        if self.account_poll.isActive():
+            self._account_polls += 1
+            if self._account_polls >= 150:
+                self.account_poll.stop()
+                self._snapshot["account"] = {**self._snapshot.get("account", {}), "status": "unknown",
+                                             "message": "请主动重新检查登录状态"}
+                self.render()
+                return
+        owner = self._onboarding
+        self._submit("account", lambda: owner.call("account_read"), self.apply_snapshot, self.account_failed)
+        self.render()
+
+    def preference_loaded(self, enabled):
+        self._preference_loaded = True
+        if self._preference_revision == 0:
+            self._minimize_after_open = bool(enabled)
+            self.minimize_choice.blockSignals(True)
+            self.minimize_choice.setChecked(bool(enabled))
+            self.minimize_choice.blockSignals(False)
+        self.schedule_minimize()
+
+    def preference_failed(self, failure):
+        self._preference_loaded = True
+        self._minimize_after_open = False
+        self.minimize_choice.blockSignals(True)
+        self.minimize_choice.setChecked(False)
+        self.minimize_choice.blockSignals(False)
+        self.show_failure(failure)
+
+    def save_minimize_preference(self, enabled):
+        self._minimize_after_open = bool(enabled)
+        self._preference_revision += 1
+        revision = self._preference_revision
+        if not enabled:
+            self.minimize_timer.stop()
+        def write():
+            with self._preference_guard:
+                if revision == self._preference_revision:
+                    self._preference_writer(self.paths, enabled)
+        self._submit("preference-write", write, lambda _value: None)
+
+    def schedule_minimize(self):
+        if not self._preference_loaded or not self._request_id or self.projection().mode != "opened":
+            return
+        if self._minimize_attempted_id == self._request_id:
+            return
+        self._minimize_attempted_id = self._request_id
+        if self._minimize_after_open and self._secondary is None and not self.isMinimized():
+            self._minimize_scheduled_id = self._request_id
+            self.minimize_timer.start()
+
+    def minimize_opened_request(self):
+        if (not self._closed and self._minimize_scheduled_id == self._request_id and
+                self.projection().mode == "opened" and self._secondary is None and
+                self._minimize_after_open and self.isVisible() and not self.isMinimized()):
+            self.showMinimized()
+
+    def reload_recents(self):
+        self._submit("recent", lambda: self.catalog.recent(limit=20), self.recents_loaded)
+
+    def recents_loaded(self, records):
+        self._recent_records = list(records or [])
+        self.recents.clear()
+        self._recent_rows = []
+        for record in self._recent_records:
+            item = QtWidgets.QListWidgetItem()
+            item.setSizeHint(QtCore.QSize(0, 64))
+            item.setData(QtCore.Qt.UserRole, record)
+            item.setToolTip(record["path"])
+            self.recents.addItem(item)
+            row = RecentRow(record)
+            row.selected.connect(self.select_recent_record)
+            row.activated.connect(self.activate_recent_record)
+            row.menu_requested.connect(self.show_recent_menu)
+            set_button_icon(row.more_button, "ellipsis", text="更多", icon_only=True)
+            row.more_button.setAccessibleName(record["name"] + " 的操作")
+            self.recents.setItemWidget(item, row)
+            self._recent_rows.append(row)
+            if record["path"] == self._recent_path:
+                self.recents.setCurrentItem(item)
+        if self.recents.currentRow() < 0 and self.recents.count():
+            self.recents.setCurrentRow(0)
+        self.render()
+
+    def select_recent_record(self, record):
+        for index in range(self.recents.count()):
+            item = self.recents.item(index)
+            if item.data(QtCore.Qt.UserRole)["path"] == record["path"]:
+                self.recents.setCurrentItem(item)
+                return
+
+    def recent_selection_changed(self, item, _previous=None):
+        self._recent_path = item.data(QtCore.Qt.UserRole)["path"] if item is not None else None
+        for row in self._recent_rows:
+            row.set_selected(row.record["path"] == self._recent_path)
+
+    def activate_recent(self, item):
+        if item is not None:
+            self.activate_recent_record(item.data(QtCore.Qt.UserRole))
+
+    def activate_recent_record(self, record):
+        if record.get("missing"):
+            self.show_failure(ApiFailure("找不到此文件。请在该条目的更多菜单中重新定位。", code="HIP_MISSING"))
+            self.render()
+            return
+        self.activate_target(path=record["path"])
+
+    def recent_context_menu(self, position):
+        item = self.recents.itemAt(position) if position is not None else self.recents.currentItem()
+        if item is not None:
+            location = (self.recents.viewport().mapToGlobal(position) if position is not None else
+                        self.recents.viewport().mapToGlobal(self.recents.visualItemRect(item).center()))
+            self.show_recent_menu(item.data(QtCore.Qt.UserRole), location)
+
+    def show_recent_menu(self, record, location):
+        menu = QtWidgets.QMenu(self)
+        menu.setObjectName("studioRecentMenu")
+        apply_theme(menu, popup=True)
+        if record.get("missing"):
+            menu.addAction("重新定位", lambda: self.relocate_recent(record))
+            menu.addAction("复制原路径", lambda: QtWidgets.QApplication.clipboard().setText(record["path"]))
+        else:
+            menu.addAction("打开", lambda: self.activate_recent_record(record))
+            menu.addAction("在资源管理器中显示", lambda: self._reveal_path(record["path"]))
+            menu.addAction("复制路径", lambda: QtWidgets.QApplication.clipboard().setText(record["path"]))
+        menu.addAction("从最近列表移除", lambda: self.forget_recent(record))
+        menu.popup(location)
+        self._menu = menu
+
+    def relocate_recent(self, record):
+        if self._request_id is not None:
+            return
+        old_path = record["path"]
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "重新定位 HIP", "", "Houdini scenes (*.hip *.hiplc *.hipnc)")
+        if path:
+            def done(_value):
+                self._recent_path = path
+                self._failure = None
+                self.reload_recents()
+            self._submit("recent-edit", lambda: self.catalog.relocate_recent(old_path, path), done)
+
+    def forget_recent(self, record):
+        if self._request_id is not None:
+            return
+        path = record["path"]
+        def done(_value):
+            if self._recent_path == path:
+                self._recent_path = None
+            self._failure = None
+            self.reload_recents()
+        self._submit("recent-edit", lambda: self.catalog.remove_recent(path), done)
+
+    @staticmethod
+    def reveal_in_folder(path):
+        if os.name == "nt":
+            return QtCore.QProcess.startDetached("explorer.exe", ["/select,", str(Path(path))])
+        return QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(str(Path(path).parent)))
+
+    def choose_hip(self):
+        if self.current_page != "home" or self._request_id is not None:
+            return
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "打开 HIP", "", "Houdini scenes (*.hip *.hiplc *.hipnc)")
+        if path:
+            self.activate_target(path=path)
+
+    def select_path(self, path):
+        """Pure selection used for drops outside Home; never admits or starts."""
+        def selected(target):
+            self._target = self._deferred_target = target
+            self._failure = None
+        self._submit("selection", lambda: self.target_factory.hip(path), selected)
+
+    def activate_deferred(self):
+        if self._deferred_target is not None:
+            self.activate_target(self._deferred_target)
+
+    def activate_target(self, target=None, *, path=None):
+        if self._closed or self.current_page != "home" or not self._ready() or self._request_id is not None:
+            return
+        if target is None and path is None:
+            return
+        self._pending.pop("selection", None)
+        self._request_id = new_id()
+        self._launch_paths = self.paths
+        self._launch_target = target
+        self._launch_label = Path(path).name if path else ("空场景" if target.kind == "empty" else Path(target.path).name)
+        self._launch_record = self._launch_error = self._prepared = None
+        self._launch_version += 1
+        self._launch_phase = "validate" if path else "prepare"
+        self._remembered = False
+        self._deferred_target = None
+        self._failure = None
+        self.account_poll.stop()
+        if path:
+            self._submit("target", lambda: self.target_factory.hip(path), self.target_activated, self.activation_failed)
+        else:
+            self.target_activated(target)
+        self.render()
+
+    def target_activated(self, target):
+        self._target = self._launch_target = target
+        self._launch_phase = "prepare"
+        owner = self._onboarding
+        self._submit("prepare", lambda: owner.call("prepare_launch"), self.prepared, self.prepare_failed)
+
+    def activation_failed(self, failure):
+        # No launch submission has run. This is local preflight evidence.
+        self._launch_phase = None
+        self._launch_record = {"request_id": self._request_id, "state": "rejected", "process_may_exist": False,
+                               "submission_state": "not_submitted", "message": str(failure)}
+        self.show_failure(failure)
+
+    def prepared(self, choices):
+        self._needs_probe = True  # prepare_launch ends this onboarding connection.
+        if not isinstance(choices, dict):
+            self.prepare_failed(ApiFailure("启动条件尚未确认，请重新检查", code="PREPARE_UNCONFIRMED"))
+            return
+        if Path(choices.get("codex_home") or "").resolve() != self._launch_paths.codex_home:
+            self.prepare_failed(ApiFailure("账号与启动的数据位置不一致，请重新检查环境", code="PROFILE_MISMATCH"))
+            return
+        self._prepared = choices
+        request_id, target, paths = self._request_id, self._launch_target, self._launch_paths
+        self._launch_phase = "submit"
+        self._submit("launch", lambda: self._launch(paths, target, choices["houdini_path"],
+                     choices["codex_path"], request_id=request_id), self.launched, self.launch_failed)
+
+    def prepare_failed(self, failure):
+        self._needs_probe = True
+        self._snapshot["account"] = {**self._snapshot.get("account", {}), "status": "unknown"}
+        self.activation_failed(failure)
+
+    def launched(self, value):
+        self._launch_phase = None
+        self._launch_version += 1
+        self.apply_launch_status(value)
+        if self._launch_active():
+            self.poll.start()
+
+    def launch_failed(self, failure):
+        self._launch_phase = None
+        self._launch_record = {"request_id": self._request_id, "state": "unknown", "process_may_exist": True,
+                               "target": self._launch_target.to_dict()}
+        self._launch_error = failure
+        self.show_failure(failure)
+        self.poll.start()
+
+    def query_launch(self):
+        if self._closed or not self._request_id or self._launch_phase or "status" in self._pending:
+            return
+        request_id, version, paths = self._request_id, self._launch_version, self._launch_paths
+        def done(value):
+            if request_id == self._request_id and version == self._launch_version:
+                self.apply_launch_status(value)
+        def failed(value):
+            if request_id == self._request_id and version == self._launch_version:
+                self.query_failed(value)
+        self._submit("status", lambda: self._query(paths, request_id), done, failed)
+        self.render()
+
+    def query_failed(self, failure):
+        self._launch_record = {**(self._launch_record or {}), "request_id": self._request_id,
+                               "state": "unknown", "process_may_exist": True}
+        self._launch_error = failure
+        self.show_failure(failure)
+
+    def apply_launch_status(self, value):
+        if not isinstance(value, dict) or value.get("request_id") != self._request_id:
+            self.launch_failed(ApiFailure("无法关联启动状态，请查询原请求", code="LAUNCH_STATUS_UNCONFIRMED"))
+            return
+        self._launch_record = value
+        if value.get("error"):
+            self._launch_error = value["error"]
+            self.show_failure(value["error"])
+        elif self._launch_error is not None:
+            if self._failure is self._launch_error:
+                self._failure = None
+            self._launch_error = None
+        if self.projection().mode == "opened":
+            if not self._remembered:
+                self._remembered = True
+                owner, path = self._onboarding, (self._prepared or {}).get("houdini_path")
+                if owner is not None and path:
+                    self._submit("remember", lambda: owner.call("remember_houdini", path), lambda _value: None)
+                self.reload_recents()
+            self.schedule_minimize()
+        if value.get("state") in {"closed", "rejected"} and not value.get("process_may_exist"):
+            self.poll.stop()
+            self.minimize_timer.stop()
+
+    def return_after_launch(self):
+        if self._request_id is None or self.projection().mode != "failed" or self._launch_active():
+            return
+        self._request_id = self._launch_record = self._launch_phase = None
+        self._launch_version += 1
+        self._failure = None
+        if self._needs_probe:
+            self.probe()
+        self.render()
+
+    def choose_codex(self):
+        if self._launch_active():
+            return
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "选择 Codex", "", "Codex (codex.exe codex)")
+        if path:
+            self.codex.setText(path)
+            self.overrides_changed("codex")
 
     def choose_houdini(self):
+        if self._launch_active():
+            return
         path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "选择 Houdini", "", "Houdini (houdini.exe houdinifx.exe houdini)")
         if path:
             index = self.houdini.findData(path)
@@ -389,115 +1024,63 @@ class StudioLauncher(QtWidgets.QWidget):
                 self.houdini.addItem(Path(path).parent.parent.name, path)
                 index = self.houdini.count() - 1
             self.houdini.setCurrentIndex(index)
-            self.inputs_changed()
 
-    def choose_codex(self):
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "选择 Codex " + SUPPORTED_CODEX_VERSION, "", "Codex (codex.exe codex)")
-        if path:
-            self.codex.setText(path)
-
-    def choose_hip(self):
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "选择场景", "", "Houdini scenes (*.hip *.hiplc *.hipnc)")
-        if path:
-            self.hip.setText(path)
-
-    def start_session(self):
-        if not self.launch_button.isEnabled() or self.busy:
+    def open_url(self, value):
+        url = QtCore.QUrl(str(value))
+        if url.scheme() not in {"https", "http"} or not url.host() or url.userInfo():
+            self.show_failure(ApiFailure("登录地址无效，请重新检查账号", code="LOGIN_URL_INVALID"))
             return
-        workspace_id = self.selected_workspace()
-        if not workspace_id:
+        if not self._browser_open(url):
+            self.show_failure(ApiFailure("未能打开浏览器，可重新打开登录页", code="BROWSER_UNAVAILABLE"))
+
+    def open_install_guide(self):
+        self.open_url("https://developers.openai.com/codex/cli/")
+
+    @staticmethod
+    def dropped_path(mime):
+        urls = mime.urls()
+        if len(urls) != 1 or not urls[0].isLocalFile() or urls[0].hasQuery() or urls[0].hasFragment():
+            return None
+        path = urls[0].toLocalFile()
+        return path if Path(path).suffix.lower() in {".hip", ".hiplc", ".hipnc"} else None
+
+    def dragEnterEvent(self, event):
+        if self.dropped_path(event.mimeData()):
+            self.drop_hint.setVisible(self.current_page == "home")
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragLeaveEvent(self, event):
+        self.drop_hint.hide()
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event):
+        self.drop_hint.hide()
+        path = self.dropped_path(event.mimeData())
+        if not path:
+            event.ignore()
             return
-        if not self.houdini.currentData():
-            self.choose_houdini()
-            return
-        if not self.codex.text().strip():
-            self.settings_toggle.setChecked(True)
-            self.codex.setFocus()
-            return
-        values = (workspace_id, self.houdini.currentData(), self.codex.text().strip(), self.hip.text().strip() or None)
-        self.errors.pop(workspace_id, None)
-        self.errors.pop(None, None)
-        self.busy = True
-        self.launch_workspace = workspace_id
-        self.update_selection()
-        self.task = Task(lambda: self._launch(self.paths, *values))
-        self.task.signals.result.connect(self.launched)
-        self.task.signals.error.connect(self.failed)
-        QtCore.QThreadPool.globalInstance().start(self.task)
-
-    def launched(self, value):
-        self.busy = False
-        self.sessions[self.launch_workspace] = {**value, "state": "starting"}
-        self.update_selection()
-        if not self._closed:
-            self.poll.start()
-
-    def session_status(self):
-        if self.status_pending or self._closed:
-            return
-        self.status_pending = True
-        sessions = {key: dict(value) for key, value in self.sessions.items()}
-
-        def read_statuses():
-            results = {}
-            for key, session in sessions.items():
-                if session.get("state") in {"closed", "failed"}:
-                    continue
-                file = Path(session["directory"]) / "status.json"
-                try:
-                    value = read_json(file)
-                    if not isinstance(value, dict) or value.get("state") not in {"starting", "ready", "closed", "failed"}:
-                        raise ValueError("Invalid session status")
-                    results[key] = {**session, **value}
-                except (ValueError, OSError):
-                    results[key] = {**session, "state": "unknown", "message": "会话状态文件暂时不可读，正在等候重新确认。"}
-            return results
-
-        self.status_task = Task(read_statuses)
-        self.status_task.signals.result.connect(self.statuses_read)
-        self.status_task.signals.error.connect(self.status_read_failed)
-        QtCore.QThreadPool.globalInstance().start(self.status_task)
-
-    def statuses_read(self, values):
-        self.status_pending = False
-        for key, value in values.items():
-            # A late read from a previous owned session cannot replace a new one.
-            if self.sessions.get(key, {}).get("directory") == value.get("directory"):
-                self.sessions[key] = value
-        self.update_selection()
-        if all(value.get("state") in {"closed", "failed"} for value in self.sessions.values()):
-            self.poll.stop()
-
-    def status_read_failed(self, message):
-        self.status_pending = False
-        self.errors[self.selected_workspace()] = "状态读取失败：" + str(message)
-        self.update_selection()
-
-    def failed(self, message):
-        self.errors[self.launch_workspace if self.busy else self.selected_workspace()] = str(message)
-        self.busy = False
-        self.update_selection()
-
-    def changeEvent(self, event):
-        super().changeEvent(event)
-        if event.type() == QtCore.QEvent.WindowStateChange:
-            self.activity.sync_motion()
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        compact = self.width() < 1030
-        self.hero_title.setStyleSheet("font-size: 29px;" if compact else "")
-        self.hero_layout.setContentsMargins(22 if compact else 30, 28, 22 if compact else 30, 26)
-
-    def showEvent(self, event):
-        self._closed = False
-        self.activity.sync_motion()
-        if self.sessions and any(value.get("state") not in {"closed", "failed"} for value in self.sessions.values()):
-            self.poll.start()
-        super().showEvent(event)
+        if self.current_page == "home":
+            self.activate_target(path=path)
+        else:
+            self.select_path(path)
+        event.acceptProposedAction()
 
     def closeEvent(self, event):
         self._closed = True
-        self.poll.stop()
-        self.activity.set_active(False)
+        self._generation += 1
+        self.page_transition.stop()
+        for timer in (self.poll, self.account_poll, self.probe_delay, self.checking_delay, self.minimize_timer):
+            timer.stop()
+        owner = self._onboarding
+        if owner is not None:
+            owner.cancelled.set()
+            QtCore.QThreadPool.globalInstance().start(Task(owner.close))
         super().closeEvent(event)
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QtCore.QEvent.WindowStateChange and self.isMinimized():
+            self.page_transition.stop()
+            self.page_opacity.setOpacity(1.0)

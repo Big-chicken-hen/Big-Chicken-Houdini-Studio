@@ -31,7 +31,8 @@ class SessionTrustTests(unittest.TestCase):
         self.bridge = Bridge(paths, workspace["workspace_id"], "session", "x" * 40, "codex", self.client)
         self.bridge.thread_id = "thread-1"
         self.bridge._runtime = Mock()
-        self.bridge._runtime.call.return_value = {"alive": True, "runtime_id": "runtime-1"}
+        self.bridge._runtime.call.return_value = {"alive": True, "runtime_id": "runtime-1",
+                                                  "scene": {"scene_epoch": "epoch-1"}}
         self.client.request.return_value = {"thread": {"id": "thread-1", "cwd": str(self.bridge.cwd),
                                                        "status": {"type": "idle"}, "turns": []}}
 
@@ -72,6 +73,32 @@ class SessionTrustTests(unittest.TestCase):
         self.assertTrue(self.change(True)["enabled"])
         self.client.request.assert_not_called()  # No resume, rollout, config edit or model turn required.
         self.assertEqual(config, self.bridge.thread_config())
+
+    def test_scene_replacement_is_checked_before_delegating_a_native_request(self):
+        self.change(True)
+        self.start()
+        item = self.item()
+        self.bridge._runtime.call.return_value = {"runtime_id": "runtime-1", "scene": {"scene_epoch": "epoch-2"}}
+        self.bridge.on_event(self.approval(item))
+        self.client.respond_to_server_request.assert_not_called()
+        self.assertFalse(self.bridge.scene_trust.enabled)
+        self.assertIn("1", self.bridge.pending_requests)
+        self.assertTrue(self.bridge.state()["scene_context"]["changed"])
+
+    def test_save_as_preserves_same_scene_consent_but_unknown_health_does_not_delegate(self):
+        self.change(True)
+        self.start()
+        item = self.item()
+        self.bridge._runtime.call.return_value = {"runtime_id": "runtime-1",
+            "scene": {"scene_epoch": "epoch-1", "hip_path": "renamed.hip"}}
+        self.bridge.on_event(self.approval(item))
+        self.client.respond_to_server_request.assert_called_once()
+        self.bridge.on_event({"method": "item/completed", "params": {"threadId": "thread-1", "turnId": "turn-1", "item": item}})
+        item = self.item(call_id="call-2")
+        self.bridge._runtime.call.side_effect = StudioError("CONNECTION_LOST", "fixture")
+        self.bridge.on_event(self.approval(item, request_id=2))
+        self.client.respond_to_server_request.assert_called_once()
+        self.assertIn("2", self.bridge.pending_requests)
 
     def test_only_current_consent_allows_once_and_revocation_stops_next_request(self):
         self.start()

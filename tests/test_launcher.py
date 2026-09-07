@@ -59,7 +59,7 @@ class LauncherTests(unittest.TestCase):
             self.assertIn(self.paths.runtime, Path(env[key]).parents)
         self.assertEqual(os.environ["HIA_OLD_CONFIG"], "obsolete")
         os.environ.pop("HIA_RENDER_OUTPUT_DIR")
-        self.assertEqual(launcher.render_output_directory(self.paths), self.paths.local("cache"))
+        self.assertIsNone(launcher.render_output_directory(self.paths))
 
     def test_pythonw_uses_console_sibling_and_missing_console_is_an_error(self):
         pythonw = self.root / "pythonw.exe"
@@ -69,6 +69,12 @@ class LauncherTests(unittest.TestCase):
         console = self.root / "python.exe"
         console.touch()
         self.assertEqual(launcher.console_python(pythonw), str(console))
+
+    def test_native_app_server_enables_system_proxy_only_on_windows(self):
+        for platform, flags in (("nt", ["--enable", "respect_system_proxy"]), ("posix", [])):
+            with self.subTest(platform=platform), patch.object(launcher.os, "name", platform):
+                self.assertEqual(launcher.codex_app_server_command(self.codex),
+                                 [str(self.codex), *flags, "app-server"])
 
     def test_version_check_uses_isolated_environment_and_rejects_unverified_codex(self):
         with patch.object(launcher.subprocess, "run", return_value=Mock(stdout="codex-cli 0.153.4\n")) as run:
@@ -99,7 +105,7 @@ class LauncherTests(unittest.TestCase):
         self.assertNotIn(first_token, str(first))
         folder = Path(first["directory"])
         self.assertEqual(read_json(folder / "launch.json")["hip"], str(hip))
-        self.assertEqual(first["render_output_directory"], str(self.paths.local("cache")))
+        self.assertIsNone(first["render_output_directory"])
         for file in folder.iterdir():
             self.assertNotIn(first_token, file.read_text(encoding="utf-8"))
 

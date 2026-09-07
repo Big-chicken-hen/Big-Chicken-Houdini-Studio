@@ -1,4 +1,4 @@
-"""Windowed launcher with a visible failure message and project-local diagnostics."""
+"""Windowed launcher with a visible failure message and user-cache diagnostics."""
 import ctypes
 import os
 from pathlib import Path
@@ -12,9 +12,11 @@ sys.path.insert(0, str(root / "src"))
 
 def start():
     from studio.common import AppPaths
+    from studio.launcher import storage_environment
+    paths = AppPaths.for_user(root)
+    os.environ.update(storage_environment(paths))
     from studio.__main__ import main
-    paths = AppPaths(root)
-    folder = paths.local("logs")
+    folder = paths.cache("logs")
     folder.mkdir(parents=True, exist_ok=True)
     with (folder / "launcher.log").open("a", encoding="utf-8") as log:
         sys.stdout = sys.stderr = log
@@ -37,7 +39,7 @@ if __name__ == "__main__":
     try:
         exit_code = start()
     except Exception:
-        # Missing checkout/permissions can fail before the local log opens.
+        # Missing checkout/permissions can fail before the user-cache log opens.
         ctypes.windll.user32.MessageBoxW(None,
             "Studio could not load this installation. Check HIA_PROJECT_ROOT and run Setup Studio.cmd.",
             "Big-Chicken Houdini Studio", 0x10)

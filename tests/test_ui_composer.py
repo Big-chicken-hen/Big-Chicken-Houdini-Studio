@@ -27,7 +27,7 @@ class ComposerTest(unittest.TestCase):
         self.api = PreviewApi(self.root)
         self.api.state["codex"].update(state="idle", stop_requested=False)
         self.api.state["runtime"].update(main_thread_busy=False, active_operation_id=None, queue_depth=0)
-        self.panel = StudioPanel(api=self.api, auto_poll=False)
+        self.panel = StudioPanel(api=self.api, auto_poll=False, image_roots=(self.root,))
         self.panel.show()
         process_until(lambda: self.panel.transcript.history_known and self.panel.models_loaded)
 
@@ -264,7 +264,8 @@ class ComposerTest(unittest.TestCase):
         self.assertEqual(body, {})
         self.api.state.update(thread_id="fresh_thread", turn_id=None)
         self.api.thread = {"id": "fresh_thread", "status": {"type": "idle"}}
-        selected({"thread": copy.deepcopy(self.api.thread)})
+        selected({"thread": copy.deepcopy(self.api.thread), "thread_settings": {
+            "thread_id": "fresh_thread", "revision": 2, "model": "preview-model", "effort": "high", "source": "native"}})
         loaded = self.api.hold["/thread"].pop()[0]
         loaded({"thread": copy.deepcopy(self.api.thread), "history_available": False})
         self.assertEqual(self.panel.confirmed_new_thread, "fresh_thread")
