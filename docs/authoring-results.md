@@ -186,7 +186,7 @@ The presentation correction has no source changes to the existing backend
 onboarding, accounts, storage, native protocol, receipt or Houdini capability
 contracts. The formal installation and private user data were not changed.
 
-PR #5 remains Draft. The [latest Pro closure decision](pr5-closure-brief.md)
+At this staged-candidate checkpoint, PR #5 remained Draft. The [latest Pro closure decision](pr5-closure-brief.md)
 freezes features and further UI redesign. Its compact real workflow is the merge
 gate: official browser sign-in with Launcher/production account continuity;
 first-use and returning-user startup; Microsoft Pinyin and text/image clipboard
@@ -272,6 +272,8 @@ reviewers reconciled native history, persisted Runtime receipts and the capture.
 These are real results for that version, not fresh-process acceptance of later
 fixes. User-specific paths, original logs, Thread/Turn/operation IDs and images
 remain in the existing local review record under `.runtime/reviews`.
+The following table is the evidence snapshot before the user's final acceptance
+confirmation below; its open manual items are superseded by that confirmation.
 
 | Version and behavior | Established result | Remaining limit |
 | --- | --- | --- |
@@ -328,8 +330,46 @@ exit 0, including the existing reply-lifetime cases. One integrated Ruff check
 passes. A single 440-pixel native Qt preview confirms the changed page text and
 editor remain visible in the approved layout. Synthetic preedit and clipboard
 fixtures do not establish Windows Microsoft Pinyin or real clipboard behavior.
-PR #5 remains Draft until the missing real-workflow items and affected new-process
-checks are complete; no new authoring capability is included in this follow-up.
+At this editor-fix checkpoint PR #5 remained Draft, awaiting the missing real
+workflow and affected new-process checks; no authoring capability was added.
+
+## Final user acceptance and log review, 2026-09-07
+
+After receiving the `53ba82e` candidate and ordinary Launcher entry, the user
+reported "验收通过" and explicitly confirmed the complete workflow when asked
+to distinguish it from the editor-only retest: login/consent, images, Save As,
+Recent reopen and continued editing, and Stop during execution. This closes
+the manual acceptance items on the basis of the user's report. Main Composer
+and project-decisions input/draft behavior are accepted; valid earlier
+`b9d229c` receipt and image evidence remains attributed to that version.
+
+Independent review found a new normal Studio process session from 21:18:18 to
+21:19:14 +08:00 using this checkout. Its log has no recurrence of the prior
+readAll/deleteLater reply-lifetime traceback. That short session's ledger has
+no scene operations, so it independently corroborates startup/editor follow-up,
+not the complete edit/save/Stop flow. The user's remaining manual results were
+not supplied as a second set of HIP paths or operation IDs. Do not invent exact
+Stop timing, rollback, saved-file identity measurements or extra receipts.
+
+The new log also exposed Studio's icon event filter receiving a QNetworkReply
+wrapper where a QEvent was expected. A focused regression reproduces that exact
+argument failure. Both icon filters now keep their existing visual state,
+record a bounded `ICON_EVENT_UNAVAILABLE` diagnostic and return false for a
+non-event argument. They do not consume, delete or reinterpret the supplied
+object. Normal enabled-state, display-scale and loading lifecycle checks still
+pass; the five focused icon tests and one integrated Ruff check pass locally.
+No icon asset, page action, scene operation or native submission behavior changed.
+
+Houdini's own WindowOverlay also logged the same argument-type anomaly. Its
+binding/lifetime cause remains unknown and that installation was not modified.
+The guard covers Studio's observed exception; it does not claim an upstream fix
+or a new real-host run after the guard. The user reported the full workflow
+working; no associated wrong click, inaccessible control, duplicate execution
+or lost receipt was identified. Retain this host diagnostic as a known limit,
+separately from the accepted workflow and from the earlier reply-lifetime fix.
+With final-candidate CI successful, #5 can end Draft and merge under the closure
+brief. Cross-monitor DPI remains untested; future Thread requirements and
+existing-HIP authoring improvements remain outside this PR.
 
 ## Repository cleanup
 

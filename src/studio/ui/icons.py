@@ -41,6 +41,16 @@ def icon_diagnostics():
     return tuple(dict(record) for record in _diagnostics.values())
 
 
+def _event_type(event):
+    # Houdini can deliver a non-event wrapper here. Keep the current icon and
+    # let Qt continue delivery; never reinterpret or take ownership of it.
+    if not isinstance(event, QtCore.QEvent):
+        _report("ICON_EVENT_UNAVAILABLE", type(event).__name__,
+                "Qt supplied a non-event wrapper; the current icon was retained")
+        return None
+    return event.type()
+
+
 @lru_cache(maxsize=23)
 def _svg(name):
     return files("studio.ui").joinpath(RESOURCE_DIRECTORY, name + ".svg").read_bytes()
@@ -162,7 +172,7 @@ class _ButtonIcon(QtCore.QObject):
             self._updating = False
 
     def eventFilter(self, watched, event):
-        kind = event.type()
+        kind = _event_type(event)
         if kind in {QtCore.QEvent.DevicePixelRatioChange, QtCore.QEvent.Show, QtCore.QEvent.ParentChange,
                     QtCore.QEvent.EnabledChange, QtCore.QEvent.StyleChange, QtCore.QEvent.PaletteChange}:
             self.refresh()
@@ -254,10 +264,11 @@ class LoadingIcon(QtWidgets.QLabel):
             self._sync()
 
     def eventFilter(self, watched, event):
-        if event.type() == QtCore.QEvent.DevicePixelRatioChange:
+        kind = _event_type(event)
+        if kind == QtCore.QEvent.DevicePixelRatioChange:
             self._reload()
-        if event.type() in {QtCore.QEvent.WindowStateChange, QtCore.QEvent.Hide, QtCore.QEvent.Show,
-                            QtCore.QEvent.DevicePixelRatioChange}:
+        if kind in {QtCore.QEvent.WindowStateChange, QtCore.QEvent.Hide, QtCore.QEvent.Show,
+                    QtCore.QEvent.DevicePixelRatioChange}:
             self._sync()
         return False
 

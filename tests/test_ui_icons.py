@@ -7,7 +7,7 @@ import xml.etree.ElementTree as ET
 
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
-from PySide6 import QtCore, QtGui, QtWidgets  # noqa: E402
+from PySide6 import QtCore, QtGui, QtNetwork, QtWidgets  # noqa: E402
 from shiboken6 import isValid  # noqa: E402
 
 from studio.ui import icons  # noqa: E402
@@ -97,6 +97,31 @@ class IconTests(unittest.TestCase):
         self.assertEqual(button.text(), "动作")
         root.deleteLater()
         QtCore.QCoreApplication.sendPostedEvents(None, QtCore.QEvent.DeferredDelete)
+
+    def test_non_event_host_wrapper_preserves_icons_and_event_delivery(self):
+        root = QtWidgets.QWidget()
+        button = QtWidgets.QPushButton("发送", root)
+        icons.set_button_icon(button, "arrow-up", text="发送", icon_only=True)
+        loading = icons.LoadingIcon(root)
+        manager = QtNetwork.QNetworkAccessManager(root)
+        reply = manager.get(QtNetwork.QNetworkRequest(QtCore.QUrl("data:application/json,%7B%7D")))
+        original = button.icon().cacheKey()
+        try:
+            # Reproduce the observed argument type, not the host's wrapper bug.
+            for filtered in (button._studio_icon_binding, loading):
+                with self.subTest(filter=type(filtered).__name__):
+                    self.assertFalse(filtered.eventFilter(root, reply))
+            self.assertEqual(button.icon().cacheKey(), original)
+            self.assertFalse(loading._timer.isActive())
+            self.assertEqual(len(icons.icon_diagnostics()), 1)
+            self.assertEqual(icons.icon_diagnostics()[0]["code"], "ICON_EVENT_UNAVAILABLE")
+            self.assertTrue(isValid(reply))  # Never consume, delete or reinterpret it.
+            button.setEnabled(False)
+            self.assertNotEqual(button.icon().cacheKey(), original)
+        finally:
+            reply.abort()
+            root.deleteLater()
+            self.app.sendPostedEvents(None, QtCore.QEvent.DeferredDelete)
 
     def test_display_change_and_hidden_minimized_idle_destroyed_loading_lifetimes(self):
         root = QtWidgets.QWidget()
