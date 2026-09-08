@@ -5,7 +5,9 @@ Technical integration and proven model benefit are separate under the
 
 ## TC1-A1 — two-turn railing comparison
 
-- **Owner:** Codex. **Status:** pending official login; not run, not passed.
+- **Owner:** Codex. **Status:** running with explicit user authorization. The
+  baseline's two turns completed; the frozen candidate arm is running. Full
+  behavior/quality review is pending, not passed.
 - **Baseline:** `1e9f0f4dc43465bd221b3e0832a5e75d6cd1aa66`.
 - **Frozen candidate:** immutable Git tag `tc1-a1-candidate`, commit
   `ecef5b3f2dae6e95ccd6feb12507a0761f646d10`, also registered in PR #6 before its
@@ -18,19 +20,23 @@ Technical integration and proven model benefit are separate under the
   from model acceptance. Keep the original input and every failed output.
 - **Houdini:** 22.0.368 for both arms. **Codex executable:** the same installed
   native `codex-cli 0.153.4` binary for both arms, version rechecked before running.
-- **Planned model/effort:** `gpt-6-astra` / `high`, identical for both arms. These
-  values are not yet confirmed by an authenticated native catalog. Validate them
-  and record native thread/turn settings before starting either arm. If unavailable
+- **Model/effort:** `gpt-6-astra` / `high`, identical for both arms. The authenticated
+  native catalog confirms both; baseline native turn_context records also confirm
+  actual model/effort. Retain corresponding candidate native records. If unavailable
   or rerouted, stop comparison admission and record the condition; do not silently
   switch one arm or claim matched conditions.
-- **Blocking condition:** on 2026-09-08 the user said they could not complete official
-  login in the dedicated acceptance directory yet and asked to finish preparation.
-  Do not copy or reset normal authentication/history to bypass that condition.
+- **Authorization update:** the user explicitly authorized all three model
+  experiments and scene-operation permission in their new conversations. The TC2
+  isolated acceptance account is signed in. Both arms use that test state and
+  CODEX_HOME explicitly in place; credentials/history are never copied or reset.
+  New workspaces/receipts/native history stay under `tc2/acceptance/state`, while
+  scene copies, exports and reports stay under `tc1/model/<arm>-<run_id>`.
 - **Recovery:** `.runtime/reviews/tc1/Start TC1 Acceptance.vbs` is the ordinary
   launcher with dedicated `acceptance/state` and `acceptance/cache`. Full operator
   steps are in [tc1-validation.md](tc1-validation.md). Prior local observations,
-  backend checks and future complete native exports/receipts/images belong under
-  `.runtime/reviews/tc1/`. No natural-language run exists yet.
+  backend checks and complete native exports/images are recorded under the explicit
+  review roots above. The old TC1-only launcher remains available but is not the
+  authenticated state root of these authorized driver runs.
 - **Priority:** execute at the next available authorized model-run opportunity.
   TC-2 review must report this record's status. Keep it pending if login remains
   unavailable; do not remove it or substitute TC-2 task evidence.
@@ -71,9 +77,9 @@ TC-2's later two-turn shutter task must have its own record. It cannot close TC1
 
 ## TC2-A1 — two-turn editable horizontal blinds
 
-- **Owner:** Codex. **Status:** pending isolated official login; not run, not passed.
-  The user has not yet completed the deferred official-login step. Do not copy
-  production credentials or infer availability from a different Codex session.
+- **Owner:** Codex. **Status:** authorized and queued after TC1-A1; not run or passed
+  yet. The isolated TC2 account was verified through native account/read. Existing
+  test authentication stays in place; production credentials are not copied.
 - **Candidate:** the final reviewed TC-2 head, frozen with the immutable
   `tc2-a1-candidate` tag. Its exact SHA is registered in the TC-2 PR before technical
   merge. Keep it separate from the frozen TC1-A1 candidate.
@@ -83,8 +89,8 @@ TC-2's later two-turn shutter task must have its own record. It cannot close TC1
   Initial `source-report.json` and fresh `fresh-load-report.json` record 17 nodes and
   zero cook errors. Run on a copy; preserve source and every failed model output.
 - **Conditions:** H22.0.368 and the existing native Codex 0.153.4, version rechecked
-  before admission. Planned `gpt-6-astra` / `high` remains unconfirmed by an
-  authenticated native model catalog. Record actual advertised and native confirmed
+  before admission. `gpt-6-astra` / `high` is advertised by the authenticated native
+  model catalog. Record actual advertised and native confirmed
   settings; if unavailable, record the condition before choosing a supported setting.
   This is one two-turn task, not a TC-1 baseline comparison or a percentage claim.
 - **Recovery:** first run TC1-A1 when the authorized login opportunity becomes
