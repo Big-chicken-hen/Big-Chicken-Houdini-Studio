@@ -110,6 +110,45 @@ class HelpTests(unittest.TestCase):
 
 
 class SummaryTests(unittest.TestCase):
+    def test_long_call_addresses_survive_summary_including_array_connections_and_parameters(self):
+        path = "/obj/" + "parent_segment/" * 45 + "target"
+        source = path + "/" + "source_segment_" * 40
+        parameter = "parameter_" * 45
+        detail = {"status": "ok", "views": [
+            {"index": 0, "view": "node", "path": path, "parent": path.rsplit("/", 1)[0],
+             "type": "namespace::" + "type_segment_" * 40, "status": "ok", "inputs": [source],
+             "connections": [{"source": source, "source_output_index": 3, "destination_input_index": 1}],
+             "warnings": ["description " * 4000]},
+            {"index": 1, "view": "parameters", "path": path, "status": "ok", "offset": 91, "total": 100,
+             "next_offset": 92, "parameters": [{"name": parameter, "template_name": parameter + "#",
+                 "tuple_name": parameter, "help": "instructions " * 2000}]}]}
+        result = observation_summary("inspect", detail)
+        first, second = result["views"]
+        for key in ("path", "parent", "type", "inputs", "connections"):
+            self.assertEqual(first[key], detail["views"][0][key])
+        self.assertEqual(second["path"], path)
+        for key in ("name", "template_name", "tuple_name"):
+            self.assertEqual(second["parameters"][0][key], detail["views"][1]["parameters"][0][key])
+        self.assertEqual(second["next_offset"], 92)
+
+    def test_extreme_long_address_batch_omits_records_without_inventing_prefixes(self):
+        source = "/obj/" + "source_segment/" * 1100
+        views = [{"index": i, "view": "children", "path": "/obj/" + "parent/" * 70 + str(i),
+                  "status": "ok", "offset": 4, "total": 10, "next_offset": 5,
+                  "nodes": [{"path": source + str(i), "inputs": [source],
+                             "connections": [{"source": source}]}]} for i in range(32)]
+        result = observation_summary("inspect", {"status": "ok", "views": views})
+        self.assertEqual(len(result["views"]), 32)
+        self.assertTrue(result["detail_available"])
+        for actual, original in zip(result["views"], views):
+            self.assertEqual(actual["path"], original["path"])
+            if actual["nodes"] is None:
+                self.assertTrue(actual["nodes_summary_omitted"])
+                self.assertEqual(actual["next_offset"], 4)
+            else:
+                self.assertEqual(actual["nodes"], original["nodes"])
+                self.assertEqual(actual["next_offset"], 5)
+
     def test_large_pages_keep_real_rows_all_requests_and_non_skipping_cursors(self):
         views = [{"index": i, "view": "parameters", "path": "/obj/asset/controls" + str(i), "status": "ok",
                   "parameters": [{"name": "v" + str(j), "template_name": "v#", "value": j,

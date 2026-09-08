@@ -8,7 +8,9 @@ from .common import encoded
 BUDGET = 12 * 1024
 PAGED = {"nodes", "types", "parameters", "members"}
 RECORDS = PAGED | {"connections", "elements", "categories"}
-IDENTITY = {"path", "name", "type", "type_name", "category", "query", "symbol", "parent"}
+# Only display prose may become a prefix. All other strings can be addresses,
+# parameter values or identifiers used by a later call, including array items.
+PROSE = {"help", "documentation", "description", "label", "message", "reason", "text", "errors", "warnings"}
 
 
 def _size(value):
@@ -30,11 +32,8 @@ def _shrink(record, rows, chars):
     if not isinstance(record, dict):
         return
     for key, value in list(record.items()):
-        if isinstance(value, str) and len(value) > (256 if key in IDENTITY else chars):
-            if key in {"code", "kind", "status", "state"}:
-                continue
-            maximum = 256 if key in IDENTITY else chars
-            record[key] = value[:maximum]
+        if isinstance(value, str) and key in PROSE and len(value) > chars:
+            record[key] = value[:chars]
             record[key + "_truncated"] = True
             if key == "text" and "total_characters" in record and "offset" in record:
                 end = record["offset"] + len(record[key])
@@ -51,11 +50,16 @@ def _shrink(record, rows, chars):
                 record[key + "_total"] = len(value)
                 record[key + "_truncated"] = True
             for index, item in enumerate(record[key]):
-                if isinstance(item, str) and len(item) > 256:
-                    record[key][index] = {"text": item[:256], "truncated": True}
+                if isinstance(item, str) and key in PROSE and len(item) > chars:
+                    record[key][index] = {"text": item[:chars], "truncated": True}
                 else:
                     _shrink(item, rows, chars)
         elif isinstance(value, dict):
+            if key == "values" and len(value) > rows:
+                record[key] = dict(list(value.items())[:rows])
+                record[key + "_total"] = len(value)
+                record[key + "_truncated"] = True
+                value = record[key]
             _shrink(value, rows, chars)
 
 
