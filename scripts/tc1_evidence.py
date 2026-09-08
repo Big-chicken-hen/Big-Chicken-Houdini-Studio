@@ -1,7 +1,7 @@
 """Summarize exported native thread items and existing receipts; never run tools.
 
 Input: the JSON returned by Bridge.read_thread, plus that workspace's receipt DB.
-Use only dedicated TC-1 review data. Keep raw exports local. Counts are external
+Use only dedicated TC-1/TC-2 review data. Keep raw exports local. Counts are external
 model calls, not HTTP polls; error classification and visual quality need review.
 """
 import argparse
@@ -58,10 +58,26 @@ def summarize(native, receipts):
                 problems.append({"item_id": item["id"], "tool": tool, "signals": sorted(set(item_errors)),
                                  "classification": "awaiting_review"})
         related = [r for r in receipts if r["operation_id"] in operation_ids]
+        feedback, captures = [], []
+        for receipt in related:
+            detail = receipt.get("result") or {}
+            if receipt.get("kind") == "execute" and "observe_after" in detail:
+                after = detail["observe_after"]
+                feedback.append({"operation_id": receipt["operation_id"], "mode": after.get("mode"),
+                                 "status": after.get("status"), "counts": after.get("counts", {})})
+            if receipt.get("kind") == "capture":
+                captures.append({"operation_id": receipt["operation_id"], "state": receipt.get("state"),
+                    **{key: detail.get(key) for key in ("requested_target", "requested_view", "target",
+                        "actual_frame", "restored_frame", "capture_error", "restore_errors")},
+                    "restored_view": detail.get("view", {}).get("restored")})
         result["turns"].append({"turn_id": turn.get("id"), "status": turn.get("status"),
             "tool_calls": dict(calls), "total_tool_calls": sum(calls.values()),
             "inspect_views": dict(inspect_views), "lookup_calls_by_source": dict(sources),
             "metadata_requests": dict(metadata_kinds), "failures_for_manual_review": problems,
+            "execution_feedback": feedback, "captures": captures,
+            "manual_classifications": {"post_create_inspect_calls": None, "viewport_only_execute_calls": None,
+                "api_guesses_and_repeated_calls": None, "partial_repair_method": None,
+                "node_continuity_and_artist_edits": "awaiting_review"},
             "receipt_timings": [{key: r.get(key) for key in (
                 "operation_id", "kind", "state", "mutation_outcome", "checks_outcome", "created_at", "timings")}
                 for r in related]})
@@ -72,11 +88,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("thread_json", type=Path)
     parser.add_argument("receipt_db", type=Path)
+    parser.add_argument("--stage", choices=("tc1", "tc2"), default="tc1")
     args = parser.parse_args()
-    review = Path(__file__).resolve().parents[1] / ".runtime" / "reviews" / "tc1"
+    review = Path(__file__).resolve().parents[1] / ".runtime" / "reviews" / args.stage
     for path in (args.thread_json, args.receipt_db):
         if review not in path.resolve().parents:
-            parser.error("Use this checkout's dedicated TC-1 review inputs")
+            parser.error("Use this checkout's dedicated review inputs for the selected stage")
     native = json.loads(args.thread_json.read_text(encoding="utf-8"))
     with sqlite3.connect(args.receipt_db.resolve().as_uri() + "?mode=ro", uri=True) as db:
         receipts = [json.loads(row[0]) for row in db.execute("SELECT receipt FROM operations ORDER BY rowid")]

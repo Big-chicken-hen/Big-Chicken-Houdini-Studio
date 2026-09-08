@@ -1,10 +1,29 @@
 """Evidence counts native calls once and keeps quality judgments unverified."""
 import unittest
+import json
 
 from scripts.tc1_evidence import summarize
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_feedback_is_counted_from_original_receipts_not_repeated_gets(self):
+        items = [{"id": str(i), "type": "mcpToolCall", "tool": tool,
+                  "result": {"content": [{"type": "text", "text": json.dumps({"operation_id": op})}]}}
+                 for i, (tool, op) in enumerate((("hia_execute_hom", "edit"),
+                     ("hia_operation", "edit"), ("hia_capture", "image"), ("hia_operation", "image")))]
+        receipts = [{"operation_id": "edit", "kind": "execute", "result": {"observe_after": {
+            "mode": "passive_after_failure", "status": "partial", "counts": {"ok": 2, "skipped": 2}}}},
+            {"operation_id": "image", "kind": "capture", "state": "failed", "result": {
+                "actual_frame": 72, "restored_frame": 1, "capture_error": None,
+                "restore_errors": [{"phase": "default_view"}]}}]
+        turn = summarize({"turns": [{"items": items}]}, receipts)["turns"][0]
+        self.assertEqual(len(turn["execution_feedback"]), 1)
+        self.assertEqual(turn["execution_feedback"][0]["counts"], {"ok": 2, "skipped": 2})
+        self.assertEqual(len(turn["captures"]), 1)
+        self.assertEqual(turn["captures"][0]["actual_frame"], 72)
+        self.assertEqual(turn["captures"][0]["state"], "failed")
+        self.assertIsNone(turn["manual_classifications"]["viewport_only_execute_calls"])
+
     def test_internal_polls_do_not_count_and_empty_search_is_not_a_guess_error(self):
         search = {"id": "search", "type": "mcpToolCall", "tool": "hia_lookup", "status": "completed",
                   "arguments": {"source": "metadata", "requests": [
