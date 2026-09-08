@@ -140,6 +140,9 @@ class StagedExecution:
             cancelled = self.op_id in self.runtime.cancelled or self.op["owner_id"] in self.runtime.paused or self.runtime.closed
             reason = "CANCEL_REQUESTED" if cancelled else reason
             self.detail["stop_reason"] = reason
+            if reason and self.detail["stopped_at"] is None:
+                self.detail["stopped_at"] = self.detail["active_step"] or next(
+                    (s["id"] for s in self.detail["steps"] if s["state"] == "not_run"), self.detail["steps"][-1]["id"])
             self.detail["active_step"] = None
             state = "cancelled" if cancelled else "failed" if reason else "finished"
             if reason and self.mutation() == "not_run" and not cancelled:
@@ -192,7 +195,9 @@ class StagedExecution:
                 self.detail["stopped_at"] = step["id"]
                 self.finish(reason, step.get("error"))
                 return False
-            step.update(state="running", context_before=context)
+            # This durable start covers the entire callback, including mutation.
+            # Until it commits a result, do not project a definite 'not_run'.
+            step.update(state="running", mutation_outcome="unknown", context_before=context)
             self.detail["active_step"] = step["id"]
             self.publish(state="running", **({"started_at": now()} if index == 0 else {}))
             self.runtime.active = self.op_id
@@ -238,7 +243,8 @@ class StagedExecution:
             reason = reason or (exc.code if isinstance(exc, StudioError) else "STEP_CONTEXT_UNAVAILABLE")
             step["handoff_error"] = self.scene.error(exc, reason)
         if reason:
-            step.update(state="failed" if outcome.mutation_outcome != "not_run" else "rejected",
+            step.update(state="cancelled" if reason in {"CANCEL_REQUESTED", "COOPERATIVE_STOP"} else
+                        "failed" if outcome.mutation_outcome != "not_run" else "rejected",
                         error=step["error"] or detail.get("result_error") or {"code": reason, "message": "Step did not pass its declared handoff gate"},
                         failure_phase=step.get("failure_phase") or "handoff")
             self.detail["stopped_at"] = step["id"]

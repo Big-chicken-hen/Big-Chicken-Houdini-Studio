@@ -211,6 +211,7 @@ class StagedTests(unittest.TestCase):
         self.runtime.dispatch = lambda callback: callback()
         receipt = self.drain(self.submit(self.args(["hou.mutate(); hou.stop(); checkpoint()", "hou.mutate()"])))
         self.assertEqual((receipt["state"], self.hou.count), ("cancelled", 1))
+        self.assertEqual(receipt["steps"][0]["state"], "cancelled")
         self.assertEqual(receipt["steps"][1]["state"], "not_run")
 
     def test_step_preconditions_and_total_request_budgets(self):
@@ -241,6 +242,8 @@ class StagedTests(unittest.TestCase):
     def test_running_detail_reads_only_closed_steps(self):
         op = self.submit(self.args(["result={'done':True}", "hou.block()" ]))
         self.assertTrue(self.hou.started.wait(1))
+        running = self.runtime.get(op["operation_id"])
+        self.assertEqual(running["steps"][1]["mutation_outcome"], "unknown")
         with self.assertRaises(StudioError) as error:
             self.ledger.detail(op["operation_id"])
         self.assertEqual(error.exception.code, "DETAIL_NOT_SEALED")
