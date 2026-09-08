@@ -9,6 +9,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..common import AppPaths, StudioError, new_id, read_json
 from .conversation import ImageTile, Transcript
+from .conversations import ConversationManager
 from .icons import icon_diagnostics, set_button_icon
 from .model_settings import ChoiceBox, ModelSettings
 from .requests import RequestCard, SessionTrustControl
@@ -102,6 +103,10 @@ class StudioPanel(QtWidgets.QWidget):
         self.thread_id = None
         self.draft_key = None
         self.drafts = {}
+        self.threads_generation = 0
+        self.lifecycle_revision = None
+        self.deleted_threads = set()
+        self.conversation_manager = None
         self.selection_generation = 0
         self.observed_scene_epoch = None
         self.confirmed_new_thread = None
@@ -194,6 +199,7 @@ class StudioPanel(QtWidgets.QWidget):
         menu.addAction("设置与连接详情", self.toggle_settings)
         menu.addAction("执行详情", lambda: self.tabs.setCurrentIndex(1))
         menu.addAction("项目约定", lambda: self.tabs.setCurrentIndex(2))
+        menu.addAction("管理对话", self.manage_conversations)
         self.menu_button.setMenu(menu)
         top.addWidget(self.menu_button)
         root.addWidget(header)
@@ -639,6 +645,9 @@ class StudioPanel(QtWidgets.QWidget):
         if self.closed or (type(value.get("account_revision")) is int and self.account_revision is not None
                            and value["account_revision"] < self.account_revision):
             return
+        if value.get("conversations", {}).get("revision", 0) < (self.lifecycle_revision or 0):
+            return
+        self.apply_conversations(value.get("conversations", {}))
         recovered = not self.bridge_connected
         self.bridge_connected = True
         self.state = value
@@ -981,14 +990,20 @@ class StudioPanel(QtWidgets.QWidget):
 
     def load_threads(self):
         if self.logged_in:
-            account = self.account_revision
+            self.threads_generation += 1
+            account, generation = self.account_revision, self.threads_generation
             self.call("GET", "/threads", done=lambda value: self.apply_threads(value)
-                      if account == self.account_revision else None, unique=True)
+                      if account == self.account_revision and generation == self.threads_generation else None)
 
     def apply_threads(self, value):
+        if value.get("lifecycle_revision", 0) < (self.lifecycle_revision or 0):
+            self.load_threads()
+            return
         self.threads.blockSignals(True)
         self.threads.clear()
         for thread in value.get("data", []):
+            if thread["id"] in self.deleted_threads:
+                continue
             title = thread.get("name") or thread.get("preview") or "未命名对话"
             self.threads.addItem(str(title).replace("\n", " ")[:90], thread["id"])
             self.threads.setItemData(self.threads.count() - 1, str(title), QtCore.Qt.ToolTipRole)
@@ -998,6 +1013,68 @@ class StudioPanel(QtWidgets.QWidget):
             index = self.threads.count() - 1
         self.threads.setCurrentIndex(index)
         self.threads.blockSignals(False)
+
+    def manage_conversations(self):
+        if not self.logged_in or not self.bridge_connected:
+            self.show_notice("请先连接并登录 Codex。")
+            return
+        if self.conversation_manager and not self.conversation_manager.closed:
+            self.conversation_manager.raise_()
+            return
+        self.conversation_manager = ConversationManager(self)
+        self.conversation_manager.open()
+
+    def apply_conversations(self, value, *, refresh_manager=True):
+        revision = value.get("revision")
+        if type(revision) is not int or revision <= (self.lifecycle_revision if self.lifecycle_revision is not None else -1):
+            return
+        self.lifecycle_revision = revision
+        self.state["conversations"] = value
+        self.threads_generation += 1
+        for thread_id in set(value.get("deleted", [])) - self.deleted_threads:
+            self.deleted_threads.add(thread_id)
+            self.discard_deleted_draft(thread_id)
+        if refresh_manager and self.conversation_manager and not self.conversation_manager.busy:
+            self.conversation_manager.invalidate()
+        self.load_threads()
+
+    def discard_deleted_draft(self, thread_id):
+        # Called only for native-confirmed deletion, never on list absence.
+        if self.draft_key == thread_id:
+            self.revision += 1
+            self.switching = False
+            self.history_request = None
+            self.hydrating = False
+            self.history_events = []
+            self.history_refresh.stop()
+            if self.pending_submission and self.pending_submission.get("thread_id") == thread_id:
+                self.pending_submission = None
+                self.submitting = self.uncertain_send = False
+                self.pending_preview.hide()
+            document = QtGui.QTextDocument(self)
+            document.setDefaultFont(self.input.font())
+            self.input.setDocument(document)
+            self.input.update_height()
+            self.draft_key = None
+            self.attachments, self.selection_reference = [], None
+            self.selection_generation += 1
+            self.selection_pending = None
+            self.selection_inflight = False
+            self.render_attachments()
+            self.render_reference()
+        removed = self.drafts.pop(thread_id, None)
+        if removed:
+            document = removed["document"]
+            if document is not self.input.document() and all(draft["document"] is not document for draft in self.drafts.values()):
+                document.deleteLater()
+        index = self.threads.findData(thread_id)
+        if index >= 0:
+            self.threads.removeItem(index)
+        if self.thread_id == thread_id:
+            self.thread_id = None
+            self.model_controls.set_thread(None)
+            self.transcript.reset(None)
+        # Attachment files, receipts and generated outputs are workspace-owned.
 
     def choose_thread(self, index):
         thread_id = self.threads.itemData(index)
@@ -1009,9 +1086,12 @@ class StudioPanel(QtWidgets.QWidget):
             return
         self.switching = True
         self.revision += 1
+        revision = self.revision
         self.update_controls()
         self.call("POST", "/threads/select", {"thread_id": thread_id} if thread_id else {},
-                  done=lambda value: self.thread_selected(value, created=thread_id is None), failed=self.thread_failed)
+                  done=lambda value: self.thread_selected(value, created=thread_id is None)
+                  if revision == self.revision and value.get("thread", {}).get("id") not in self.deleted_threads else None,
+                  failed=lambda message: self.thread_failed(message) if revision == self.revision else None)
 
     def thread_selected(self, value, *, created=False):
         self.switching = False
@@ -1112,6 +1192,15 @@ class StudioPanel(QtWidgets.QWidget):
                 continue
             params = event.get("params", {})
             method = event.get("method", "")
+            if method in {"thread/name/updated", "thread/archived", "thread/unarchived", "thread/deleted"}:
+                self.threads_generation += 1
+                if method == "thread/deleted":
+                    self.deleted_threads.add(params.get("threadId"))
+                    self.discard_deleted_draft(params.get("threadId"))
+                self.load_threads()
+                if self.conversation_manager and not self.conversation_manager.busy:
+                    self.conversation_manager.invalidate()
+                continue
             if method in {"account/updated", "account/login/completed"}:
                 if method == "account/login/completed" and params.get("success") is False:
                     self.login_failed(params.get("error") or "登录未完成，请重试。")
@@ -1174,7 +1263,10 @@ class StudioPanel(QtWidgets.QWidget):
         self.revision += 1
         self.update_controls()
         self.show_notice("")
-        if not self.call("POST", "/turn", body, done=self.sent, failed=self.send_failed):
+        submitted_thread = self.thread_id
+        if not self.call("POST", "/turn", body,
+                         done=lambda value: self.sent(value) if submitted_thread not in self.deleted_threads else None,
+                         failed=lambda message: self.send_failed(message) if submitted_thread not in self.deleted_threads else None):
             self.submitting = False
             self.state["turn_settings"] = self.pending_submission.get("previous_turn_settings")
             self.state["turn_id"] = self.pending_submission.get("previous_turn_id")

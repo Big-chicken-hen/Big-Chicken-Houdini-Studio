@@ -33,9 +33,10 @@ class NativeClient:
             if value is not None:
                 return value
         if method == "thread/read":
-            return {"thread": {"cwd": self.cwd}}
+            return {"thread": {"id": params["threadId"], "cwd": self.cwd}}
         if method in {"thread/start", "thread/resume"}:
-            return {"thread": {"id": params.get("threadId", "new-thread"), "turns": [], "status": {"type": "idle"}},
+            return {"thread": {"id": params.get("threadId", "new-thread"), "cwd": self.cwd,
+                               "turns": [], "status": {"type": "idle"}},
                     "model": "model-b", "reasoningEffort": "minimal"}
         if method == "model/list":
             return self.pages[int(params.get("cursor", 0))]

@@ -17,6 +17,7 @@ from .codex.protocol import ProtocolPolicy
 from .codex.settings import ModelCatalog, NativeSettings
 from .codex.trust import SessionTrust, STUDIO_TOOLS
 from .common import TERMINAL, StudioError, atomic_json, new_id, read_json
+from .conversations import Conversations, NOTIFICATIONS
 from .http import Client, serve
 from .instructions import SCENE_INSTRUCTIONS
 from .launcher import codex_app_server_command, helper_environment
@@ -42,6 +43,7 @@ class Bridge:
         self.owner_stopped = False
         self.completed_turns = collections.deque(maxlen=256)
         self.pending_requests = {}
+        self.conversations = Conversations(self)
         self.scene_trust = SessionTrust()
         self.settings = NativeSettings()
         self.scene_epoch = self.scene_runtime_id = self.thread_scene_epoch = None
@@ -84,6 +86,11 @@ class Bridge:
         with self.lock:
             method, params = event.get("method"), event.get("params", {})
             event_thread = params.get("threadId")
+            if method in NOTIFICATIONS:
+                if self.conversations.observe(method, params):
+                    self.sequence += 1
+                    self.events.append({"sequence": self.sequence, **event})
+                return
             # App Server may still emit events from previously loaded conversations.
             if event_thread and event_thread != self.thread_id:
                 return
@@ -181,6 +188,7 @@ class Bridge:
                                       "changed": bool(self.thread_id and self.scene_epoch and
                                                       self.thread_scene_epoch != self.scene_epoch)},
                     **self.settings.snapshot(), "account_revision": self.account.revision,
+                    "conversations": self.conversations.snapshot(),
                     "pending_requests": list(self.pending_requests.values())}
 
     def _observe_scene(self, runtime):
@@ -219,6 +227,8 @@ class Bridge:
         reason = ""
         if not self.thread_id:
             reason = "请先新建或选择对话。"
+        elif self.conversations.blocked(self.thread_id):
+            reason = "等待此对话的归档或删除结果确认。"
         elif self.action_lock.locked():
             reason = "等待当前对话请求完成后启用许可。"
         elif self._has_unknown_response():
@@ -304,21 +314,22 @@ class Bridge:
 
     def _select_thread(self, thread_id):
         with self.lock:
+            if self.conversations.blocked(self.thread_id) or self.conversations.blocked(thread_id):
+                raise StudioError("THREAD_MUTATION_UNKNOWN", "先核对原生归档或删除结果，再切换对话。", 409)
             if self._has_unknown_response():
                 raise StudioError("APPROVAL_RESPONSE_UNKNOWN", "上次许可回复尚未确认，暂不能切换对话。", 409)
             if self.codex_state in {"running", "starting", "stopping", "unknown", "unavailable", "selecting"}:
                 raise StudioError("TURN_ACTIVE", "Finish or stop the current turn before switching conversations", 409)
         config = self.thread_config()
         if thread_id:
-            item = self.client.request("thread/read", {"threadId": thread_id, "includeTurns": False})["thread"]
-            if Path(item.get("cwd", "")).resolve() != self.cwd.resolve():
-                raise StudioError("THREAD_WORKSPACE_MISMATCH", "Conversation belongs to another workspace", 409)
+            self.conversations.read(thread_id)
             config["threadId"] = thread_id
         with self.lock:
             self.scene_trust.reset()
             self.codex_state = "selecting"
         try:
             result = self.client.request("thread/resume" if thread_id else "thread/start", config)
+            self.conversations.scope(result["thread"], thread_id)
         except Exception:
             with self.lock:
                 self.codex_state = "unknown"
@@ -365,6 +376,8 @@ class Bridge:
                 raise StudioError("INVALID_INPUT", "Model and effort must be native advertised strings")
         with self.lock:
             self.settings.check_binding(body, self.thread_id)
+            if self.conversations.blocked(self.thread_id):
+                raise StudioError("THREAD_MUTATION_UNKNOWN", "先核对原生归档或删除结果，再发送消息。", 409)
             if self._has_unknown_response():
                 raise StudioError("APPROVAL_RESPONSE_UNKNOWN", "上次许可回复尚未确认，暂不能发送新请求。", 409)
             if self.codex_state in {"starting", "running", "stopping", "unknown", "unavailable", "selecting"}:
@@ -567,9 +580,11 @@ class Bridge:
             if method == "POST" and path == "/threads/select":
                 return self.select_thread(body.get("thread_id"))
             if method == "GET" and path == "/threads":
-                result = self.client.request("thread/list", {"cwd": str(self.cwd), "limit": 50})
-                result["data"] = [t for t in result.get("data", []) if Path(t.get("cwd", "")).resolve() == self.cwd.resolve()]
-                return result
+                return self.conversations.listing(query)
+            if method == "POST" and path == "/threads/manage":
+                return self.conversations.mutate(body)
+            if method == "POST" and path == "/threads/reconcile":
+                return self.conversations.reconcile(body)
             if method == "GET" and path == "/thread":
                 if not self.thread_id:
                     return {"thread": None}

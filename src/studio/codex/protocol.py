@@ -11,6 +11,7 @@ class ProtocolPolicy:
     version: str = SUPPORTED_CODEX_VERSION
     client_requests: frozenset = frozenset({
         "initialize", "thread/start", "thread/resume", "thread/list", "thread/read",
+        "thread/name/set", "thread/archive", "thread/unarchive", "thread/delete",
         "turn/start", "turn/interrupt", "model/list", "account/read", "account/login/start",
         "account/login/cancel", "account/logout", "account/rateLimits/read"})
     client_notifications: frozenset = frozenset({"initialized"})
