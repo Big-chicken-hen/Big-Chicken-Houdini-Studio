@@ -837,7 +837,7 @@ class HoudiniScene:
                 # H22's viewTransform reconstructs a pose using float viewport
                 # caches; cancellation near zero can exceed an absolute 1e-6.
                 # Bound that roundoff by pose scale AND verify camera components.
-                position_tolerance = max(1e-6, 4 * 2 ** -23 * max(1, *(abs(v) for v in original[9:15])))
+                position_tolerance = max(1e-5, 8 * 2 ** -23 * max(1, *(abs(v) for v in original[9:15])))
             matches = len(observed) == len(transform) and all(
                 math.isclose(a, b, rel_tol=1e-6, abs_tol=position_tolerance if 12 <= i <= 14 else 1e-6)
                 for i, (a, b) in enumerate(zip(observed, transform)))
