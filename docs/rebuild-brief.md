@@ -1,5 +1,11 @@
 # Rebuild contract
 
+The independent [native conversation lifecycle approval](native-conversations-brief.md)
+adds native title search/pagination, rename/archive/restore/delete and a compact
+Panel menu entry. Keep native history, workspace scope, draft ownership, explicit
+deletion confirmation and receipt-based safety. [PANEL-1](acceptance-issues.md)
+remains record-only. This approval does not expand the scene execution kernel.
+
 Product: **Big-Chicken Houdini Studio**. New folder and new Git history; original HIA stays intact.
 Source diagnosis: [the user's complete Pro diagnosis](pro-diagnosis.md). Do not lose its execution semantics while redesigning the UI.
 The [authoring review](authoring-review.md) established the execution and input foundation. PR #5 implemented native ChatGPT onboarding, HIP targets, native model/effort settings and the required storage/output boundaries, and merged at `1e9f0f4`. The [approved presentation specification](ui-presentation-brief.md) remains the visual boundary; its acceptance is recorded in [authoring results](authoring-results.md).

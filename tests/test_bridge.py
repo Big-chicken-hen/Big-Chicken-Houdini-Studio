@@ -144,7 +144,8 @@ class BridgeTests(unittest.TestCase):
 
     def test_offline_native_conversation_and_console_python(self):
         self.bridge._runtime = None
-        self.client.handler = lambda *_: {"thread": {"id": "new-thread", "status": {"type": "idle"}, "turns": []}}
+        self.client.handler = lambda *_: {"thread": {"id": "new-thread", "cwd": str(self.bridge.cwd),
+                                                     "status": {"type": "idle"}, "turns": []}}
         self.bridge.select_thread()
         self.assertEqual(self.bridge.thread_id, "new-thread")
         with patch.dict("os.environ", {"BCS_PYTHON_EXECUTABLE": str(self.paths.root / "python.exe")}):
