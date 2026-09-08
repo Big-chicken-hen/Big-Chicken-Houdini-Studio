@@ -7,7 +7,7 @@ from .common import encoded
 
 BUDGET = 12 * 1024
 PAGED = {"nodes", "types", "parameters", "members"}
-RECORDS = PAGED | {"connections", "elements", "categories"}
+RECORDS = PAGED | {"connections", "elements", "categories", "checks"}
 # Only display prose may become a prefix. All other strings can be addresses,
 # parameter values or identifiers used by a later call, including array items.
 PROSE = {"help", "documentation", "description", "label", "message", "reason", "text", "errors", "warnings"}
@@ -41,6 +41,8 @@ def _shrink(record, rows, chars):
                               truncated=end < record["total_characters"])
         elif isinstance(value, list):
             if key in RECORDS and len(value) > rows:
+                if key == "checks":
+                    value = sorted(value, key=lambda item: isinstance(item, dict) and item.get("passed") is True)
                 record[key] = value[:rows]
                 if key not in PAGED or "total" not in record and "parameter_page" not in record:
                     record.setdefault(key + "_total", len(value))
@@ -83,7 +85,7 @@ def _stub(item):
 def observation_summary(kind, detail, *, receipt=True):
     # The caller must sanitize the original detail first, including credentials
     # straddling a future truncation boundary. Original detail is never mutated.
-    if kind not in {"context", "inspect", "lookup"} or _size(detail) <= BUDGET:
+    if kind not in {"context", "inspect", "lookup", "execute", "capture"} or _size(detail) <= BUDGET:
         return detail
     result = None
     for rows, chars in ((8, 512), (4, 256), (2, 128), (1, 64)):
@@ -98,9 +100,26 @@ def observation_summary(kind, detail, *, receipt=True):
             return result
     # Very large batches still retain every item. Free room from the largest
     # row payloads, leaving any next cursor at the first row not actually sent.
-    items = result.get("views", result.get("requests", []))
+    if "value" in result and _size(result["value"]) > BUDGET // 2:
+        result["value"] = {"summary_omitted": True, "reason": "Read the original operation detail for script return data"}
+    items = result.get("views", result.get("requests", result.get("observe_after", {}).get("views", [])))
     for index in sorted(range(len(items)), key=lambda i: _size(items[i]), reverse=True):
         items[index] = _stub(items[index])
         if _size(result) <= BUDGET:
             return result
     return result  # Approximate budget; never discard identities or execution facts.
+
+
+def capture_manifest_summary(detail):
+    """Keep the existing 16 KiB manifest reader valid; full facts stay in receipt."""
+    result = observation_summary("capture", detail)
+    if _size(result) <= BUDGET:
+        return result
+    # Very long target addresses belong to the original operation detail. Do not
+    # shorten them into unusable addresses or enlarge the artifact protocol.
+    result = {key: detail.get(key) for key in ("capture_api", "purpose", "requested_frame", "actual_frame",
+        "frame_before", "restored_frame", "requested_resolution", "actual_resolution")}
+    result["capture_error_code"] = (detail.get("capture_error") or {}).get("code")
+    result["restore_error_phases"] = [error.get("phase") for error in detail.get("restore_errors", [])]
+    result["metadata_in_operation_detail"] = True
+    return result

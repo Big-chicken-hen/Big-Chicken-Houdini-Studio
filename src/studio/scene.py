@@ -9,7 +9,7 @@ import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .common import StudioError, new_id, now
+from .common import StudioError, encoded, new_id, now
 from .artifacts import ArtifactStore, capture_resolution
 
 SCRIPT_FILENAME = "<Big-Chicken HOM batch>"
@@ -119,8 +119,8 @@ def validate_view(view):
 def validate_arguments(kind, args):
     """Pure validation: no node lookup, cook, observation or side effect."""
     allowed = {"context": set(), "inspect": {"views"},
-               "execute": {"script", "label", "preconditions", "checks", "observe"},
-               "capture": {"frame", "resolution", "purpose", "bounds"},
+               "execute": {"script", "label", "preconditions", "checks", "observe", "observe_after"},
+               "capture": {"frame", "resolution", "purpose", "bounds", "target", "view"},
                "lookup": {"source", "query", "category", "type_name", "symbol", "version",
                           "members", "offset", "limit", "requests", "include_hidden", "include_deprecated",
                           "include_parameters", "parameter_pattern", "parameter_offset", "parameter_limit",
@@ -142,6 +142,12 @@ def validate_arguments(kind, args):
             raise StudioError("INVALID_ARGUMENTS", "Invalid number of targeted views")
         for view in views:
             validate_view(view)
+        if kind == "execute":
+            after = args.get("observe_after", [])
+            if not isinstance(after, list) or len(after) > 16:
+                raise StudioError("INVALID_ARGUMENTS", "observe_after accepts at most 16 targeted views")
+            for view in after:
+                validate_view(view)  # Shape only; these targets may not exist yet.
     if kind == "capture":
         frame, resolution = args.get("frame", 1), args.get("resolution", [1280, 720])
         if type(frame) not in (int, float) or not math.isfinite(frame):
@@ -150,6 +156,22 @@ def validate_arguments(kind, args):
             raise StudioError("INVALID_ARGUMENTS", "Resolution requires two integers from 64 to 2560")
         if args.get("purpose", "diagnostic") not in ("review", "diagnostic"):
             raise StudioError("INVALID_ARGUMENTS", "Capture purpose must be review or diagnostic")
+        viewpoint = args.get("view", "current")
+        if viewpoint not in ("current", "front", "right", "top", "three_quarter"):
+            raise StudioError("INVALID_ARGUMENTS", "Unknown review view")
+        if "target" in args:
+            target = args["target"]
+            if args.get("purpose") != "review" or "bounds" in args or not isinstance(target, dict):
+                raise StudioError("INVALID_ARGUMENTS", "Review target and explicit bounds are mutually exclusive")
+            if set(target) == {"selection"} and target["selection"] is True:
+                pass
+            elif set(target) == {"paths"} and isinstance(target["paths"], list) and 1 <= len(target["paths"]) <= 8:
+                for path in target["paths"]:
+                    node_path(path)
+            else:
+                raise StudioError("INVALID_ARGUMENTS", "Supply one to eight target paths or selection=true")
+        if viewpoint != "current" and (args.get("purpose") != "review" or not {"target", "bounds"}.intersection(args)):
+            raise StudioError("INVALID_ARGUMENTS", "Named views require review and a target or explicit bounds")
         if "bounds" in args:
             bounds = args["bounds"]
             if (args.get("purpose", "diagnostic") != "review" or not isinstance(bounds, list) or
@@ -178,6 +200,23 @@ def json_value(value, depth=0, redact=lambda text: text):
     if isinstance(value, (list, tuple)):
         return [json_value(v, depth + 1, redact) for v in value]
     return redact(repr(value))[:2000]
+
+
+def partial_value(value, redact, depth=0):
+    """Small builtin JSON values only; never invoke arbitrary objects after failure."""
+    omitted = {"omitted": "Partial script value exceeds bounded passive serialization"}
+    if depth > 3:
+        return omitted
+    if type(value) is str:
+        value = redact(value)
+        return value if len(value) <= 2048 else omitted
+    if value is None or type(value) in (bool, int, float):
+        return json_value(value)
+    if type(value) in (list, tuple) and len(value) <= 8:
+        return [partial_value(v, redact, depth + 1) for v in value]
+    if type(value) is dict and len(value) <= 8 and all(type(k) is str and len(k) <= 256 for k in value):
+        return {redact(k): partial_value(v, redact, depth + 1) for k, v in value.items()}
+    return omitted
 
 
 class HoudiniScene:
@@ -425,6 +464,8 @@ class HoudiniScene:
 
     def execute(self, args, cancelled):
         outcome = ExecutionResult()
+        expected_epoch, entered, completed = self.epoch, False, False
+        phase = "validation"
         def output_path(kind, filename, *, explicit=None, existing=None):
             from .output import resolve_output
             if self.paths is None or self.workspace_id is None:
@@ -453,45 +494,123 @@ class HoudiniScene:
             try:
                 validate_arguments("execute", args)
                 try:
+                    phase = "compile"
                     code = compile(args["script"], SCRIPT_FILENAME, "exec")
                 except (SyntaxError, ValueError) as exc:
                     outcome.state = "rejected"
                     outcome.error = self.error(exc, "COMPILE_FAILED")
+                    outcome.detail["failure_phase"] = phase
                     return outcome
+                phase = "preconditions"
                 preconditions = self.checks(args.get("preconditions", []))
                 if any(not item["passed"] for item in preconditions):
                     outcome.detail["preconditions"] = preconditions
                     raise StudioError("PRECONDITION_FAILED", "A target changed since observation")
+                phase = "observe_before"
                 before = [self.inspect(view) for view in args.get("observe", [])]
                 outcome.detail["observations"] = {"before": before}
                 checkpoint()
+                skip_reason = self._feedback_skip(expected_epoch, cancelled)
+                if skip_reason:
+                    raise StudioError(skip_reason, "Execution prerequisites no longer permit a scene write")
                 # Undo grouping is a user convenience, never a Python transaction.
                 with self.hou.undos.group(self.redact(args.get("label", "Big-Chicken Studio"))[:100]):
+                    phase, entered = "script", True
                     outcome.mutation_outcome = "partial"
                     exec(code, namespace, namespace)
+                    completed = True
                     outcome.mutation_outcome = "completed"
+                    phase = "undo_group_exit"
             except BaseException as exc:
                 outcome.state = "rejected" if outcome.mutation_outcome == "not_run" else "failed"
                 outcome.error = self.error(exc, "HOM_FAILED")
-                return outcome
+                outcome.detail["failure_phase"] = phase
+                if not entered:
+                    return outcome
 
             # Script completion survives postcondition, observation and conversion failures.
+            if completed:
+                try:
+                    verified = []
+                    reason = self._feedback_skip(expected_epoch, cancelled)
+                    if not args.get("checks") and reason is None:
+                        verified = self.checks([])
+                    for check in args.get("checks", []):
+                        reason = self._feedback_skip(expected_epoch, cancelled)
+                        if reason:
+                            break
+                        verified.extend(self.checks([check]))
+                    outcome.detail["checks"] = verified
+                    if reason:
+                        outcome.detail["checks_skip_reason"] = reason
+                    outcome.checks_outcome = ("passed" if not reason and all(c["passed"] for c in verified)
+                                              else "failed") if verified else "not_run"
+                except BaseException as exc:
+                    outcome.checks_outcome = "failed"
+                    outcome.detail["checks_error"] = self.error(exc, "CHECKS_FAILED")
+                try:
+                    after = []
+                    outcome.detail["observations"]["after"] = after
+                    for view in args.get("observe", []):
+                        reason = self._feedback_skip(expected_epoch, cancelled)
+                        if reason:
+                            outcome.detail["observation_skip_reason"] = reason
+                            break
+                        after.append(self.inspect(view))
+                except BaseException as exc:
+                    outcome.detail["observation_error"] = self.error(exc, "OBSERVATION_FAILED")
+            if args.get("observe_after"):
+                try:
+                    outcome.detail["observe_after"] = self._collect_after(
+                        args["observe_after"], expected_epoch, cancelled, passive=not completed)
+                except BaseException as exc:
+                    outcome.detail["observe_after_error"] = self.error(exc, "OBSERVATION_FAILED")
             try:
-                verified = self.checks(args.get("checks", []))
-                outcome.detail["checks"] = verified
-                outcome.checks_outcome = ("passed" if all(c["passed"] for c in verified) else "failed") if verified else "not_run"
-            except BaseException as exc:
-                outcome.checks_outcome = "failed"
-                outcome.detail["checks_error"] = self.error(exc, "CHECKS_FAILED")
-            try:
-                outcome.detail["observations"]["after"] = [self.inspect(view) for view in args.get("observe", [])]
-            except BaseException as exc:
-                outcome.detail["observation_error"] = self.error(exc, "OBSERVATION_FAILED")
-            try:
-                outcome.detail["value"] = json_value(namespace.get("result"), redact=self.redact)
+                outcome.detail["value"] = (json_value(namespace.get("result"), redact=self.redact) if completed else
+                                           partial_value(namespace.get("result"), self.redact))
+                if not completed and len(encoded(outcome.detail["value"]).encode("utf-8")) > 4096:
+                    outcome.detail["value"] = {"omitted": "Partial script value exceeds 4096 bytes"}
+                outcome.detail["value_status"] = "script_return" if completed else "partial_script_value"
+                outcome.detail["value_verified"] = False
             except BaseException as exc:
                 outcome.detail["result_error"] = self.error(exc, "RESULT_CONVERSION_FAILED")
         return outcome
+
+    def _feedback_skip(self, expected_epoch, cancelled):
+        if self.epoch != expected_epoch:
+            return "SCENE_REPLACED"
+        if self._file_transition:
+            return "SCENE_TRANSITION"
+        return "CANCEL_REQUESTED" if cancelled() else None
+
+    def _collect_after(self, views, expected_epoch, cancelled, *, passive=False):
+        records = []
+        for index, view in enumerate(views):
+            record = {"index": index, "path": view.get("path", "/obj"), "view": view.get("view", "node"),
+                      "frame": None, "scene_epoch": None}
+            reason = self._feedback_skip(expected_epoch, cancelled)
+            if reason is None and passive and record["view"] not in {"node", "children", "parameters"}:
+                reason = "PASSIVE_DIAGNOSTICS_ONLY"
+            if reason:
+                records.append({**record, "status": "skipped", "reason": reason})
+                continue
+            request = {**view, **({"include_values": False} if passive and record["view"] == "parameters" else {})}
+            try:
+                record.update(frame=float(self.hou.frame()), scene_epoch=self.epoch)
+                data = self.inspect(request, strict=False)
+                if self.epoch != expected_epoch or self._file_transition:
+                    raise StudioError("SCENE_REPLACED_DURING_READ", "Observation belongs to a changed scene; discard its data")
+                record = {"status": "ok", **data, **record}
+                if passive and record["view"] == "parameters" and view.get("include_values"):
+                    record.update(values_skipped=True, values_skip_reason="PASSIVE_DIAGNOSTICS_ONLY")
+            except Exception as exc:
+                record.update(status="error", error={**self.error(exc, "OBSERVATION_FAILED"),
+                              "index": index, "path": record["path"]})
+            records.append(record)
+        counts = {status: sum(r["status"] == status for r in records) for status in ("ok", "partial", "error", "skipped")}
+        status = "skipped" if counts["skipped"] == len(records) else "partial" if any(r["status"] != "ok" for r in records) else "ok"
+        return {"status": status, "mode": "passive_after_failure" if passive else "after_execution",
+                "counts": counts, "views": records}
 
     def error(self, exc, fallback):
         try:
@@ -581,7 +700,18 @@ class HoudiniScene:
                 result["signature_status"] = "unavailable"
         return result
 
-    def _capture_view(self, viewer, viewport, args, detail, restorers):
+    def _capture_framing_state(self, viewport, args):
+        if args.get("purpose") != "review" or not {"bounds", "target"}.intersection(args):
+            return None
+        from .inspection import optional_bool
+        camera, path = viewport.camera(), viewport.cameraPath()
+        if viewport.isViewingThroughExtraCamera() or (path and camera is None):
+            raise StudioError("REVIEW_FRAMING_UNSUPPORTED", "Use a free/OBJ camera view for review framing")
+        return {"camera": camera, "path": path, "saved": viewport.defaultCamera().stash(),
+                "locked": bool(viewport.isCameraLockedToView()), "transform": tuple(viewport.viewTransform().asTuple()),
+                "perspective": optional_bool(viewport.defaultCamera(), "isPerspective")}
+
+    def _capture_view(self, viewer, viewport, args, detail, restorers, framing=None):
         # Optional review metadata must not become a dependency of the default
         # diagnostic capture, which uses the current view unchanged.
         if args.get("purpose", "diagnostic") == "diagnostic":
@@ -596,13 +726,9 @@ class HoudiniScene:
                                 "images_enabled": bool(settings.displayBackgroundImage()),
                                 "environment_enabled": bool(settings.displayEnvironmentBackgroundImage()),
                                 "horizon": "unclassified", "policy": "preserved"}
-        framing = None
-        if "bounds" in args:
-            camera = viewport.camera()
-            if viewport.isViewingThroughExtraCamera() or (camera_path and camera is None):
-                raise StudioError("REVIEW_FRAMING_UNSUPPORTED", "Use diagnostic capture or a free/OBJ camera view for review bounds")
-            framing = (camera, viewport.defaultCamera().stash(), bool(viewport.isCameraLockedToView()),
-                       tuple(viewport.viewTransform().asTuple()))
+        if args.get("view", "current") != "current":
+            from .capture_targets import viewer_space
+            detail["view_space"] = viewer_space(viewer)
 
         # Only known decorations; CurrentGeometry/DisplayNodes/TemplateGeometry
         # and other guides that actually show user geometry must stay untouched.
@@ -639,10 +765,10 @@ class HoudiniScene:
                 raise StudioError("REVIEW_DISPLAY_MISMATCH", "A requested viewport decoration remains enabled")
 
         if framing is not None:
-            camera, saved_view, locked, transform = framing
+            camera, saved_view, locked, transform = (framing[k] for k in ("camera", "saved", "locked", "transform"))
             free_view = {"saved": saved_view if camera is None else None}
             restorers.append(("view", lambda: self._restore_capture_view(
-                viewport, camera, saved_view, free_view, locked, transform, camera_path, detail)))
+                viewport, camera, saved_view, free_view, locked, transform, framing["path"], detail, framing["perspective"])))
             # H22 defaultCamera() is live and can edit a locked camera node.
             # Disconnect and verify before framing; never write camera parameters.
             viewport.lockCameraToView(False)
@@ -653,11 +779,20 @@ class HoudiniScene:
                 raise StudioError("REVIEW_CAMERA_BOUND", "Could not detach the viewport for temporary framing")
             if camera is not None:
                 free_view["saved"] = viewport.defaultCamera().stash()
+            if args.get("view", "current") != "current":
+                from .capture_targets import named_view
+                detail["viewpoint"] = named_view(self.hou, viewport, args["view"])
             viewport.frameBoundingBox(self.hou.BoundingBox(*args["bounds"]))
             detail["view"].update(framing="bounds", bounds=list(args["bounds"]), capture_camera_path="")
+            if "target" in args and args.get("view", "current") == "current":
+                from .inspection import optional_bool
+                matrix = viewport.viewTransform().asTuple()
+                detail["viewpoint"] = {"name": "current", "direction_space": "world",
+                    "direction": list(-self.hou.Vector3(matrix[8:11]).normalized()),
+                    "perspective": optional_bool(viewport.defaultCamera(), "isPerspective")}
         viewport.draw()
 
-    def _restore_capture_view(self, viewport, camera, saved_view, free_view, locked, transform, camera_path, detail):
+    def _restore_capture_view(self, viewport, camera, saved_view, free_view, locked, transform, camera_path, detail, perspective=None):
         def attempt(phase, action):
             try:
                 action()
@@ -675,6 +810,13 @@ class HoudiniScene:
                 raise StudioError("VIEW_RESTORE_BOUND", "Restoration could not detach the viewport")
 
         if attempt("detach_view", detach) and free_view["saved"] is not None:
+            # H22 setDefaultCamera() ignores the stashed inactive ortho width
+            # when restoring a perspective view. Restore that cache explicitly
+            # while detached, then apply the full saved projection and pose.
+            live = viewport.defaultCamera()
+            if callable(getattr(live, "setPerspective", None)) and callable(getattr(live, "setOrthoWidth", None)):
+                attempt("default_projection_cache", lambda: live.setPerspective(False))
+                attempt("default_ortho_width", lambda: live.setOrthoWidth(free_view["saved"].orthoWidth()))
             attempt("default_view", lambda: viewport.setDefaultCamera(free_view["saved"]))
         if camera is not None:
             attempt("camera_binding", lambda: viewport.setCamera(camera))
@@ -684,12 +826,16 @@ class HoudiniScene:
             observed = tuple(viewport.viewTransform().asTuple())
             restored_path, restored_lock = viewport.cameraPath(), bool(viewport.isCameraLockedToView())
             matches = len(observed) == len(transform) and all(
-                math.isclose(a, b, rel_tol=0, abs_tol=1e-6) for a, b in zip(observed, transform))
+                math.isclose(a, b, rel_tol=1e-6, abs_tol=1e-6) for a, b in zip(observed, transform))
             width_matches = math.isclose(viewport.defaultCamera().orthoWidth(), saved_view.orthoWidth(),
                                          rel_tol=0, abs_tol=1e-6)
             detail["view"]["restored"] = {"camera_path": self.redact(restored_path), "locked": restored_lock,
-                                           "transform_matches": matches, "ortho_width_matches": width_matches}
-            if restored_path != camera_path or restored_lock != locked or not matches or not width_matches:
+                                           "transform_matches": matches, "ortho_width_matches": width_matches,
+                                           "transform_max_delta": max((abs(a - b) for a, b in zip(observed, transform)), default=None),
+                                           "transform_tolerance": {"absolute": 1e-6, "relative": 1e-6}}
+            projection_matches = None if perspective is None else viewport.defaultCamera().isPerspective() == perspective
+            detail["view"]["restored"]["projection_matches"] = projection_matches
+            if restored_path != camera_path or restored_lock != locked or not matches or not width_matches or projection_matches is False:
                 raise StudioError("VIEW_RESTORE_MISMATCH", "Original viewport or camera binding was not restored")
 
         attempt("verify_view", verify)
@@ -703,6 +849,10 @@ class HoudiniScene:
                   "frame_before_capture": None, "actual_frame": None,
                   "restored_frame": None, "capture_error": None, "restore_errors": []}
         previous_frame, artifact_id = None, None
+        expected_epoch = self.epoch
+        if "target" in args:
+            detail["requested_target"] = args["target"]
+        detail["requested_view"] = args.get("view", "current")
         restorers = []
         try:
             validate_arguments("capture", args)
@@ -717,7 +867,22 @@ class HoudiniScene:
             viewport = viewer.curViewport()
             width, height, source = capture_resolution(args, viewport)
             detail.update(requested_resolution=[width, height], resolution_source=source)
-            self._capture_view(viewer, viewport, args, detail, restorers)
+            framing = self._capture_framing_state(viewport, args)
+            self.hou.setFrame(frame)
+            observed = float(self.hou.frame())
+            detail["frame_before_capture"] = observed if math.isfinite(observed) else None
+            if not math.isclose(observed, frame, rel_tol=0, abs_tol=1e-6):
+                raise StudioError("CAPTURE_FRAME_MISMATCH", "Requested frame was not established before capture")
+            if self.epoch != expected_epoch:
+                raise StudioError("SCENE_REPLACED", "Scene changed before capture target resolution")
+            capture_args = dict(args)
+            if "target" in args:
+                from .capture_targets import resolve_targets
+                detail["target"] = resolve_targets(self.hou, viewer, args["target"])
+                capture_args["bounds"] = detail["target"]["bounds"]
+            if self.epoch != expected_epoch or not math.isclose(float(self.hou.frame()), frame, rel_tol=0, abs_tol=1e-6):
+                raise StudioError("CAPTURE_CONTEXT_CHANGED", "Scene or frame changed while reading capture targets")
+            self._capture_view(viewer, viewport, capture_args, detail, restorers, framing)
             artifact_id, output = self._artifacts.allocate()
             settings = viewer.flipbookSettings().stash()
             # Mutate only the stash. Do not reset simulation or inherit costly
@@ -748,20 +913,27 @@ class HoudiniScene:
             settings.outputToMPlay(False)
             if callable(getattr(settings, "cropOutMaskOverlay", None)):
                 settings.cropOutMaskOverlay(False)
-            self.hou.setFrame(frame)
             observed = float(self.hou.frame())
             detail["frame_before_capture"] = observed if math.isfinite(observed) else None
             if not math.isclose(observed, frame, rel_tol=0, abs_tol=1e-6):
                 raise StudioError("CAPTURE_FRAME_MISMATCH", "Requested frame was not established before capture")
             viewer.flipbook(viewport, settings, open_dialog=False)
+            if self.epoch != expected_epoch:
+                raise StudioError("SCENE_REPLACED", "Scene changed during capture; image cannot verify the original target")
             observed = float(self.hou.frame())
             detail["actual_frame"] = observed if math.isfinite(observed) else None
             if not math.isclose(observed, frame, rel_tol=0, abs_tol=1e-6):
                 raise StudioError("CAPTURE_FRAME_MISMATCH", "Observed frame changed during capture")
         except BaseException as exc:
             detail["capture_error"] = self.error(exc, "CAPTURE_FAILED")
+            if isinstance(exc, StudioError) and "target_path" in exc.details:
+                detail["capture_error"]["path"] = exc.details["target_path"]
         finally:
-            if previous_frame is not None and math.isfinite(previous_frame):
+            same_scene = self.epoch == expected_epoch
+            if not same_scene:
+                detail["restore_errors"].append({"phase": "scene_bound_restore", "error": {
+                    "code": "SCENE_REPLACED", "message": "Original scene changed; skipped frame and view restoration into a different scene"}})
+            if same_scene and previous_frame is not None and math.isfinite(previous_frame):
                 try:
                     self.hou.setFrame(previous_frame)
                 except BaseException as exc:
@@ -774,7 +946,7 @@ class HoudiniScene:
                         raise StudioError("FRAME_RESTORE_MISMATCH", "Original frame was not restored")
                 except BaseException as exc:
                     detail["restore_errors"].append({"phase": "verify_frame", "error": self.error(exc, "FRAME_RESTORE_FAILED")})
-            for phase, restore in reversed(restorers):
+            for phase, restore in reversed(restorers) if same_scene else ():
                 try:
                     restore()
                 except BaseException as exc:
@@ -783,7 +955,8 @@ class HoudiniScene:
             try:
                 # Verify real PNG scanlines/dimensions before registering an immutable
                 # workspace reference. A restoration failure does not discard a valid image.
-                info = self._artifacts.commit(artifact_id, dict(detail), detail["requested_resolution"])
+                from .observation_results import capture_manifest_summary
+                info = self._artifacts.commit(artifact_id, capture_manifest_summary(detail), detail["requested_resolution"])
                 detail.update(info, frame=detail["actual_frame"], actual_resolution=[info["width"], info["height"]])
             except BaseException as exc:
                 detail["capture_error"] = self.error(exc, "CAPTURE_FAILED")

@@ -193,13 +193,12 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual(result["views"][1]["error"]["code"], "NODE_NOT_FOUND")
         self.assertIn("setting0", result["views"][0]["values"])
 
-    def test_static_hom_summary_has_no_receipt_promise_and_execute_unchanged(self):
+    def test_static_hom_summary_has_no_receipt_promise(self):
         detail = {"symbol": "hou", "members": [{"name": "member" + str(i), "documentation": "x" * 1000}
                                               for i in range(64)], "offset": 0, "total": 1000, "next_offset": 64}
         result = observation_summary("lookup", detail, receipt=False)
         self.assertNotIn("detail_available", result)
         self.assertEqual(result["next_offset"], len(result["members"]))
-        self.assertIs(observation_summary("execute", detail), detail)
 
 
 if __name__ == "__main__":

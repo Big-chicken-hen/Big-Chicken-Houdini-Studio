@@ -210,17 +210,12 @@ class OperationRuntime:
             outcome.detail["cache_refresh_error"] = "Cached scene facts could not be refreshed"
         try:
             detail = self.ledger.sanitize(outcome.detail)
-            size = len(encoded(detail).encode("utf-8"))
+            encoded(detail).encode("utf-8")  # Check serialization before summarizing; preserve execution facts on failure.
         except BaseException:
             detail = {"result_error": {"code": "RESULT_SERIALIZATION_FAILED",
                                        "message": "Result could not be serialized; execution facts are unchanged"}}
-            size = 0
         from .observation_results import observation_summary
-        if op["kind"] in {"context", "inspect", "lookup"}:
-            summary = observation_summary(op["kind"], detail)
-        else:
-            summary = detail if size <= 16000 else {
-                "detail_available": True, "message": "Read the detailed result by operation ID"}
+        summary = observation_summary(op["kind"], detail)
         if op["kind"] == "context" and "scene_epoch" in detail:
             summary["scene_epoch"] = detail["scene_epoch"]
         # A failed commit must never be caught and relabelled as a script failure.
