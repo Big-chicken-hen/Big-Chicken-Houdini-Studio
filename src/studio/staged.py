@@ -147,8 +147,12 @@ class StagedExecution:
             state = "cancelled" if cancelled else "failed" if reason else "finished"
             if reason and self.mutation() == "not_run" and not cancelled:
                 state = "rejected"
+            declared_checks = [self.detail["steps"][i]["checks_outcome"]
+                               for i, requested in enumerate(self.args["steps"]) if requested.get("checks")]
+            checks_outcome = ("failed" if "failed" in declared_checks else "passed"
+                              if declared_checks and all(c == "passed" for c in declared_checks) else "not_run")
             self.publish(state=state, error=error or ({"code": reason, "message": "Staged operation stopped; read step facts before a new targeted operation"} if reason else None),
-                checks_outcome="failed" if reason else "passed" if any(s["checks_outcome"] == "passed" for s in self.detail["steps"]) else "not_run",
+                checks_outcome=checks_outcome,
                 cancel_requested=bool(cancelled or receipt.get("cancel_requested")), finished_at=now(),
                 timings={"queue_seconds": round(receipt.get("started_at", now()) - receipt["created_at"], 6),
                          "execution_seconds": round(time.monotonic() - self.started, 6)})
@@ -206,6 +210,10 @@ class StagedExecution:
         outcome = self.scene.execute(arguments, lambda: self.op_id in self.runtime.cancelled,
             handoff={"inputs": copy.deepcopy(self.inputs), "results": copy.deepcopy(self.results)}, compiled=self.codes[index])
         detail = outcome.detail
+        try:
+            self.scene.refresh_cached()
+        except BaseException:
+            detail["cache_refresh_error"] = "Cached scene facts could not be refreshed"
         after = detail.get("observe_after", {})
         observation = (after.get("status", "ok") if arguments.get("observe_after") else "ok")
         observed_views = [*after.get("views", []), *detail.get("observations", {}).get("after", [])]

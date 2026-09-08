@@ -126,6 +126,7 @@ class StagedTests(unittest.TestCase):
             self.assertEqual(self.hou.count, 0 if "observe" in gate else 1)
             self.assertEqual(outcome["steps"][1]["state"], "not_run")
             self.assertNotEqual(outcome["state"], "finished")
+            self.assertEqual(outcome["checks_outcome"], "failed" if "checks" in gate else "not_run")
 
     def test_each_begin_and_result_commit_precedes_next_execution(self):
         outcome = self.drain(self.submit(self.args(["hou.record('one')", "hou.record('two')"])))
@@ -180,6 +181,7 @@ class StagedTests(unittest.TestCase):
         receipt = self.drain(self.submit(self.args(["hou.setFrame(72)", "assert hou.frame()==72"])))
         self.assertEqual(receipt["state"], "finished")
         self.assertEqual(self.frame, 72)
+        self.assertEqual(self.runtime.health()["scene"]["frame"], 72)
 
     def test_cancel_between_steps_and_at_last_step_preserves_completed_mutations(self):
         for stop_at in (1, 2):
