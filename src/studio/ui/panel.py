@@ -1530,6 +1530,7 @@ class StudioPanel(QtWidgets.QWidget):
             if key not in self.request_cards:
                 card = RequestCard(request)
                 card.respond.connect(self.respond_request)
+                card.show_trust.connect(self.session_trust.show_details)
                 self.request_cards[key] = card
                 self.request_layout.addWidget(card)
             else:

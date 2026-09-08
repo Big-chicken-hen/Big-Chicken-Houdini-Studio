@@ -162,6 +162,7 @@ class SessionTrustTests(unittest.TestCase):
         second = self.item(call_id="call-2")
         self.bridge.on_event(self.approval(item))
         self.client.respond_to_server_request.assert_not_called()
+        self.assertEqual(self.bridge.pending_requests["1"]["trust_reason"], "ambiguous_call")
         self.bridge.scene_trust.calls.pop(second["id"])
         self.bridge.on_event(self.approval(item, 2))
         self.assertEqual(self.client.respond_to_server_request.call_count, 1)
@@ -172,6 +173,43 @@ class SessionTrustTests(unittest.TestCase):
         masked = self.item(arguments={"script": "result = '[REDACTED]'"})
         self.bridge.on_event(self.approval(masked, 5))
         self.assertEqual(self.client.respond_to_server_request.call_count, 1)
+        self.assertEqual(self.bridge.pending_requests["5"]["trust_reason"], "arguments_redacted")
+
+    def test_distinct_inflight_calls_match_complete_staged_arguments_only(self):
+        self.change(True)
+        self.start()
+        args = {"inputs": {"source": "/obj/input"}, "steps": [
+            {"id": "prepare", "label": "Prepare", "script": "result = inputs['source']"},
+            {"id": "finish", "label": "Finish", "script": "result = results['prepare']"}]}
+        staged = self.item(arguments=args)
+        self.item(tool="hia_context", arguments={}, call_id="context")
+        other = self.item(arguments={**args, "inputs": {"source": "/obj/other"}}, call_id="other")
+        self.bridge.on_event(self.approval(staged))
+        self.client.respond_to_server_request.assert_called_once_with(1, {"action": "accept", "content": {}})
+        self.assertTrue(self.bridge.scene_trust.calls[staged["id"]]["answered"])
+        self.assertFalse(self.bridge.scene_trust.calls[other["id"]]["answered"])
+        self.bridge.on_event(self.approval(other, 2))
+        self.assertEqual(self.client.respond_to_server_request.call_count, 2)
+        mismatch = self.approval(staged, 3)
+        mismatch["params"]["_meta"]["tool_params"] = {**args, "steps": args["steps"][:1]}
+        self.bridge.on_event(mismatch)
+        self.assertEqual(self.client.respond_to_server_request.call_count, 2)
+
+    def test_repeated_pregrant_request_stays_manual_and_reason_codes_are_bounded(self):
+        self.start()
+        item = self.item()
+        request = self.approval(item)
+        self.bridge.on_event(request)
+        self.assertEqual(self.bridge.pending_requests["1"]["trust_reason"], "trust_off")
+        self.change(True)
+        self.bridge.on_event(request)
+        self.client.respond_to_server_request.assert_not_called()
+        self.bridge._runtime.call.side_effect = StudioError("CONNECTION_LOST", "offline")
+        self.bridge.on_event(self.approval(item, 2))
+        self.assertEqual(self.bridge.pending_requests["2"]["trust_reason"], "runtime_unavailable")
+        self.bridge.stop_requested = True
+        self.bridge.on_event(self.approval(item, 3))
+        self.assertEqual(self.bridge.pending_requests["3"]["trust_reason"], "stop_requested")
 
     def test_selection_aba_revision_process_exit_and_stop_do_not_extend_consent(self):
         old = self.change(True)

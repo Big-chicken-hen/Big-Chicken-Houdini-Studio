@@ -131,10 +131,14 @@ class Bridge:
                 self.pending_requests.clear()
             self.scene_trust.observe(method, params, self.turn_id)
             if event.get("type") == "server_request":
-                self.pending_requests[str(event["request_id"])] = event
-                call_id = self.scene_trust.match(event, self.thread_id, self.turn_id)
-                if (call_id and self.scene_trust.enabled and self.codex_state == "running" and
-                        not self.stop_requested and self._trust_matches(approval_runtime)):
+                request_id = str(event["request_id"])
+                previous = self.pending_requests.get(request_id)
+                call_id, reason = self.scene_trust.match_reason(event, self.thread_id, self.turn_id)
+                reason = self._trust_reason(approval_runtime) or reason
+                event = previous or {**event, "trust_reason": reason}
+                self.pending_requests[request_id] = event
+                # Opening consent never answers a request that was already pending.
+                if previous is None and call_id and reason is None:
                     try:
                         # Client registers the pending request before invoking this sink.
                         # The lock orders this single response against explicit revocation;
@@ -144,7 +148,7 @@ class Bridge:
                     except Exception:
                         # A failed write may have reached Codex. Retain the request as
                         # unknown, disable further delegation, and never resend it.
-                        event = {**event, "response_state": "unknown"}
+                        event = {**event, "response_state": "unknown", "trust_reason": "response_unknown"}
             if method == "serverRequest/resolved":
                 self.pending_requests.pop(str(params.get("requestId")), None)
             self.sequence += 1
@@ -197,6 +201,19 @@ class Bridge:
                     runtime.get("runtime_id") == self.scene_trust.runtime_id and
                     runtime.get("scene", {}).get("scene_epoch") == self.scene_trust.scene_epoch and
                     self.scene_trust.scene_epoch)
+
+    def _trust_reason(self, runtime):
+        if self._has_unknown_response():
+            return "response_unknown"
+        if self.stop_requested:
+            return "stop_requested"
+        if not self.scene_trust.enabled:
+            return self.scene_trust.reset_reason
+        if not runtime or runtime.get("connection") != "connected":
+            return "runtime_unavailable"
+        if self.codex_state != "running" or not self._trust_matches(runtime):
+            return "scope_changed"
+        return None
 
     def _scene_trust_state(self, runtime=None):
         reason = ""
@@ -517,7 +534,7 @@ class Bridge:
             try:
                 self.client.respond_to_server_request(request["request_id"], result)
             except Exception:
-                self.pending_requests[request_id] = {**request, "response_state": "unknown"}
+                self.pending_requests[request_id] = {**request, "response_state": "unknown", "trust_reason": "response_unknown"}
                 self.scene_trust.reset()
                 self.codex_state = "unknown"
                 self.turn_revision += 1
