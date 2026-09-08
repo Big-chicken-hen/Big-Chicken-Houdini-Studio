@@ -63,6 +63,23 @@ class RequestControlsTest(unittest.TestCase):
         self.control.apply_state(trust_state(enabled=False, revision=1))
         self.assertIn("已授权", self.control.status.text())
 
+    def test_mcp_card_opens_existing_consent_without_answering_pending_request(self):
+        card = RequestCard({"request_id": 81, "method": "mcpServer/elicitation/request",
+            "trust_reason": "ambiguous_call", "params": {"serverName": "big_chicken", "mode": "form",
+                "_meta": {"codex_approval_kind": "mcp_tool_call"},
+                "requestedSchema": {"type": "object", "properties": {}}}})
+        self.addCleanup(card.close)
+        replies = []
+        card.respond.connect(lambda *args: replies.append(args))
+        card.show_trust.connect(self.control.show_details)
+        card.trust_link.click()
+        self.assertTrue(self.control.details.isVisible())
+        self.assertEqual(self.api.calls, [])
+        self.assertEqual(replies, [])
+        self.assertIn("无法唯一", card.trust_hint.text())
+        next(b for b in card.actions if b.text() == "允许本次").click()
+        self.assertEqual(replies, [(81, {"action": "accept", "content": {}})])
+
     def test_lost_revoke_response_requires_query_not_replay(self):
         self.control.apply_state(trust_state(enabled=True))
         changed = []

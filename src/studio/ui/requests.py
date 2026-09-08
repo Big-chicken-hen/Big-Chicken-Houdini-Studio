@@ -28,6 +28,7 @@ def permission_lines(value, prefix=""):
 
 class RequestCard(QtWidgets.QFrame):
     respond = QtCore.Signal(object, object)
+    show_trust = QtCore.Signal()
 
     def __init__(self, request, parent=None):
         super().__init__(parent)
@@ -41,6 +42,7 @@ class RequestCard(QtWidgets.QFrame):
         self.actions = []
         self.waiting_response = False
         self.response_unknown = False
+        self.trust_hint = None
         self.error = label("", "warning", True)
         method, params = request.get("method"), request.get("params", {})
         self.layout.addWidget(label("需要你的回应", "messageAuthor"))
@@ -98,6 +100,11 @@ class RequestCard(QtWidgets.QFrame):
             elif (params.get("_meta", {}).get("codex_approval_kind") == "mcp_tool_call" and
                   params.get("requestedSchema") == {"type": "object", "properties": {}}):
                 self.action("允许本次", lambda: self.submit({"action": "accept", "content": {}}))
+                if params.get("serverName") == "big_chicken":
+                    self.trust_hint = label("", "muted", True)
+                    self.layout.addWidget(self.trust_hint)
+                    self.trust_link = button("本对话授权…", self.show_trust.emit, "quiet")
+                    self.layout.addWidget(self.trust_link, 0, QtCore.Qt.AlignLeft)
             else:
                 schema = params.get("requestedSchema", {})
                 self.layout.addWidget(label("按下列原生字段要求填写 JSON。提交前可检查完整内容。", "muted", True))
@@ -204,6 +211,17 @@ class RequestCard(QtWidgets.QFrame):
 
     def update_request(self, request):
         self.request = request
+        if self.trust_hint is not None:
+            reasons = {"trust_off": "尚未开启本对话授权。",
+                "scope_changed": "对话、账号或场景环境已变化，需要重新授权。",
+                "ambiguous_call": "无法唯一对应当前工具调用，请确认本次请求。",
+                "arguments_redacted": "参数已脱敏，无法确认调用一致，请确认本次请求。",
+                "runtime_unavailable": "Houdini 连接尚未确认，请确认本次请求。",
+                "unsupported_request": "此原生请求不能复用本对话授权。",
+                "stop_requested": "已请求停止，后续调用需要重新确认。",
+                "response_unknown": "上次回应是否送达尚未确认。"}
+            self.trust_hint.setText(reasons.get(request.get("trust_reason"), "此请求需要单次确认。") +
+                                    " 本对话授权仅对后续请求生效，本条仍需单次回应。")
         if request.get("response_state") == "unknown":
             self.mark_response_unknown()
 

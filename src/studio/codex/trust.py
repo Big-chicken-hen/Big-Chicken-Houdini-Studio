@@ -36,18 +36,21 @@ class SessionTrust:
         self.revision = 0
         self.calls = {}
         self.scene_epoch = self.runtime_id = None
+        self.reset_reason = "trust_off"
 
     def reset(self):
         self.enabled = False
         self.revision += 1
         self.calls = {}
         self.scene_epoch = self.runtime_id = None
+        self.reset_reason = "scope_changed"
 
     def change(self, enabled, scene_epoch=None, runtime_id=None):
         self.enabled = enabled
         self.scene_epoch = scene_epoch if enabled else None
         self.runtime_id = runtime_id if enabled else None
         self.revision += 1
+        self.reset_reason = "trust_off"
 
     def observe(self, method, params, turn_id):
         if method in {"turn/started", "turn/completed"}:
@@ -68,29 +71,41 @@ class SessionTrust:
                 self.calls[item["id"]] = {"item": item, "answered": False}
 
     def match(self, request, thread_id, turn_id):
-        if (not thread_id or not turn_id or not self.calls or len(self.calls) != 1 or
-                request.get("method") != "mcpServer/elicitation/request"):
-            return None
+        return self.match_reason(request, thread_id, turn_id)[0]
+
+    def match_reason(self, request, thread_id, turn_id):
+        if request.get("method") != "mcpServer/elicitation/request":
+            return None, "unsupported_request"
         params = request.get("params", {})
         meta = params.get("_meta")
-        if (params.get("threadId") != thread_id or params.get("turnId") != turn_id or
-                params.get("serverName") != STUDIO_SERVER or params.get("mode") != "form" or
+        if not thread_id or not turn_id or params.get("threadId") != thread_id or params.get("turnId") != turn_id:
+            return None, "scope_changed"
+        if (params.get("serverName") != STUDIO_SERVER or params.get("mode") != "form" or
                 params.get("requestedSchema") != {"type": "object", "properties": {}} or
                 "url" in params or not isinstance(meta, dict) or
                 meta.get("codex_approval_kind") != "mcp_tool_call" or set(meta) - _APPROVAL_META):
-            return None
-        call_id, call = next(iter(self.calls.items()))
-        item = call["item"]
-        tool = item.get("tool")
-        if (call["answered"] or item.get("server") != STUDIO_SERVER or tool not in STUDIO_TOOLS or
-                item.get("status") != "inProgress" or
-                meta.get("tool_name", tool) != tool or
-                params.get("message") != f'Allow the {STUDIO_SERVER} MCP server to run tool "{tool}"?'):
-            return None
-        arguments = _arguments(item.get("arguments"))
-        if arguments is None or arguments != _arguments(meta.get("tool_params")):
-            return None
-        return call_id
+            return None, "unsupported_request"
+        arguments = _arguments(meta.get("tool_params"))
+        if arguments is None:
+            return None, "arguments_redacted"
+        if not self.calls:
+            return None, "ambiguous_call"
+        candidates, masked = [], False
+        for call_id, call in self.calls.items():
+            item, tool = call["item"], call["item"].get("tool")
+            if (call["answered"] or item.get("server") != STUDIO_SERVER or tool not in STUDIO_TOOLS or
+                    item.get("status") != "inProgress" or meta.get("tool_name", tool) != tool or
+                    params.get("message") != f'Allow the {STUDIO_SERVER} MCP server to run tool "{tool}"?'):
+                continue
+            candidate = _arguments(item.get("arguments"))
+            if candidate is None:
+                masked = True
+            elif candidate == arguments:
+                candidates.append(call_id)
+        # A masked compatible call can also be the request; it cannot be ruled out.
+        if masked:
+            return None, "arguments_redacted"
+        return (candidates[0], None) if len(candidates) == 1 else (None, "ambiguous_call")
 
     def consume(self, call_id):
         if self.calls and call_id in self.calls:
