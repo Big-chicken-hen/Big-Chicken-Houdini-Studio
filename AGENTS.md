@@ -2,7 +2,7 @@
 
 This is a new repository. The old HIA checkout is reference material, never a write target.
 The architectural acceptance briefs are `docs/pro-diagnosis.md` and `docs/stage-readiness-review.md`.
-The latest scope and acceptance decision is `docs/tc2-brief.md`: targeted post-execution feedback and SOP/OBJ review capture on `codex/tool-capability-feedback`. PR #6 may technically merge after its identifier-summary fix and candidate CI; its model comparison remains deferred as `TC1-A1` in `docs/deferred-acceptance.md`. PR #5 merged at `1e9f0f4`; its closure record is `docs/pr5-closure-brief.md`.
+The latest scope and acceptance decision is `docs/tc2-brief.md`: targeted post-execution feedback and SOP/OBJ review capture on `codex/tool-capability-feedback`. PR #6 technically merged at `c409c88`; its model comparison remains deferred as `TC1-A1` in `docs/deferred-acceptance.md`. TC-2 technical evidence is in `docs/tc2-validation.md`; its separate model task is `TC2-A1`, also pending official login. PR #5 merged at `1e9f0f4`; its closure record is `docs/pr5-closure-brief.md`.
 Read `docs/rebuild-brief.md` before changing a subsystem. Do not replace this effort with a generic agent platform.
 
 - Resolve the installation root from this checkout or HIA_PROJECT_ROOT. Installation resources and dependencies remain under it. Normal user state and disposable cache use separate platform roots, resolved by the launcher and passed explicitly to children. Preserve containment for each root. Development fixtures, previews and logs stay in this checkout's .runtime; tests must never use real user state.
