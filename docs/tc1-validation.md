@@ -1,8 +1,10 @@
 # TC-1 validation and remaining acceptance
 
-Status: implementation and isolated preparation are ready for review. **The paired
-model authoring test has not run; this PR is not ready to merge.** On 2026-09-08 the
-user deferred the isolated official login and asked to finish the remaining preparation.
+Current decision: [the later Pro approval](tc2-brief.md) permits technical integration
+after correcting address truncation and passing candidate CI. Model comparison remains
+pending as [TC1-A1](deferred-acceptance.md). It no longer blocks TC-2 development or
+conditional TC-1 technical merge. On 2026-09-08 the user deferred isolated official login.
+The evidence below is the original `835e05b` record; it does not claim model benefit.
 
 The governing scope is [tc1-brief.md](tc1-brief.md). Baseline main is
 `1e9f0f4dc43465bd221b3e0832a5e75d6cd1aa66`, rechecked against origin/main on 2026-09-08.
@@ -105,4 +107,6 @@ Keep both complete runs, including failures. Publish only the minimal sanitized 
 The approved efficiency/quality alternatives are still **unmeasured**: 20% fewer discovery/
 observation calls at equal quality, eliminating baseline API guesses without more total
 calls, or completing both rounds where baseline fails with no obvious avoidable roundtrips.
-After all gates pass, request Pro review. **Do not merge on the basis of these preparations.**
+The original model-effect gate remains required before claiming behavioral gains.
+Its earlier requirement to block technical merge is superseded by the later Pro approval
+linked above. No unexecuted comparison is marked passed.

@@ -1,5 +1,11 @@
 # TC-1: installed discovery and working-set observation
 
+Acceptance update: the later [TC-2 Pro decision](tc2-brief.md) separates technical
+integration from model-effect approval. Correct the PR #6 identifier-summary defect,
+pass candidate CI, and retain the frozen comparison as [TC1-A1](deferred-acceptance.md).
+The original model-effect requirements below remain preserved; they no longer block
+TC-1 technical integration or TC-2 development.
+
 Approved user-supplied Pro review, 2026-09-08. Actual branch base:
 `1e9f0f4dc43465bd221b3e0832a5e75d6cd1aa66` (merged PR #5).
 Branch: `codex/tool-capability-discovery`. The operative execution brief below
@@ -509,5 +515,4 @@ Codex 完成实现、测试、真实验证、commit、push 和单一 PR。PR 必
 [2]: https://modelcontextprotocol.io/specification/2025-11-25/server/tools "https://modelcontextprotocol.io/specification/2025-11-25/server/tools"
 [3]: https://openai.com/index/unlocking-the-codex-harness/ "https://openai.com/index/unlocking-the-codex-harness/"
 [4]: https://www.sidefx.com/docs/houdini/hom/hou/readFile.html "https://www.sidefx.com/docs/houdini/hom/hou/readFile.html"
-
 
