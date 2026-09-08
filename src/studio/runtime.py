@@ -119,6 +119,12 @@ class OperationRuntime:
             self.cancelled.add(operation_id)
             if receipt["state"] == "queued":
                 # Keep the slot until the actual queue item is drained.
+                if receipt.get("mode") == "staged":
+                    from .staged import interrupted, summary
+                    detail = interrupted(receipt["result"], "CANCEL_REQUESTED", "Cancelled before the first step")
+                    brief = summary(detail)
+                    return self._commit(operation_id, detail=detail, result=brief, **brief,
+                        state="cancelled", cancel_requested=True, mutation_outcome="not_run", finished_at=now())
                 return self._commit(operation_id, state="cancelled", cancel_requested=True,
                                           mutation_outcome="not_run", finished_at=now())
             return self._commit(operation_id, cancel_requested=True)
@@ -160,15 +166,18 @@ class OperationRuntime:
                     return
                 continue
             try:
-                self.dispatch(lambda: self._on_main_thread(op))
+                if op["kind"] == "execute" and "steps" in op.get("arguments", {}):
+                    from .staged import StagedExecution
+                    StagedExecution(self, op).run()
+                else:
+                    self.dispatch(lambda: self._on_main_thread(op))
             except BaseException:
                 # A dispatch/commit failure cannot establish whether HOM ran.
                 try:
                     receipt = self.ledger.get(op["operation_id"])
                     if receipt["state"] not in TERMINAL:
-                        self.ledger.update(op["operation_id"], state="unknown", mutation_outcome="unknown",
-                                           error={"code": "EXECUTION_UNCONFIRMED", "message": "Execution could not be confirmed; do not replay"},
-                                           finished_at=now())
+                        self.ledger.interrupt(op["operation_id"], "EXECUTION_UNCONFIRMED",
+                                              "Execution could not be confirmed; do not replay")
                     with self.lock:
                         self.unconfirmed.discard(op["operation_id"])
                 except BaseException:

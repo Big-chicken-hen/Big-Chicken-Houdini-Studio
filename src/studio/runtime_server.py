@@ -31,7 +31,7 @@ def runtime_router(runtime):
                 return runtime.get(op_id)
             if method == "GET" and parts[2:] == ["detail"]:
                 runtime.get(op_id)
-                return runtime.ledger.detail(op_id, int(query.get("offset", [0])[0]))
+                return runtime.ledger.detail(op_id, int(query.get("offset", [0])[0]), step_id=query.get("step_id", [None])[0])
             if method == "POST" and parts[2:] == ["cancel"]:
                 return runtime.cancel(op_id)
         if method == "POST" and path == "/owner/stop":
