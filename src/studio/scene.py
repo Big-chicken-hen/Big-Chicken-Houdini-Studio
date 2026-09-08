@@ -825,17 +825,33 @@ class HoudiniScene:
         def verify():
             observed = tuple(viewport.viewTransform().asTuple())
             restored_path, restored_lock = viewport.cameraPath(), bool(viewport.isCameraLockedToView())
+            live = viewport.defaultCamera()
+            components_match, position_tolerance = None, 1e-6
+            fields = ("rotation", "translation", "pivot", "focalLength", "aperture")
+            if all(callable(getattr(c, field, None)) for c in (live, saved_view) for field in fields):
+                def values(camera):
+                    return (*camera.rotation().asTuple(), *camera.translation(), *camera.pivot(),
+                            camera.focalLength(), camera.aperture())
+                actual, original = values(live), values(saved_view)
+                components_match = all(math.isclose(a, b, rel_tol=0, abs_tol=1e-7) for a, b in zip(actual, original))
+                # H22's viewTransform reconstructs a pose using float viewport
+                # caches; cancellation near zero can exceed an absolute 1e-6.
+                # Bound that roundoff by pose scale AND verify camera components.
+                position_tolerance = max(1e-6, 4 * 2 ** -23 * max(1, *(abs(v) for v in original[9:15])))
             matches = len(observed) == len(transform) and all(
-                math.isclose(a, b, rel_tol=1e-6, abs_tol=1e-6) for a, b in zip(observed, transform))
+                math.isclose(a, b, rel_tol=1e-6, abs_tol=position_tolerance if 12 <= i <= 14 else 1e-6)
+                for i, (a, b) in enumerate(zip(observed, transform)))
             width_matches = math.isclose(viewport.defaultCamera().orthoWidth(), saved_view.orthoWidth(),
                                          rel_tol=0, abs_tol=1e-6)
             detail["view"]["restored"] = {"camera_path": self.redact(restored_path), "locked": restored_lock,
                                            "transform_matches": matches, "ortho_width_matches": width_matches,
                                            "transform_max_delta": max((abs(a - b) for a, b in zip(observed, transform)), default=None),
-                                           "transform_tolerance": {"absolute": 1e-6, "relative": 1e-6}}
+                                           "transform_tolerance": {"absolute": 1e-6, "relative": 1e-6, "position_absolute": position_tolerance},
+                                           "camera_components_match": components_match}
             projection_matches = None if perspective is None else viewport.defaultCamera().isPerspective() == perspective
             detail["view"]["restored"]["projection_matches"] = projection_matches
-            if restored_path != camera_path or restored_lock != locked or not matches or not width_matches or projection_matches is False:
+            if (restored_path != camera_path or restored_lock != locked or not matches or not width_matches
+                    or projection_matches is False or components_match is False):
                 raise StudioError("VIEW_RESTORE_MISMATCH", "Original viewport or camera binding was not restored")
 
         attempt("verify_view", verify)

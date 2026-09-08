@@ -155,6 +155,11 @@ class TargetCaptureTests(unittest.TestCase):
                 self.position, self.width, self.perspective = position, width, perspective
             def orthoWidth(self): return self.width
             def isPerspective(self): return self.perspective
+            def rotation(self): return NS(asTuple=lambda: (1, 0, 0, 0, 1, 0, 0, 0, 1))
+            def translation(self): return (0, 0, self.position)
+            def pivot(self): return (1000, 0, 0)
+            def focalLength(self): return 50
+            def aperture(self): return 41
             def setPerspective(self, value): self.perspective = value
             def setOrthoWidth(self, value):
                 if not self.perspective:
@@ -173,6 +178,15 @@ class TargetCaptureTests(unittest.TestCase):
         self.scene._restore_capture_view(viewport, None, saved, {"saved": saved}, False, matrix, "", detail, True)
         self.assertEqual(detail["restore_errors"], [])
         self.assertEqual((live.position, live.width, live.perspective), (4, 6, True))
+        self.assertTrue(detail["view"]["restored"]["camera_components_match"])
+        def wrong_pose(value):
+            copy_camera(value)
+            live.position += 1e-5
+        viewport.setDefaultCamera = wrong_pose
+        detail = {"view": {}, "restore_errors": []}
+        self.scene._restore_capture_view(viewport, None, saved, {"saved": saved}, False, matrix, "", detail, True)
+        self.assertFalse(detail["view"]["restored"]["camera_components_match"])
+        self.assertEqual(detail["restore_errors"][0]["error"]["code"], "VIEW_RESTORE_MISMATCH")
 
 
 if __name__ == "__main__":
