@@ -92,5 +92,7 @@ The user has now authorized TC1-A1, TC2-A1 and TC3-A1 and scene-operation permis
 in their fresh test conversations. Existing authenticated TC2 acceptance state is
 used explicitly in place, without copying credentials or production history.
 The frozen older experiments run first. Their candidate checkouts remain unchanged.
-TC3-A1 is queued and is not yet marked passed; its exact candidate will be frozen
-before the natural-language run. Model results are separate from technical safety.
+TC3-A1 is queued and is not yet marked passed. Immutable tag `tc3-a1-candidate`
+freezes `c03317d6db36acb1533c042f9c094c3322ed3a65` before its natural-language run;
+later integration changes do not replace that candidate. Model results are separate
+from technical safety.
