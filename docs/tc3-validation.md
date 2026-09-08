@@ -88,11 +88,25 @@ and zero errors. The between-turn tester change edits only the original curve an
 exclusion. Model prompts and actual HDA/reusability requirements remain verbatim
 in the approval; no expected workflow is supplied to the model.
 
-The user has now authorized TC1-A1, TC2-A1 and TC3-A1 and scene-operation permission
-in their fresh test conversations. Existing authenticated TC2 acceptance state is
-used explicitly in place, without copying credentials or production history.
-The frozen older experiments run first. Their candidate checkouts remain unchanged.
-TC3-A1 is queued and is not yet marked passed. Immutable tag `tc3-a1-candidate`
-freezes `c03317d6db36acb1533c042f9c094c3322ed3a65` before its natural-language run;
-later integration changes do not replace that candidate. Model results are separate
-from technical safety.
+The user authorized TC1-A1, TC2-A1 and TC3-A1 and scene-operation permission in
+their fresh test conversations. All experiments completed in that order, using
+existing authenticated TC2 acceptance state explicitly in place without copying
+credentials or production history. The frozen checkouts remain unchanged. TC3-A1
+ran immutable tag `tc3-a1-candidate`, commit
+`c03317d6db36acb1533c042f9c094c3322ed3a65`; later integration changes do not replace
+that candidate. Native records confirm `gpt-6-astra` / `high` in both turns.
+
+TC3 used 55 MCP calls, including three staged requests/six steps. Partial packaging
+and HDA-upgrade failures retained prior completed steps and were followed by explicit
+local corrections. Saved HIPs cook without errors; an independent clean process
+instantiated the external v002 HDA without the original HIP or Studio session and
+verified both inputs, width, seed, exclusion response and independent paving/curb
+controls. The final image still shows local folded modules at the edited bend;
+native HDA migration also changed 41 of 96 recorded node IDs while retaining the
+original source nodes. Full artifact-quality/identity continuity is not passed.
+
+[Model acceptance results](model-acceptance-results.md) contains exact counts,
+operation IDs, failures, output paths and independent reports for all three tasks.
+TC1's effect gate is unmet; TC2's authoring checks pass with observe_after unused.
+These results and gaps are submitted for Pro review separately from technical
+safety and CI. The user-reported PANEL-1 remains open and unrepaired.

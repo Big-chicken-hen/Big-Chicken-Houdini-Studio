@@ -1,13 +1,17 @@
 # Deferred model acceptance
 
 Technical integration and proven model benefit are separate under the
-[latest Pro approval](tc2-brief.md). Pending experiments remain owned and visible.
+[TC-2 approval](tc2-brief.md) and [TC-3 approval](tc3-brief.md). All authorized
+experiments below have now completed. Frozen conditions and prompts remain here;
+the complete outcomes and retained gaps are in
+[model acceptance results](model-acceptance-results.md).
 
 ## TC1-A1 — two-turn railing comparison
 
-- **Owner:** Codex. **Status:** running with explicit user authorization. The
-  baseline's two turns completed; the frozen candidate arm is running. Full
-  behavior/quality review is pending, not passed.
+- **Owner:** Codex. **Status:** complete with explicit user authorization. Both
+  two-turn arms finished. Authoring/continuation evidence is positive, but the
+  model-effect gate is not met: total MCP calls increased from 42 to 61, discovery
+  was not reduced and API/shape errors remained. See the complete results above.
 - **Baseline:** `1e9f0f4dc43465bd221b3e0832a5e75d6cd1aa66`.
 - **Frozen candidate:** immutable Git tag `tc1-a1-candidate`, commit
   `ecef5b3f2dae6e95ccd6feb12507a0761f646d10`, also registered in PR #6 before its
@@ -21,10 +25,9 @@ Technical integration and proven model benefit are separate under the
 - **Houdini:** 22.0.368 for both arms. **Codex executable:** the same installed
   native `codex-cli 0.153.4` binary for both arms, version rechecked before running.
 - **Model/effort:** `gpt-6-astra` / `high`, identical for both arms. The authenticated
-  native catalog confirms both; baseline native turn_context records also confirm
-  actual model/effort. Retain corresponding candidate native records. If unavailable
-  or rerouted, stop comparison admission and record the condition; do not silently
-  switch one arm or claim matched conditions.
+  native catalog and all four native turn_context records confirm actual
+  model/effort. These original records are retained for both arms; neither arm was
+  silently switched or rerouted.
 - **Authorization update:** the user explicitly authorized all three model
   experiments and scene-operation permission in their new conversations. The TC2
   isolated acceptance account is signed in. Both arms use that test state and
@@ -37,9 +40,10 @@ Technical integration and proven model benefit are separate under the
   backend checks and complete native exports/images are recorded under the explicit
   review roots above. The old TC1-only launcher remains available but is not the
   authenticated state root of these authorized driver runs.
-- **Priority:** execute at the next available authorized model-run opportunity.
-  TC-2 review must report this record's status. Keep it pending if login remains
-  unavailable; do not remove it or substitute TC-2 task evidence.
+- **Disposition:** the first authorized opportunity completed this comparison.
+  Retain the unmet effect gate for Pro review; TC-2 task evidence cannot replace
+  this pair or turn it into a pass. No extra run or tuning was performed to
+  manufacture a passing percentage.
 
 Run independent fresh native Threads for baseline and candidate, each with two
 turns on the same working HIP. The model sees only normal Studio and the following
@@ -68,8 +72,9 @@ requests, and extracts existing receipt timing; internal polls are not calls.
 Review API guessing, waste and first useful authoring latency against actual items.
 
 All original behavior/quality conditions remain in [tc1-brief.md](tc1-brief.md).
-No 20% improvement, zero-guess benefit or successful continuation is claimed yet.
-Insufficient benefit may justify bounded ranking/result/description corrections.
+Both arms continued their existing networks successfully. No 20% improvement or
+zero-guess benefit was demonstrated. Insufficient benefit remains a subject for
+Pro review of bounded ranking/result/description corrections.
 Address/state/side-effect defects block delivery of the affected capability; they
 do not authorize automatically rebuilding the runtime or freezing every tool.
 
@@ -77,9 +82,10 @@ TC-2's later two-turn shutter task must have its own record. It cannot close TC1
 
 ## TC2-A1 — two-turn editable horizontal blinds
 
-- **Owner:** Codex. **Status:** authorized and queued after TC1-A1; not run or passed
-  yet. The isolated TC2 account was verified through native account/read. Existing
-  test authentication stays in place; production credentials are not copied.
+- **Owner:** Codex. **Status:** complete after TC1-A1. Authoring/continuation checks
+  passed; target-capture adoption is demonstrated. The model used no explicit
+  observe_after, so standardized feedback adoption remains unproven. Existing test
+  authentication stayed in place; production credentials were not copied.
 - **Candidate:** the final reviewed TC-2 head, frozen with the immutable
   `tc2-a1-candidate` tag. Its exact SHA is registered in the TC-2 PR before technical
   merge. Keep it separate from the frozen TC1-A1 candidate.
@@ -93,11 +99,11 @@ TC-2's later two-turn shutter task must have its own record. It cannot close TC1
   model catalog. Record actual advertised and native confirmed
   settings; if unavailable, record the condition before choosing a supported setting.
   This is one two-turn task, not a TC-1 baseline comparison or a percentage claim.
-- **Recovery:** first run TC1-A1 when the authorized login opportunity becomes
-  available. The local `Start TC2 Acceptance.vbs` in `.runtime/reviews/tc2` uses the
-  ordinary launcher with `acceptance/state` and `acceptance/cache`; complete its
-  official login without copying/resetting normal state. Use production Studio and a
-  fresh native Thread on a copied fixture inside the TC-2 review directory.
+- **Run order and state:** TC1-A1 completed first. The local
+  `Start TC2 Acceptance.vbs` in `.runtime/reviews/tc2` uses the ordinary launcher
+  with `acceptance/state` and `acceptance/cache`. The authorized driver reused this
+  test login in place, production Studio and a fresh native Thread on a copied
+  fixture inside the TC-2 review directory.
 - **Isolation:** the model sees the normal scene and the prompts below. Do not give
   it this brief, expected tool sequences, probe results or a prebuilt solution.
   Technical driver runs are separate and cannot count as natural-language evidence.
@@ -134,13 +140,17 @@ API guesses/repeats, partial correction method, continuity and visual quality.
 Do not inject controlled faults into this task or omit failures from the record.
 
 Technical validation is recorded in [tc2-validation.md](tc2-validation.md). The
-conditional technical merge does not close this model-effect acceptance. A completed
-TC-2 task also does not close TC1-A1 or establish a reduction in total model calls.
+completed natural task and its partial adoption result are now recorded separately
+in [model acceptance results](model-acceptance-results.md). This single task does
+not satisfy TC1-A1's unmet effect gate or establish a reduction in total model calls.
 
 ## TC3-A1 — two-turn reusable procedural walkway asset
 
-- **Owner:** Codex. **Status:** explicitly authorized, queued after the frozen
-  TC1-A1 and TC2-A1 runs. Not run or passed yet.
+- **Owner:** Codex. **Status:** complete after the frozen TC1-A1 and TC2-A1 runs.
+  Three staged requests/six steps, local recovery and clean external HDA reuse are
+  demonstrated. Full artifact-quality/identity continuity is not passed: a local
+  fold remains and HDA migration changed some native node IDs. Original failures
+  and both asset versions are retained for Pro review.
 - **Frozen candidate:** immutable tag `tc3-a1-candidate`, commit
   `c03317d6db36acb1533c042f9c094c3322ed3a65`. Never move this tag or substitute the
   later main/feature head. Consent and conversation PRs remain separate changes.
