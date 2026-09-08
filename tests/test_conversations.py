@@ -1,5 +1,6 @@
 """Native lifecycle scoping, destructive gates and unknown-response boundaries."""
 import json
+from contextlib import closing
 import sqlite3
 import unittest
 
@@ -55,7 +56,7 @@ class ConversationTests(unittest.TestCase):
     def test_delete_checks_old_unknown_receipts_without_modifying_them(self):
         self.client.handler = lambda *_: {"thread": self.thread()}
         ledger = self.paths.workspace(self.bridge.workspace_id) / "operations.sqlite"
-        with sqlite3.connect(ledger) as db:
+        with closing(sqlite3.connect(ledger)) as db, db:
             db.execute("CREATE TABLE operations(receipt TEXT)")
             db.execute("INSERT INTO operations VALUES (?)", (json.dumps({"operation_id": "old", "owner_id": "session", "state": "unknown"}),))
             db.executemany("INSERT INTO operations VALUES (?)", [(json.dumps({"owner_id": "session", "state": "finished"}),)] * 40)

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import closing
 from pathlib import Path
 import sqlite3
 
@@ -113,7 +114,7 @@ class Conversations:
         ledger = bridge.paths.workspace(bridge.workspace_id) / "operations.sqlite"
         if ledger.is_file():
             try:
-                with sqlite3.connect(ledger.resolve().as_uri() + "?mode=ro", uri=True) as db:
+                with closing(sqlite3.connect(ledger.resolve().as_uri() + "?mode=ro", uri=True)) as db:
                     rows = db.execute("SELECT receipt FROM operations WHERE "
                                       "json_extract(receipt, '$.owner_id')=? AND "
                                       "json_extract(receipt, '$.state') IN ('queued','running','unknown') LIMIT 1",

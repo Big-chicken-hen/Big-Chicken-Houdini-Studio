@@ -34,6 +34,9 @@ only known workspace IDs can cause draft removal.
   list/selection/turn callbacks, pending deletion and independent drafts.
 - Related Bridge, native model settings, consent and Panel interaction tests were
   run. Ruff is the static check. Candidate CI results are recorded in the PR.
+- Initial CI exposed a retained SQLite connection on Windows/Python 3.13 during
+  fixture cleanup. The read-only receipt gate and fixture now explicitly close
+  their connections rather than relying on connection garbage collection.
 - Actual installed `codex-cli 0.153.4` schemas and APIs were used. In isolated local
   fixtures, native name/set, list/search, archive, archived list, unarchive, resume
   and delete all returned success through production Bridge routes. The expected
