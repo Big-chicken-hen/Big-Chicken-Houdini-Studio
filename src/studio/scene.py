@@ -73,9 +73,9 @@ def validate_view(view):
     if not isinstance(view, dict):
         raise StudioError("INVALID_ARGUMENTS", "A view must be an object")
     kind = view.get("view", "node")
-    fields = {"node": set(), "parms": {"names"}, "children": {"limit"},
-              "parameters": {"pattern", "offset", "limit"},
-              "geometry": {"owners", "attributes", "samples"}, "checks": {"checks"}}
+    fields = {"node": set(), "parms": {"names"}, "children": {"offset", "limit"},
+              "parameters": {"pattern", "offset", "limit", "include_values"},
+              "geometry": {"owners", "attributes", "samples", "include_groups", "group_limit"}, "checks": {"checks"}}
     if not isinstance(kind, str) or kind not in fields or set(view) - ({"view", "path"} | fields[kind]):
         raise StudioError("INVALID_ARGUMENTS", "Invalid inspection view")
     node_path(view.get("path", "/obj"))
@@ -85,6 +85,8 @@ def validate_view(view):
             raise StudioError("INVALID_ARGUMENTS", "Supply 1 to 64 parameter names")
     if kind == "children" and (type(view.get("limit", 64)) is not int or not 1 <= view.get("limit", 64) <= 200):
         raise StudioError("INVALID_ARGUMENTS", "Child limit must be between 1 and 200")
+    if kind == "children" and (type(view.get("offset", 0)) is not int or not 0 <= view.get("offset", 0) <= 1000000):
+        raise StudioError("INVALID_ARGUMENTS", "Child offset must be an integer from 0 to 1000000")
     if kind == "parameters":
         if not isinstance(view.get("pattern", "*"), str) or not 1 <= len(view.get("pattern", "*")) <= 128:
             raise StudioError("INVALID_ARGUMENTS", "Supply a parameter name pattern of 1 to 128 characters")
@@ -92,6 +94,8 @@ def validate_view(view):
             raise StudioError("INVALID_ARGUMENTS", "Parameter offset must be an integer from 0 to 1000000")
         if type(view.get("limit", 64)) is not int or not 1 <= view.get("limit", 64) <= 128:
             raise StudioError("INVALID_ARGUMENTS", "Parameter page size must be between 1 and 128")
+        if type(view.get("include_values", False)) is not bool:
+            raise StudioError("INVALID_ARGUMENTS", "include_values must be boolean")
     if kind == "geometry":
         owners = view.get("owners", ["point", "primitive"])
         if (not isinstance(owners, list) or not 1 <= len(owners) <= 4 or
@@ -105,6 +109,9 @@ def validate_view(view):
                 raise StudioError("INVALID_ARGUMENTS", "Supply 1 to 16 attribute names")
         if type(view.get("samples", 0)) is not int or not 0 <= view.get("samples", 0) <= 16:
             raise StudioError("INVALID_ARGUMENTS", "Geometry samples must be between 0 and 16")
+        if (type(view.get("include_groups", False)) is not bool or type(view.get("group_limit", 32)) is not int
+                or not 1 <= view.get("group_limit", 32) <= 64):
+            raise StudioError("INVALID_ARGUMENTS", "include_groups must be boolean and group_limit must be 1 to 64")
     if kind == "checks":
         validate_checks(view.get("checks", []))
 
@@ -115,7 +122,9 @@ def validate_arguments(kind, args):
                "execute": {"script", "label", "preconditions", "checks", "observe"},
                "capture": {"frame", "resolution", "purpose", "bounds"},
                "lookup": {"source", "query", "category", "type_name", "symbol", "version",
-                          "members", "offset", "limit"}}
+                          "members", "offset", "limit", "requests", "include_hidden", "include_deprecated",
+                          "include_parameters", "parameter_pattern", "parameter_offset", "parameter_limit",
+                          "include_help", "help_offset", "help_limit"}}
     if not isinstance(args, dict) or kind not in allowed or set(args) - allowed[kind]:
         raise StudioError("INVALID_ARGUMENTS", "Arguments do not match the operation")
     if kind == "execute":
@@ -149,20 +158,10 @@ def validate_arguments(kind, args):
                     all(bounds[i] == bounds[i + 3] for i in range(3))):
                 raise StudioError("INVALID_ARGUMENTS", "Review bounds require finite min XYZ then max XYZ with nonzero extent")
     if kind == "lookup":
-        discovery = {"members", "offset", "limit"}
-        if (any(not isinstance(v, str) for k, v in args.items() if k not in discovery) or
-                args.get("source", "metadata") not in {"metadata", "hom"}):
-            raise StudioError("INVALID_ARGUMENTS", "Use installed metadata or a public HOM symbol")
-        if discovery.intersection(args) and args.get("source") != "hom":
-            raise StudioError("INVALID_ARGUMENTS", "Member discovery applies only to HOM symbols")
-        if type(args.get("members", False)) is not bool:
-            raise StudioError("INVALID_ARGUMENTS", "members must be boolean")
-        if (type(args.get("offset", 0)) is not int or not 0 <= args.get("offset", 0) <= 1000000 or
-                type(args.get("limit", 32)) is not int or not 1 <= args.get("limit", 32) <= 64 or
-                len(args.get("query", "")) > 128 and args.get("members", False)):
-            raise StudioError("INVALID_ARGUMENTS", "HOM member pages require offset 0..1000000, limit 1..64 and query up to 128 characters")
-        if {"offset", "limit"}.intersection(args) and not args.get("members", False):
-            raise StudioError("INVALID_ARGUMENTS", "Member pagination requires members=true")
+        from .lookup import validate_lookup
+        validate_lookup(args)
+        if args.get("source") == "documents":
+            raise StudioError("INVALID_ARGUMENTS", "Imported documents use the workspace service, not live HOM")
 
 
 def json_value(value, depth=0, redact=lambda text: text):
@@ -305,16 +304,23 @@ class HoudiniScene:
 
     def run(self, kind, args, cancelled):
         if kind == "context":
+            from .inspection import working_context
             self.refresh_cached()
-            network = self.hou.ui.paneTabOfType(self.hou.paneTabType.NetworkEditor)
-            return {**self.cached(), "selected": [n.path() for n in self.hou.selectedNodes()][:64],
-                    "network": network.pwd().path() if network else "/obj",
+            return {**self.cached(), **working_context(self.hou),
                     "houdini_version": self.hou.applicationVersionString()}
         if kind == "inspect":
+            validate_arguments(kind, args)  # Reject the whole malformed batch before any query.
             views = args.get("views", [])
-            if not isinstance(views, list) or not 1 <= len(views) <= 32:
-                raise StudioError("INVALID_ARGUMENTS", "Supply between 1 and 32 targeted views")
-            return {"views": [self.inspect(view) for view in views]}
+            results = []
+            for index, view in enumerate(views):
+                identity = {"index": index, "view": view.get("view", "node"), "path": view.get("path", "/obj")}
+                try:
+                    result = {"status": "ok", **self.inspect(view, strict=False), **identity}
+                except Exception as exc:
+                    result = {**identity, "status": "error", "error": {
+                        **self.error(exc, "INSPECTION_FAILED"), "index": index, "path": identity["path"]}}
+                results.append(result)
+            return {"status": "partial" if any(r["status"] != "ok" for r in results) else "ok", "views": results}
         if kind == "lookup":
             return self.lookup(args)
         if kind == "execute":
@@ -323,38 +329,44 @@ class HoudiniScene:
             return self.capture(args)
         raise StudioError("INVALID_ARGUMENTS", "Unknown scene operation")
 
-    def inspect(self, view):
+    def inspect(self, view, *, strict=True):
         validate_view(view)
         kind, path = view.get("view", "node"), view.get("path", "/obj")
         node = self._node(path)
         base = {"path": path, "view": kind}
         if kind == "node":
-            return {**base, "type": node.type().name(), "name": node.name(),
-                    "inputs": [n.path() if n else None for n in node.inputs()],
-                    "errors": list(node.errors()), "warnings": list(node.warnings()),
-                    "position": list(node.position())}
+            from .inspection import node_record
+            return {**base, **node_record(node, self.redact)}
         if kind == "parms":
             names = view.get("names", [])
             if not isinstance(names, list) or not 1 <= len(names) <= 64:
                 raise StudioError("INVALID_ARGUMENTS", "Supply 1 to 64 parameter names")
-            values = {}
+            values, failed = {}, False
             for name in names:
                 parm = node.parm(name)
-                if parm is None:
-                    values[name] = {"error": "PARM_NOT_FOUND"}
-                else:
+                try:
+                    if parm is None:
+                        raise StudioError("PARM_NOT_FOUND", "Parameter does not exist: " + path + "/" + name)
                     values[name] = json_value(parm.eval(), redact=self.redact)
-            return {**base, "values": values}
+                except Exception as exc:
+                    if strict:
+                        raise
+                    failed = True
+                    values[name] = {"error": {**self.error(exc, "PARAMETER_EVALUATION_FAILED"),
+                                              "parameter": name, "path": path}}
+            return {**base, "values": values, "status": "partial" if failed else "ok"}
         if kind == "children":
-            limit = min(200, max(1, int(view.get("limit", 64))))
-            children = node.children()
-            return {**base, "nodes": [{"path": n.path(), "type": n.type().name(),
-                                       "inputs": [x.path() if x else None for x in n.inputs()],
-                                       "position": list(n.position())} for n in children[:limit]],
-                    "total": len(children), "truncated": len(children) > limit}
+            from .inspection import network_record, node_record
+            offset, limit = view.get("offset", 0), view.get("limit", 64)
+            children = sorted(node.children(), key=lambda child: child.path())
+            page = children[offset:offset + limit]
+            end = offset + len(page)
+            return {**base, "network": network_record(node),
+                    "nodes": [node_record(n, self.redact) for n in page], "total": len(children),
+                    "offset": offset, "next_offset": end if end < len(children) else None, "truncated": end < len(children)}
         if kind == "parameters":
             from .inspection import parameter_instances
-            return {**base, **parameter_instances(node, view, self.redact)}
+            return {**base, **parameter_instances(node, view, self.redact, strict=strict)}
         if kind == "geometry":
             from .inspection import geometry_facts
             return {**base, **geometry_facts(node, view, self.redact)}
@@ -514,8 +526,8 @@ class HoudiniScene:
         validate_arguments("lookup", args)
         if args.get("source", "metadata") == "hom":
             symbol = args.get("symbol", "")
-            parts = symbol.removeprefix("hou.").split(".")
-            if not 1 <= len(parts) <= 4 or any(not p.isidentifier() or p.startswith("_") for p in parts):
+            parts = [] if symbol == "hou" else symbol.removeprefix("hou.").split(".")
+            if len(parts) > 4 or any(not p.isidentifier() or p.startswith("_") for p in parts):
                 raise StudioError("INVALID_ARGUMENTS", "Use a public HOM symbol such as hou.Node.createNode")
             obj = self.hou
             for part in parts:
@@ -540,47 +552,33 @@ class HoudiniScene:
                 result.update(members=[{"name": name, **self._hom_symbol_info(
                     inspect.getattr_static(obj, name), short=True)} for name in page],
                     total=len(names), offset=offset,
-                    next_offset=offset + limit if offset + limit < len(names) else None)
+                    next_offset=offset + len(page) if offset + len(page) < len(names) else None,
+                    truncated=offset + len(page) < len(names))
             return result
-        category = args.get("category", "Sop")
-        category_object = self.hou.nodeTypeCategories().get(category)
-        if category_object is None:
-            return {"categories": list(self.hou.nodeTypeCategories())}
-        name, query = args.get("type_name"), str(args.get("query", "")).lower()
-        types = category_object.nodeTypes()
-        if not name:
-            return {"types": [{"name": key, "label": val.description()} for key, val in types.items()
-                              if query in key.lower() or query in val.description().lower()][:80]}
-        node_type = types.get(name)
-        if node_type is None:
-            raise StudioError("NODE_TYPE_NOT_FOUND", "Node type is absent in this installation", 404)
-        templates = []
-
-        def visit(template):
-            templates.append({"name": template.name(), "label": template.label(),
-                              "type": str(template.type()), "components": template.numComponents()})
-            if hasattr(template, "parmTemplates"):
-                for child in template.parmTemplates():
-                    visit(child)
-
-        for template in node_type.parmTemplates():
-            visit(template)
-        return {"name": name, "category": category, "parameters": templates[:300],
-                "houdini_version": self.hou.applicationVersionString()}
+        from .lookup import installed_lookup
+        return installed_lookup(self.hou, args, self.redact, self.error)
 
     def _hom_symbol_info(self, obj, short=False):
         kind = ("class" if inspect.isclass(obj) else "module" if inspect.ismodule(obj) else
                 "property" if isinstance(obj, property) else "callable" if inspect.isroutine(obj) else "value")
         doc = getattr(obj, "__doc__", "") if kind != "value" else ""
-        result = {"kind": kind, "documentation": self.redact(doc or "")[:240 if short else 18000]}
+        doc = self.redact(doc or "")
+        limit = 240 if short else 6000
+        result = {"kind": kind, "documentation": doc[:limit], "documentation_truncated": len(doc) > limit,
+                  "documentation_available": bool(doc), "signature_status": "not_applicable"}
         if inspect.isroutine(obj):
             # H22's setRotation has no docstring; its Matrix3 annotation is the
             # authoritative installed type hint. Never evaluate string annotations.
             try:
                 signature = inspect.signature(obj, follow_wrapped=False, eval_str=False)
-                result["signature"] = self.redact(str(signature))[:600 if short else 2000]
+                signature_text = self.redact(str(signature))
+                signature_limit = 600 if short else 2000
+                result["signature"] = signature_text[:signature_limit]
+                result["signature_truncated"] = len(signature_text) > signature_limit
+                result["signature_status"] = "available"
             except (TypeError, ValueError):
                 result["signature"] = None
+                result["signature_status"] = "unavailable"
         return result
 
     def _capture_view(self, viewer, viewport, args, detail, restorers):

@@ -63,7 +63,8 @@ class OperationRuntime:
         validate_arguments("lookup", arguments)
         if arguments.get("source") != "hom":
             raise StudioError("INVALID_ARGUMENTS", "Live installation metadata uses the bounded operation queue")
-        return self.ledger.sanitize(self.scene.lookup(arguments))
+        from .observation_results import observation_summary
+        return observation_summary("lookup", self.ledger.sanitize(self.scene.lookup(arguments)), receipt=False)
 
     def submit(self, op):
         if not isinstance(op, dict):
@@ -214,8 +215,12 @@ class OperationRuntime:
             detail = {"result_error": {"code": "RESULT_SERIALIZATION_FAILED",
                                        "message": "Result could not be serialized; execution facts are unchanged"}}
             size = 0
-        summary = detail if size <= 16000 else {
-            "detail_available": True, "message": "Read the detailed result by operation ID"}
+        from .observation_results import observation_summary
+        if op["kind"] in {"context", "inspect", "lookup"}:
+            summary = observation_summary(op["kind"], detail)
+        else:
+            summary = detail if size <= 16000 else {
+                "detail_available": True, "message": "Read the detailed result by operation ID"}
         if op["kind"] == "context" and "scene_epoch" in detail:
             summary["scene_epoch"] = detail["scene_epoch"]
         # A failed commit must never be caught and relabelled as a script failure.
