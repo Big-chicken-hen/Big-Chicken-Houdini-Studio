@@ -1,6 +1,7 @@
 """Read one installed help target; no web requests, service, extraction or index."""
 from __future__ import annotations
 
+from contextlib import ExitStack
 from pathlib import Path, PurePosixPath
 import re
 from urllib.parse import unquote, urlsplit
@@ -14,6 +15,31 @@ MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
 
 class HelpUnavailable(Exception):
     pass
+
+
+class HelpReader(ExitStack):
+    """Reuse bounded static reads only until this metadata request finishes."""
+    def __init__(self):
+        super().__init__()
+        self.archives, self.files, self.targets = {}, {}, {}
+
+    def archive(self, path):
+        if path not in self.archives:
+            self.archives[path] = self.enter_context(zipfile.ZipFile(path))
+        return self.archives[path]
+
+    def local_text(self, path, root):
+        path = _inside(path, root)
+        if path not in self.files:
+            self.files[path] = _local_text(path, root)
+        return self.files[path]
+
+    def target(self, root, target):
+        key = (root, target)
+        if key not in self.targets:
+            self.targets[key] = _read_wiki_target(root, target, self)
+        text, provenance = self.targets[key]
+        return text, dict(provenance)
 
 
 def _inside(path, root):
@@ -47,14 +73,14 @@ def _help_paths(node_type):
     return paths
 
 
-def _read_wiki_target(root, target):
+def _read_wiki_target(root, target, reader):
     parsed = PurePosixPath(target)
     if not target.startswith("/nodes/") or ".." in parsed.parts or "\\" in target:
         raise HelpUnavailable("HELP_LOCATION_NOT_ALLOWED")
     relative = PurePosixPath(str(parsed).lstrip("/") + ".txt")
     loose = _inside(root / str(relative), root)
     if loose.is_file():
-        return _local_text(loose, root), {"kind": "installed_file", "location": relative.as_posix()}
+        return reader.local_text(loose, root), {"kind": "installed_file", "location": relative.as_posix()}
     archive_path = _inside(root / "nodes.zip", root)
     if not archive_path.is_file():
         raise HelpUnavailable("HELP_NOT_INSTALLED")
@@ -62,21 +88,25 @@ def _read_wiki_target(root, target):
         raise HelpUnavailable("HELP_ARCHIVE_TOO_LARGE")
     # The verified H22 nodes.zip contains sop/box.txt, not nodes/sop/box.txt.
     member = PurePosixPath(*relative.parts[1:]).as_posix()
-    with zipfile.ZipFile(archive_path) as archive:
-        try:
-            info = archive.getinfo(member)
-        except KeyError:
-            raise HelpUnavailable("HELP_TARGET_MISSING") from None
-        if info.file_size > MAX_HELP_BYTES:
-            raise HelpUnavailable("HELP_TOO_LARGE")
-        with archive.open(info) as stream:
-            raw = stream.read(MAX_HELP_BYTES + 1)
-        if len(raw) > MAX_HELP_BYTES:
-            raise HelpUnavailable("HELP_TOO_LARGE")
+    archive = reader.archive(archive_path)
+    try:
+        info = archive.getinfo(member)
+    except KeyError:
+        raise HelpUnavailable("HELP_TARGET_MISSING") from None
+    if info.file_size > MAX_HELP_BYTES:
+        raise HelpUnavailable("HELP_TOO_LARGE")
+    with archive.open(info) as stream:
+        raw = stream.read(MAX_HELP_BYTES + 1)
+    if len(raw) > MAX_HELP_BYTES:
+        raise HelpUnavailable("HELP_TOO_LARGE")
     return raw.decode("utf-8-sig"), {"kind": "installed_archive", "archive": "nodes.zip", "member": member}
 
 
-def installed_help(hou, node_type, request, redact, *, help_root=None, path_resolver=None):
+def installed_help(hou, node_type, request, redact, *, help_root=None, path_resolver=None, reader=None):
+    if reader is None:
+        with HelpReader() as reader:
+            return installed_help(hou, node_type, request, redact, help_root=help_root,
+                                  path_resolver=path_resolver, reader=reader)
     base = {"available": False, "installation_version": hou.applicationVersionString(),
             "document_version": None, "version_status": "not_declared", "format": "source_text"}
     try:
@@ -115,13 +145,13 @@ def installed_help(hou, node_type, request, redact, *, help_root=None, path_reso
                 target = _inside(root / target, root)
                 if target.suffix.casefold() not in {".txt", ".html", ".md"}:
                     raise HelpUnavailable("HELP_LOCATION_NOT_ALLOWED")
-                text = _local_text(target, root)
+                text = reader.local_text(target, root)
                 provenance = {"kind": "installed_file", "location": target.relative_to(root).as_posix()}
             else:
                 last_error = "HELP_TARGET_MISSING"
                 for target in (path_resolver or _help_paths)(node_type):
                     try:
-                        text, provenance = _read_wiki_target(root, target)
+                        text, provenance = reader.target(root, target)
                         provenance["target"] = target
                         break
                     except HelpUnavailable as exc:

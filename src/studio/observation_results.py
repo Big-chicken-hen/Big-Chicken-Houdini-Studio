@@ -1,8 +1,6 @@
 """Compact observation payloads without changing receipts or skipping page rows."""
 from __future__ import annotations
 
-import copy
-
 from .common import encoded
 
 BUDGET = 12 * 1024
@@ -18,7 +16,9 @@ def _size(value):
 
 
 def _page_after_trim(record, key, count):
-    page = record.get("parameter_page") if key == "parameters" and "parameter_page" in record else record
+    page = record
+    if key == "parameters" and "parameter_page" in record:
+        page = record["parameter_page"] = dict(record["parameter_page"])
     if key in PAGED and "offset" in page and "total" in page:
         end = page["offset"] + count
         page.update(next_offset=end if end < page["total"] else None, truncated=end < page["total"])
@@ -29,9 +29,12 @@ def _page_after_trim(record, key, count):
 
 
 def _shrink(record, rows, chars):
+    """Construct retained rows only; do not clone rows that will be discarded."""
     if not isinstance(record, dict):
-        return
-    for key, value in list(record.items()):
+        return record
+    record = dict(record)
+    for key in tuple(record):
+        value = record[key]
         if isinstance(value, str) and key in PROSE and len(value) > chars:
             record[key] = value[:chars]
             record[key + "_truncated"] = True
@@ -51,18 +54,20 @@ def _shrink(record, rows, chars):
                 record[key] = value[:16]
                 record[key + "_total"] = len(value)
                 record[key + "_truncated"] = True
+            record[key] = list(record[key])
             for index, item in enumerate(record[key]):
                 if isinstance(item, str) and key in PROSE and len(item) > chars:
                     record[key][index] = {"text": item[:chars], "truncated": True}
                 else:
-                    _shrink(item, rows, chars)
+                    record[key][index] = _shrink(item, rows, chars)
         elif isinstance(value, dict):
             if key == "values" and len(value) > rows:
                 record[key] = dict(list(value.items())[:rows])
                 record[key + "_total"] = len(value)
                 record[key + "_truncated"] = True
                 value = record[key]
-            _shrink(value, rows, chars)
+            record[key] = _shrink(value, rows, chars)
+    return record
 
 
 def _stub(item):
@@ -89,8 +94,7 @@ def observation_summary(kind, detail, *, receipt=True):
         return detail
     result = None
     for rows, chars in ((8, 512), (4, 256), (2, 128), (1, 64)):
-        result = copy.deepcopy(detail)
-        _shrink(result, rows, chars)
+        result = _shrink(detail, rows, chars)
         result["summary"] = {"truncated": True, "budget_bytes": BUDGET,
             "continuation": "hia_operation detail using the enclosing operation_id" if receipt else
                             "Repeat hia_lookup with the same symbol, members=true and offset=next_offset; query an individual member for full metadata"}
