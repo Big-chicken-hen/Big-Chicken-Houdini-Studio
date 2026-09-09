@@ -524,6 +524,7 @@ class Transcript(QtWidgets.QScrollArea):
         self._scroll_restore.timeout.connect(self.restore_scroll)
         self.verticalScrollBar().actionTriggered.connect(self.cancel_scroll_restore)
         self.verticalScrollBar().sliderPressed.connect(self.cancel_scroll_restore)
+        self.verticalScrollBar().rangeChanged.connect(self.fit_cards)
         self.older = button("加载更早消息", self.older_requested.emit, "quiet")
         self.older.hide()
         self.layout.addWidget(self.older, 0, QtCore.Qt.AlignLeft)
@@ -745,12 +746,6 @@ class Transcript(QtWidgets.QScrollArea):
         for card in self.cards.values():
             if card.item.get("type") == "userMessage":
                 card.setFixedWidth(int(width * .86))
-
-    def viewportEvent(self, event):
-        result = super().viewportEvent(event)
-        if event.type() == QtCore.QEvent.Resize and hasattr(self, "cards"):
-            QtCore.QTimer.singleShot(0, self, self.fit_cards)
-        return result
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
