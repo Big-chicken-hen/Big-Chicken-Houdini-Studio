@@ -92,7 +92,7 @@ def build(args):
     package.mkdir(parents=True)
     names = git(source, 'ls-files', '-z', 'src', 'houdini', 'pyproject.toml', 'README.md', 'LICENSE').split('\0')
     for name in names:
-        if not name:
+        if not name or name.startswith('src/studio/ui/assets/rain-night-studio.'):
             continue
         src = source / name
         if src.is_symlink() or not src.is_file():
