@@ -176,9 +176,9 @@ class MessageProjection:
             for item in items:
                 key = self.key(turn_id, item["id"])
                 record = self.records.get(key)
-                if record and (record.native_terminal or record.terminal or record.continuous):
-                    continue
                 terminal = complete or item.get("status") in {"completed", "failed", "declined"}
+                if record and (record.native_terminal or record.terminal or record.continuous and not terminal):
+                    continue
                 self.records[key] = ProjectedItem(dict(item), terminal=terminal, recovering=not terminal)
                 changed.add(key)
         return changed

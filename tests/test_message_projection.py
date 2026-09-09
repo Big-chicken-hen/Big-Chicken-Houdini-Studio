@@ -100,6 +100,14 @@ class MessageProjectionTests(unittest.TestCase):
         self.assertEqual(self.record().item["text"], "complete native output")
         self.assertTrue(self.record().terminal)
 
+    def test_full_terminal_history_closes_a_stream_with_missing_terminal_events(self):
+        self.event("item/started", item=self.item("prefix"))
+        self.history("full native terminal", status="completed")
+        self.assertTrue(self.record().terminal)
+        self.assertEqual(self.record().item["text"], "full native terminal")
+        self.event("item/agentMessage/delta", itemId="i", delta="late delta")
+        self.assertEqual(self.record().item["text"], "full native terminal")
+
     def test_new_recent_turns_append_but_explicit_older_pages_prepend(self):
         self.history("old", status="completed")
         self.p.history({"id": "a", "turns": [{"id": "new", "status": "completed", "items": []}]}, 1, 2)
