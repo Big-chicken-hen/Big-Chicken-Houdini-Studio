@@ -74,6 +74,8 @@ jobs:
         run: .runtime/venv/Scripts/python.exe scripts/check.py --suite ui --tests-only
       - name: Render native UI review fixtures
         run: .runtime/venv/Scripts/python.exe scripts/preview_ui.py
+      - name: Render release conversation and progress states
+        run: .runtime/venv/Scripts/python.exe scripts/preview_release_ui.py --out .runtime/previews/release-ui
       - name: Render narrow Panel at 150 percent
         run: .runtime/venv/Scripts/python.exe scripts/preview_ui.py --case high-dpi --scale 1.5 --out .runtime/previews/panel-productization/dpi-150
       - name: Render narrow Panel at 200 percent
@@ -99,4 +101,6 @@ jobs:
             .runtime/previews/panel-productization/**/*.png
             .runtime/previews/panel-productization/**/preview-report.json
             .runtime/previews/panel-productization/**/report-scale-*.json
+            .runtime/previews/release-ui/**/*.png
+            .runtime/previews/release-ui/report.json
           if-no-files-found: error

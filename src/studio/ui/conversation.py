@@ -444,10 +444,16 @@ class MessageCard(QtWidgets.QFrame):
     def fit_text(self):
         if self.retired:
             return
-        self.text.document().setTextWidth(max(100, self.text.viewport().width()))
+        width = max(100, self.text.viewport().width())
+        # Houdini's document layout can emit another size change even for the
+        # same width. Re-invalidating it keeps a zero timer alive and starves
+        # the host's idle-dispatched HOM queue.
+        if abs(self.text.document().textWidth() - width) > .5:
+            self.text.document().setTextWidth(width)
         chrome = max(8, self.text.height() - self.text.viewport().height())
         height = math.ceil(self.text.document().size().height()) + chrome
-        self.text.setFixedHeight(max(28, height))
+        if self.text.height() != max(28, height):
+            self.text.setFixedHeight(max(28, height))
         self.text.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
 
     def resizeEvent(self, event):

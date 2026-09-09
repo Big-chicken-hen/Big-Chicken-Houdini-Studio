@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 os.environ['QT_QPA_PLATFORM'] = 'offscreen'
 from PySide6 import QtCore, QtWidgets  # noqa: E402
@@ -81,6 +82,31 @@ class ActivityTests(unittest.TestCase):
         card.set_recovering(False)
         self.assertTrue(card.isHidden())
 
+    def test_unchanged_document_size_does_not_self_schedule_forever(self):
+        view = Transcript(self.root)
+        self.addCleanup(view.deleteLater)
+        self.addCleanup(view.close)
+        view.resize(430, 600)
+        view.show()
+        view.reset('a')
+        view.put({'id': 'long', 'type': 'agentMessage', 'text': '\n\n'.join('中文正文 ' * 8 for _ in range(70))}, turn_id='one')
+        card = view.card('long')
+        process_until(lambda: not card.fit_timer.isActive())
+        document = card.text.document()
+        original = document.setTextWidth
+        calls = []
+        def host_width(width):
+            calls.append(width)
+            original(width)
+            # The real Houdini host emitted this even when the width stayed
+            # constant, keeping zero timers alive and preventing its idle HOM.
+            document.documentLayout().documentSizeChanged.emit(document.size())
+        with patch.object(document, 'setTextWidth', host_width):
+            card.schedule_fit()
+            for _ in range(8):
+                self.app.processEvents()
+            self.assertLessEqual(len(calls), 1)
+            self.assertFalse(card.fit_timer.isActive())
     def test_progress_uses_current_receipt_and_retains_running_houdini_after_codex_ends(self):
         api = PreviewApi(self.root)
         paths = AppPaths(self.root.parents[1], data_root=self.root / 'state', cache_root=self.root / 'cache')
