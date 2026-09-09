@@ -211,10 +211,10 @@ class ComposerTest(unittest.TestCase):
         self.app.processEvents()
         self.assertTrue(self.panel.settings_area.isHidden())
         self.assertTrue(self.panel.tabs.tabBar().isHidden())
-        self.assertTrue(self.panel.transcript.cards["tool_1"].isHidden())
+        self.assertTrue(self.panel.transcript.card("tool_1").isHidden())
         group = self.panel.transcript.tool_groups["preview_turn"]
         group.click()
-        self.assertFalse(self.panel.transcript.cards["tool_1"].isHidden())
+        self.assertFalse(self.panel.transcript.card("tool_1").isHidden())
         self.api.state["codex"]["state"] = "completed"
         self.api.state["runtime"].update(main_thread_busy=True, active_operation_id="still_running")
         self.panel.apply_state(copy.deepcopy(self.api.state))
@@ -258,7 +258,7 @@ class ComposerTest(unittest.TestCase):
         self.panel.input.insertPlainText("第一个书架")
         self.assertFalse(self.panel.send_button.isEnabled())
         self.api.hold["/threads/select"] = []
-        self.api.hold["/thread"] = []
+        self.api.hold["/thread/history"] = []
         self.panel.select_thread(None)
         selected, _, body = self.api.hold["/threads/select"].pop()
         self.assertEqual(body, {})
@@ -266,7 +266,7 @@ class ComposerTest(unittest.TestCase):
         self.api.thread = {"id": "fresh_thread", "status": {"type": "idle"}}
         selected({"thread": copy.deepcopy(self.api.thread), "thread_settings": {
             "thread_id": "fresh_thread", "revision": 2, "model": "preview-model", "effort": "high", "source": "native"}})
-        loaded = self.api.hold["/thread"].pop()[0]
+        loaded = self.api.hold["/thread/history"].pop()[0]
         loaded({"thread": copy.deepcopy(self.api.thread), "history_available": False})
         self.assertEqual(self.panel.confirmed_new_thread, "fresh_thread")
         self.api.hold["/turn"] = []

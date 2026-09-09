@@ -7,6 +7,7 @@ from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from ..message_projection import MessageProjection, ProjectedItem
 from .icons import set_button_icon
 from .shared import Task, button, label
 from .theme import COLORS, apply_theme
@@ -16,6 +17,7 @@ class SafeBrowser(QtWidgets.QTextBrowser):
     """Markdown may contain links; it may never fetch files or remote resources."""
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.source_text = None
         self.setOpenLinks(False)
         self.setOpenExternalLinks(False)
         self.anchorClicked.connect(self.open_link)
@@ -25,6 +27,14 @@ class SafeBrowser(QtWidgets.QTextBrowser):
 
     def loadResource(self, kind, url):
         return QtCore.QByteArray()
+
+    def contextMenuEvent(self, event):
+        menu = self.createStandardContextMenu()
+        if self.source_text:
+            menu.addSeparator()
+            menu.addAction("复制完整正文", lambda: QtWidgets.QApplication.clipboard().setText(self.source_text()))
+        menu.exec(event.globalPos())
+        menu.deleteLater()
 
     @staticmethod
     def open_link(url):
@@ -87,6 +97,7 @@ class ImageTile(QtWidgets.QFrame):
         self.compact = compact
         self.decoded = QtGui.QImage()
         self.failure = None
+        self.retired = False
         self.viewer = None
         self._display_key = None
         self._box = (56, 56) if compact else (560, 300)
@@ -146,6 +157,8 @@ class ImageTile(QtWidgets.QFrame):
         return result
 
     def loaded(self, result):
+        if self.retired:
+            return
         self.geometry_will_change.emit()
         self.decoded = result
         self.failure = None
@@ -154,6 +167,8 @@ class ImageTile(QtWidgets.QFrame):
         self.geometry_changed.emit()
 
     def unavailable(self, message):
+        if self.retired:
+            return
         self.failure = message
         self.picture.setText("图片无法读取\n" + str(message))
         self.picture.setToolTip(str(message))
@@ -229,7 +244,13 @@ class MessageCard(QtWidgets.QFrame):
         self.setObjectName("messageCard")
         self.app_root = app_root
         self.item = {}
+        self.retired = False
         self.rendered_text = None
+        self.markdown_updates = 0
+        self.render_timer = QtCore.QTimer(self)
+        self.render_timer.setSingleShot(True)
+        self.render_timer.setInterval(50)
+        self.render_timer.timeout.connect(self.render_item)
         self.image_tiles = []
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -240,6 +261,8 @@ class MessageCard(QtWidgets.QFrame):
         self.sync_note.hide()
         layout.addWidget(self.sync_note)
         self.text = SafeBrowser()
+        self.text.source_text = self.source_text
+        self.text.setToolTip("右键可复制完整正文")
         self.text.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         self.text.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
         layout.addWidget(self.text)
@@ -265,10 +288,36 @@ class MessageCard(QtWidgets.QFrame):
         layout.addWidget(self.details)
         self.update_item(item)
 
-    def update_item(self, item, *, force=False):
-        if self.item == item and not force:
+    def retire(self):
+        self.retired = True
+        self.render_timer.stop()
+        for _source, tile in self.image_tiles:
+            tile.retired = True
+
+    def source_text(self):
+        if self.item.get("type") == "userMessage":
+            return "\n\n".join(c.get("text", "") for c in self.item.get("content", []) if c.get("type") == "text")
+        if self.item.get("type") == "reasoning":
+            return "\n".join(self.item.get("summary", []))
+        return self.item.get("text", "")
+
+    def update_item(self, item, *, force=False, defer=False):
+        if self.retired or (self.item == item and not force and not self.render_timer.isActive()):
             return False
-        self.item = item
+        self.item = dict(item)  # Canonical data is current even while painting is coalesced.
+        if defer:
+            if not self.render_timer.isActive():
+                self.render_timer.start()
+        else:
+            self.render_item()
+        return True
+
+    def render_item(self):
+        self.render_timer.stop()
+        if self.retired:
+            return
+        self.layout_will_change.emit()
+        item = self.item
         kind = item.get("type", "item")
         role = "user" if kind == "userMessage" else "assistant"
         if self.property("studioRole") != role:
@@ -303,7 +352,15 @@ class MessageCard(QtWidgets.QFrame):
         text_changed = self.rendered_text != str(text)
         if text_changed:
             self.rendered_text = str(text)
+            cursor = self.text.textCursor()
+            anchor, position = cursor.anchor(), cursor.position()
             self.text.setMarkdown(self.rendered_text)
+            self.markdown_updates += 1
+            cursor = QtGui.QTextCursor(self.text.document())
+            last = self.text.document().characterCount() - 1
+            cursor.setPosition(min(anchor, last))
+            cursor.setPosition(min(position, last), QtGui.QTextCursor.KeepAnchor)
+            self.text.setTextCursor(cursor)
         self.text.setVisible(bool(text))
         is_tool = kind not in {"userMessage", "agentMessage", "reasoning", "plan", "contextCompaction", "imageView"}
         self.details_button.setVisible(is_tool)
@@ -326,21 +383,24 @@ class MessageCard(QtWidgets.QFrame):
                 self.images.insertWidget(index, tile)
             for _source, tile in unused:
                 self.images.removeWidget(tile)
+                tile.retired = True
                 tile.deleteLater()
         self.image_scroll.setVisible(bool(sources))
         self.fit_images()
         if text_changed:
             QtCore.QTimer.singleShot(0, self, self.fit_text)
-        return True
+        self.layout_changed.emit()
 
     def set_recovering(self, recovering):
         self.sync_note.setVisible(recovering)
 
     def fit_text(self):
+        if self.retired:
+            return
         self.text.document().setTextWidth(max(100, self.text.viewport().width()))
-        height = min(1600, int(self.text.document().size().height()) + 8)
+        height = int(self.text.document().size().height()) + 8
         self.text.setFixedHeight(max(28, height))
-        self.text.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded if height == 1600 else QtCore.Qt.ScrollBarAlwaysOff)
+        self.text.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -380,6 +440,7 @@ class MessageCard(QtWidgets.QFrame):
 
 
 class Transcript(QtWidgets.QScrollArea):
+    older_requested = QtCore.Signal()
     def __init__(self, app_root, parent=None, *, image_roots=None):
         super().__init__(parent)
         self.app_root = (app_root,) if image_roots is None else tuple(image_roots)
@@ -398,14 +459,17 @@ class Transcript(QtWidgets.QScrollArea):
         self.last_turn_id = None
         self.item_turns = {}
         self.tool_groups = {}
-        self.suppressed_deltas = set()
-        self.completed_items = set()
+        self.projection = MessageProjection()
+        self.history_revision = 0
         self._scroll_target = None
         self._scroll_restore = QtCore.QTimer(self)
         self._scroll_restore.setSingleShot(True)
         self._scroll_restore.timeout.connect(self.restore_scroll)
         self.verticalScrollBar().actionTriggered.connect(self.cancel_scroll_restore)
         self.verticalScrollBar().sliderPressed.connect(self.cancel_scroll_restore)
+        self.older = button("加载更早消息", self.older_requested.emit, "quiet")
+        self.older.hide()
+        self.layout.addWidget(self.older, 0, QtCore.Qt.AlignLeft)
         self.empty = label("从一个想法开始。\n登录后新建对话，描述你想完成的 Houdini 工作。", "welcome", True)
         self.empty.setAlignment(QtCore.Qt.AlignCenter)
         self.empty.setMinimumHeight(170)
@@ -426,9 +490,11 @@ class Transcript(QtWidgets.QScrollArea):
             card.app_root = roots
             card.update_item(card.item, force=True)
 
-    def reset(self, thread_id=None):
+    def clear_widgets(self):
         self.cancel_scroll_restore()
+        self._image_anchor = None
         for card in self.cards.values():
+            card.retire()
             self.layout.removeWidget(card)
             card.deleteLater()
         self.cards.clear()
@@ -437,89 +503,128 @@ class Transcript(QtWidgets.QScrollArea):
             control.deleteLater()
         self.tool_groups.clear()
         self.item_turns.clear()
-        self.thread_id = thread_id
-        self.history_known = False
-        self.last_turn_id = None
-        self.suppressed_deltas.clear()
-        self.completed_items.clear()
         self.turn_notice.hide()
         self._notice_turn = None
         self.empty.show()
+        self.older.hide()
 
-    def hydrate(self, thread):
+    def reset(self, thread_id=None, *, generation=None):
+        generation = self.projection.generation if generation is None else generation
+        self.clear_widgets()
+        self.projection = MessageProjection()
+        self.projection.bind(thread_id, generation)
+        self.thread_id = thread_id
+        self.history_known = False
+        self.last_turn_id = None
+        self.history_revision = 0
+
+    def bind(self, thread_id, generation):
+        if thread_id == self.thread_id and generation == self.projection.generation:
+            return
+        if thread_id != self.thread_id:
+            self.reset(thread_id, generation=generation)
+            return
+        target = self.scroll_target()
+        self.projection.bind(thread_id, generation)
+        if target[1] is not None:
+            key = target[1]
+            target = (target[0], self.projection.key(key.turn, key.item), target[2], target[3])
+        self.clear_widgets()
+        for key in self.projection.ordered_keys():
+            self.display(key, preserve_scroll=False)
+        self.arrange()
+        self.queue_scroll_restore(target)
+
+    def card(self, item_id, turn_id=None):
+        matches = [card for key, card in self.cards.items()
+                   if key.item == item_id and (turn_id is None or key.turn == turn_id)]
+        if len(matches) != 1:
+            raise KeyError((turn_id, item_id))
+        return matches[0]
+
+    def hydrate(self, thread, *, generation=None, revision=None, older=False):
         if not thread:
             return
-        if thread.get("id") != self.thread_id:
-            self.reset(thread.get("id"))
-        if "turns" in thread:
-            self.history_known = True
-            self.last_turn_id = (thread["turns"][-1].get("id") if thread["turns"] else None)
+        generation = self.projection.generation if generation is None else generation
+        if self.thread_id is None and generation == self.projection.generation:
+            self.bind(thread.get('id'), generation)
+        if thread.get('id') != self.thread_id or generation != self.projection.generation:
+            return
+        self.history_revision = max(self.history_revision + 1, revision or 0) if revision is None else revision
         target = self.scroll_target()
-        position = 1  # The welcome widget stays at layout index zero.
-        for turn in thread.get("turns", []):
-            group_placed = False
-            complete = turn.get("status") in {"completed", "interrupted", "failed"}
-            for item in turn.get("items", []):
-                item_id = item.get("id")
-                if not item_id:
-                    continue
-                item_complete = complete or item.get("status") in {"completed", "failed", "declined"}
-                if item_id not in self.completed_items or item_complete:
-                    self.put(item, preserve_scroll=False, turn_id=turn.get("id"))
-                card = self.cards[item_id]
-                group = self.tool_groups.get(self.item_turns.get(item_id)) if self.is_tool(item) else None
-                if group and not group_placed:
-                    self.layout.insertWidget(position, group)
-                    position += 1
-                    group_placed = True
-                if self.layout.indexOf(card) != position:
-                    self.layout.insertWidget(position, card)
+        changed = self.projection.history(thread, generation, self.history_revision, older=older)
+        if 'turns' in thread:
+            self.history_known = True
+        self.last_turn_id = self.projection.turns[-1] if self.projection.turns else None
+        for key in changed:
+            self.display(key, preserve_scroll=False)
+        self.arrange()
+        self.queue_scroll_restore(target)
+
+    def arrange(self):
+        position = 2
+        placed = set()
+        for key in self.projection.ordered_keys():
+            card = self.cards.get(key)
+            if card is None:
+                continue
+            group = self.tool_groups.get(key.turn) if self.is_tool(card.item) else None
+            if group and key.turn not in placed:
+                self.layout.insertWidget(position, group)
                 position += 1
-                # No atomic cursor accompanies thread/read. Never duplicate text by
-                # appending pre-snapshot deltas. item/completed replaces the snapshot.
-                self.suppressed_deltas.add(item_id)
-                if item_complete:
-                    self.completed_items.add(item_id)
-                card.set_recovering(item_id not in self.completed_items)
-        # Same-thread items newer than the read are retained until their native
-        # completion. A non-atomic snapshot is not evidence that they were removed.
+                placed.add(key.turn)
+            if self.layout.indexOf(card) != position:
+                self.layout.insertWidget(position, card)
+            position += 1
         if self._notice_turn:
             self.set_turn_notice(self._notice_turn, self.turn_notice.text())
-        self.queue_scroll_restore(target)
 
     @staticmethod
     def is_tool(item):
         return item.get("type") not in {"userMessage", "agentMessage", "reasoning", "plan", "contextCompaction", "imageView"}
 
     def put(self, item, *, preserve_scroll=True, turn_id=None):
-        item_id = item.get("id")
-        if not item_id:
+        turn_id = turn_id or self.last_turn_id
+        if not turn_id or not self.thread_id or not item.get('id'):
             return
+        key = self.projection.key(turn_id, item['id'])
+        if key in self.projection.records:
+            return
+        self.projection.remember(key)
+        self.projection.records[key] = ProjectedItem(dict(item), terminal=item.get('type') == 'userMessage')
+        self.display(key, preserve_scroll=preserve_scroll)
+
+    def display(self, key, *, preserve_scroll=True, defer=False):
+        record = self.projection.records[key]
+        item = record.item
         target = self.scroll_target() if preserve_scroll else None
-        if item_id in self.cards:
-            changed = self.cards[item_id].update_item(item)
+        if key in self.cards:
+            changed = self.cards[key].update_item(item, defer=defer)
         else:
             card = MessageCard(item, self.app_root)
-            card.layout_will_change.connect(self.image_will_change)
-            card.layout_changed.connect(self.image_changed)
-            self.cards[item_id] = card
+            card.setProperty('nativeTurnId', key.turn)
+            card.layout_will_change.connect(lambda key=key, card=card: self.image_will_change()
+                if self.cards.get(key) is card and not card.retired else None)
+            card.layout_changed.connect(lambda key=key, card=card: self.image_changed()
+                if self.cards.get(key) is card and not card.retired else None)
+            self.cards[key] = card
             self.layout.insertWidget(self.layout.count() - 1, card)
             self.empty.hide()
             changed = True
-        if turn_id:
-            self.cards[item_id].setProperty("nativeTurnId", turn_id)
+        self.cards[key].set_recovering(record.recovering)
         if self.is_tool(item):
-            group_id = turn_id or self.item_turns.get(item_id) or self.last_turn_id or "current"
-            self.item_turns[item_id] = group_id
+            group_id = key.turn
+            self.item_turns[key] = group_id
             if group_id not in self.tool_groups:
                 control = QtWidgets.QToolButton()
                 control.setCheckable(True)
                 control.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
-                control.toggled.connect(lambda _checked, group_id=group_id: self.update_tool_group(group_id))
+                control.toggled.connect(lambda _checked, group_id=group_id: self.update_tool_group(group_id)
+                    if group_id in self.tool_groups else None)
                 self.tool_groups[group_id] = control
-                self.layout.insertWidget(self.layout.indexOf(self.cards[item_id]), control)
+                self.layout.insertWidget(self.layout.indexOf(self.cards[key]), control)
             self.update_tool_group(group_id)
-        if changed and preserve_scroll:
+        if changed and preserve_scroll and not defer:
             self.queue_scroll_restore(target)
 
     def update_tool_group(self, group_id):
@@ -553,47 +658,20 @@ class Transcript(QtWidgets.QScrollArea):
         self.turn_notice.setVisible(visible)
         return visible
 
-    def apply_event(self, event):
-        method, params = event.get("method", ""), event.get("params", {})
-        if method == "turn/started":
-            self.last_turn_id = (params.get("turn") or {}).get("id") or params.get("turnId") or self.last_turn_id
-        if method in {"item/started", "item/completed"}:
-            item = params.get("item", {})
-            if method == "item/started" and item.get("id") in self.cards:
-                return
-            self.put(item, turn_id=params.get("turnId"))
-            if method == "item/completed" and item.get("id") in self.cards:
-                target = self.scroll_target()
-                self.completed_items.add(item["id"])
-                self.suppressed_deltas.add(item["id"])
-                self.cards[item["id"]].set_recovering(False)
-                self.queue_scroll_restore(target)
-        elif method in {"item/agentMessage/delta", "item/plan/delta"}:
-            item_id = params.get("itemId")
-            if item_id in self.completed_items:
-                return
-            if item_id in self.suppressed_deltas:
-                return True  # At most one automatic repair, then the native final item.
-            card = self.cards.get(item_id)
-            item = dict(card.item) if card else {"id": item_id,
-                "type": "plan" if method == "item/plan/delta" else "agentMessage", "text": ""}
-            item["text"] = item.get("text", "") + params.get("delta", "")
-            self.put(item)
-        elif method == "item/reasoning/summaryTextDelta":
-            item_id = params.get("itemId")
-            if item_id in self.completed_items:
-                return
-            if item_id in self.suppressed_deltas:
-                return True
-            card = self.cards.get(item_id)
-            item = dict(card.item) if card else {"id": item_id, "type": "reasoning"}
-            summary = list(item.get("summary", []))
-            index = min(100, max(0, params.get("summaryIndex", 0)))
-            while len(summary) <= index:
-                summary.append("")
-            summary[index] += params.get("delta", "")
-            item["summary"] = summary
-            self.put(item)
+    def mark_gap(self, turn_id=None):
+        self.projection.mark_gap(turn_id)
+        for key, record in self.projection.records.items():
+            if key in self.cards:
+                self.cards[key].set_recovering(record.recovering)
+
+    def apply_event(self, event, *, generation=None):
+        generation = self.projection.generation if generation is None else generation
+        changed = self.projection.event(event, generation)
+        defer = event.get('method', '').endswith(('delta', 'summaryTextDelta'))
+        for key in changed:
+            self.display(key, defer=defer)
+        self.last_turn_id = self.projection.turns[-1] if self.projection.turns else None
+        return bool(self.projection.recovering_turns())
 
     def scroll_target(self):
         if self._scroll_target is not None:
@@ -604,7 +682,7 @@ class Transcript(QtWidgets.QScrollArea):
             return (True, None, 0, value)
         anchor = min((card for card in self.cards.values() if not card.isHidden() and card.y() + card.height() > value),
                      key=lambda card: card.y(), default=None)
-        return (False, anchor.item["id"] if anchor else None,
+        return (False, next((key for key, card in self.cards.items() if card is anchor), None),
                 value - anchor.y() if anchor else 0, value)
 
     def queue_scroll_restore(self, target):

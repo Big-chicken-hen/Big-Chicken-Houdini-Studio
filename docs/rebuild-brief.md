@@ -1,5 +1,14 @@
 # Rebuild contract
 
+The [Release Readiness approval](release-readiness-brief.md) is now the current
+stage entry. It permits PR #10's technical merge (completed at `890284b`) while
+retaining all frozen [model results](model-acceptance-results.md). R1 now authorizes
+PANEL-1 diagnosis/repair, a small memory-only native-message projection, targeted
+history recovery and related render coalescing on `codex/panel-history-correctness`.
+This limited correction supersedes the earlier record-only/UI-freeze statements
+below; they describe prior scope. R2, R3 and R4 remain separate PRs with their own
+gates. No new tool capability, second chat store or rendering expansion is approved.
+
 The independent [native conversation lifecycle approval](native-conversations-brief.md)
 adds native title search/pagination, rename/archive/restore/delete and a compact
 Panel menu entry. Keep native history, workspace scope, draft ownership, explicit

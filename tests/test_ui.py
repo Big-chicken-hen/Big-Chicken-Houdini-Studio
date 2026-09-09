@@ -163,18 +163,18 @@ class PanelTest(unittest.TestCase):
     def test_stop_keeps_runtime_fact_and_native_history_does_not_duplicate(self):
         self.assertIn("已中断", self.panel.codex_label.text())
         self.assertIn("正在执行", self.panel.runtime_label.text())
-        original = self.panel.transcript.cards["agent_1"].item["text"]
+        original = self.panel.transcript.card("agent_1").item["text"]
         self.panel.apply_events({"cursor": 1, "events": [{"method": "item/agentMessage/delta", "params": {
-            "threadId": "preview_thread", "itemId": "agent_1", "delta": original}}]})
-        self.assertEqual(self.panel.transcript.cards["agent_1"].item["text"], original)
+            "threadId": "preview_thread", "turnId": "preview_turn", "itemId": "agent_1", "delta": original}}]})
+        self.assertEqual(self.panel.transcript.card("agent_1").item["text"], original)
         self.panel.apply_events({"cursor": 2, "events": [{"method": "item/completed", "params": {
-            "threadId": "preview_thread", "item": {"id": "agent_1", "type": "agentMessage", "text": "Final native item"}}}]})
-        self.assertEqual(self.panel.transcript.cards["agent_1"].item["text"], "Final native item")
-        self.api.hold["/thread"] = []
+            "threadId": "preview_thread", "turnId": "preview_turn", "item": {"id": "agent_1", "type": "agentMessage", "text": "Final native item"}}}]})
+        self.assertEqual(self.panel.transcript.card("agent_1").item["text"], "Final native item")
+        self.api.hold["/thread/history"] = []
         self.panel.load_history()
-        callback = self.api.hold["/thread"].pop()[0]
+        callback = self.api.hold["/thread/history"].pop()[0]
         callback({"thread": {"id": "preview_thread"}, "history_available": False, "history_message": "not materialized"})
-        self.assertEqual(self.panel.transcript.cards["agent_1"].item["text"], "Final native item")
+        self.assertEqual(self.panel.transcript.card("agent_1").item["text"], "Final native item")
         self.panel.stop()
         process_until(lambda: "已发送停止请求" in self.panel.notice.text())
         self.assertIn("正在执行", self.panel.runtime_label.text())
@@ -188,7 +188,7 @@ class PanelTest(unittest.TestCase):
         self.panel.transcript.put({"id": "native_image", "type": "mcpToolCall", "tool": "capture", "status": "completed",
                                    "result": {"content": [{"type": "image", "mimeType": "image/png",
                                                            "data": base64.b64encode(image.read_bytes()).decode()}]}})
-        native_tile = self.panel.transcript.cards["native_image"].images.itemAt(0).widget()
+        native_tile = self.panel.transcript.card("native_image").images.itemAt(0).widget()
         process_until(lambda: not native_tile.picture.pixmap().isNull())
         self.panel.add_images([str(image)])
         process_until(lambda: len(self.panel.attachments) == 1)
@@ -206,38 +206,38 @@ class PanelTest(unittest.TestCase):
         self.panel.send()
         self.assertEqual(sum(path == "/turn" for _, path, _ in self.api.calls), 1)
 
-    def test_history_buffers_inflight_events_and_resolves_snapshot_overlap(self):
+    def test_history_receives_live_events_without_buffering(self):
         self.api.thread["turns"][0]["status"] = "inProgress"
         self.panel.transcript.reset()
         self.panel.transcript.hydrate(self.api.thread)
-        self.api.hold["/thread"] = []
+        self.api.hold["/thread/history"] = []
         self.panel.load_history()
-        loaded = self.api.hold["/thread"].pop()[0]
+        loaded = self.api.hold["/thread/history"].pop()[0]
         self.panel.apply_events({"cursor": 3, "events": [
             {"sequence": 1, "method": "item/agentMessage/delta", "params": {
-                "threadId": "preview_thread", "itemId": "agent_1", "delta": " overlapping"}},
+                "threadId": "preview_thread", "turnId": "preview_turn", "itemId": "agent_1", "delta": " overlapping"}},
             {"sequence": 2, "method": "item/started", "params": {
-                "threadId": "preview_thread", "item": {"id": "new_item", "type": "agentMessage", "text": ""}}},
+                "threadId": "preview_thread", "turnId": "preview_turn", "item": {"id": "new_item", "type": "agentMessage", "text": ""}}},
             {"sequence": 3, "method": "item/agentMessage/delta", "params": {
-                "threadId": "preview_thread", "itemId": "new_item", "delta": "new text"}}]})
-        self.assertEqual(len(self.panel.history_events), 3)
+                "threadId": "preview_thread", "turnId": "preview_turn", "itemId": "new_item", "delta": "new text"}}]})
+        self.assertEqual(self.panel.transcript.card("new_item").item["text"], "new text")
         snapshot = copy.deepcopy(self.api.thread)
         snapshot["turns"][0]["items"][1]["text"] = "snapshot overlapping"
         loaded({"thread": snapshot})
-        self.assertEqual(self.panel.transcript.cards["agent_1"].item["text"], "snapshot overlapping")
-        self.assertEqual(self.panel.transcript.cards["new_item"].item["text"], "new text")
-        self.assertTrue(self.panel.history_refresh.isActive())
+        self.assertEqual(self.panel.transcript.card("agent_1").item["text"], "snapshot overlapping")
+        self.assertEqual(self.panel.transcript.card("new_item").item["text"], "new text")
+        self.assertFalse(self.panel.history_refresh.isActive())
         self.panel.apply_events({"cursor": 4, "events": [{"sequence": 4, "method": "item/completed", "params": {
-            "threadId": "preview_thread", "item": {"id": "agent_1", "type": "agentMessage", "text": "final"}}}]})
-        self.assertEqual(self.panel.transcript.cards["agent_1"].item["text"], "final")
+            "threadId": "preview_thread", "turnId": "preview_turn", "item": {"id": "agent_1", "type": "agentMessage", "text": "final"}}}]})
+        self.assertEqual(self.panel.transcript.card("agent_1").item["text"], "final")
 
     def test_late_history_callback_cannot_clear_new_thread_hydration(self):
-        self.api.hold["/thread"] = []
+        self.api.hold["/thread/history"] = []
         self.panel.load_history()
-        old_loaded, old_failed, _ = self.api.hold["/thread"].pop()
+        old_loaded, old_failed, _ = self.api.hold["/thread/history"].pop()
         self.panel.thread_id = "new_thread"
         self.panel.load_history()
-        new_loaded = self.api.hold["/thread"].pop()[0]
+        new_loaded = self.api.hold["/thread/history"].pop()[0]
         old_loaded({"thread": self.api.thread})
         old_failed("old error")
         self.assertTrue(self.panel.hydrating)
@@ -259,12 +259,12 @@ class PanelTest(unittest.TestCase):
 
     def test_native_approval_and_question_require_explicit_action(self):
         approval = {"request_id": 7, "method": "item/commandExecution/requestApproval", "params": {
-            "threadId": "preview_thread", "command": "echo preview", "availableDecisions": ["accept", "decline"]}}
-        question = {"request_id": 8, "method": "item/tool/requestUserInput", "params": {"threadId": "preview_thread", "questions": [
+            "threadId": "preview_thread", "turnId": "preview_turn", "command": "echo preview", "availableDecisions": ["accept", "decline"]}}
+        question = {"request_id": 8, "method": "item/tool/requestUserInput", "params": {"threadId": "preview_thread", "turnId": "preview_turn", "questions": [
             {"id": "finish", "header": "材质", "question": "选择表面处理", "isOther": True,
              "options": [{"label": "磨砂", "description": "柔和反射"}, {"label": "抛光", "description": "清晰反射"}]}]}}
         tool_approval = {"request_id": 9, "method": "mcpServer/elicitation/request", "params": {
-            "threadId": "preview_thread", "mode": "form", "message": "Allow scene observation?",
+            "threadId": "preview_thread", "turnId": "preview_turn", "mode": "form", "message": "Allow scene observation?",
             "_meta": {"codex_approval_kind": "mcp_tool_call"},
             "requestedSchema": {"type": "object", "properties": {}}}}
         self.api.state["pending_requests"] = [approval, question, tool_approval]

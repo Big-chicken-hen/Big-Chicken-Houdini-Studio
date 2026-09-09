@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from urllib.parse import urlencode
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
@@ -106,20 +107,22 @@ class StudioPanel(QtWidgets.QWidget):
         self.threads_generation = 0
         self.lifecycle_revision = None
         self.deleted_threads = set()
+        self.archived_threads = set()
         self.conversation_manager = None
         self.selection_generation = 0
         self.observed_scene_epoch = None
         self.confirmed_new_thread = None
         self.cursor = 0
         self.revision = 0
+        self.connection_generation = 0
+        self.native_generation = None
+        self.history_generation = 0
+        self.history_cursor = None
+        self.history_pending = {}
+        self.history_attempts = set()
         self.hydrating = False
-        self.history_again = False
         self.history_request = None
         self.history_thread = None
-        self.history_events = []
-        self.history_event_bytes = 0
-        self.history_repairs_left = 1
-        self.history_terminal_pending = False
         self.submitting = False
         self.pending_submission = None
         self.stop_pending = False
@@ -163,7 +166,8 @@ class StudioPanel(QtWidgets.QWidget):
         self.history_refresh = QtCore.QTimer(self)
         self.history_refresh.setSingleShot(True)
         self.history_refresh.setInterval(750)
-        self.history_refresh.timeout.connect(lambda: self.load_history(automatic=True))
+        self.history_refresh.timeout.connect(self.read_pending_history)
+        self.transcript.older_requested.connect(lambda: self.load_history(older=True))
         self.update_controls()
         QtCore.QTimer.singleShot(0, self.connect_bridge)
 
@@ -586,6 +590,8 @@ class StudioPanel(QtWidgets.QWidget):
                 return
         if self.connected_api is not self.api:
             self.connected_api = self.api
+            self.advance_connection(reset_cursor=True)
+            self.native_generation = None
             self.models_request = None
             self.account_revision = None
             self.model_controls.set_account_revision(None)
@@ -608,6 +614,7 @@ class StudioPanel(QtWidgets.QWidget):
 
     def reconnect(self):
         self.show_notice("")
+        self.advance_connection()
         self.connect_bridge()
         if self.bridge_connected:
             self.load_history()
@@ -620,11 +627,11 @@ class StudioPanel(QtWidgets.QWidget):
         self.call("GET", "/state", done=lambda v: self.apply_state(v) if revision == self.revision else None,
                   failed=lambda message: self.connection_failed(message) if revision == self.revision else None,
                   unique=True)
-        if not self.hydrating:
-            event_thread = self.thread_id
-            self.call("GET", "/events?after=" + str(self.cursor),
-                      done=lambda v: self.apply_events(v) if self.thread_id == event_thread and revision == self.revision else None,
-                      unique=True)
+        event_thread = self.thread_id
+        generation = self.connection_generation
+        self.call("GET", "/events?after=" + str(self.cursor),
+                  done=lambda v: self.apply_events(v) if self.thread_id == event_thread and revision == self.revision
+                  and generation == self.connection_generation else None, unique=True)
         if self.tabs.currentIndex() == 1:
             self.load_operations()
         if self.selection_pending:
@@ -635,6 +642,8 @@ class StudioPanel(QtWidgets.QWidget):
                       if self.selection_pending == operation_id else None, unique=True)
 
     def connection_failed(self, message):
+        if self.bridge_connected:
+            self.advance_connection()
         self.bridge_connected = False
         self.codex_label.setText("连接中断 · 状态未确认")
         self.runtime_label.setText("连接中断 · 执行结果未确认")
@@ -642,7 +651,10 @@ class StudioPanel(QtWidgets.QWidget):
         self.update_controls()
 
     def apply_state(self, value):
-        if self.closed or (type(value.get("account_revision")) is int and self.account_revision is not None
+        if self.closed:
+            return
+        self.accept_connection(value.get("connection_generation"))
+        if (type(value.get("account_revision")) is int and self.account_revision is not None
                            and value["account_revision"] < self.account_revision):
             return
         if value.get("conversations", {}).get("revision", 0) < (self.lifecycle_revision or 0):
@@ -698,7 +710,8 @@ class StudioPanel(QtWidgets.QWidget):
             self.thread_id = value.get("thread_id")
             self.activate_draft(self.thread_id)
             self.model_controls.set_thread(self.thread_id)
-            self.transcript.reset(self.thread_id)
+            self.invalidate_history()
+            self.transcript.bind(self.thread_id, self.connection_generation)
             self.load_history()
             if self.logged_in:
                 self.load_threads()
@@ -1045,7 +1058,6 @@ class StudioPanel(QtWidgets.QWidget):
             self.switching = False
             self.history_request = None
             self.hydrating = False
-            self.history_events = []
             self.history_refresh.stop()
             if self.pending_submission and self.pending_submission.get("thread_id") == thread_id:
                 self.pending_submission = None
@@ -1085,6 +1097,7 @@ class StudioPanel(QtWidgets.QWidget):
         if not self.new_thread.isEnabled():
             return
         self.switching = True
+        self.invalidate_history()
         self.revision += 1
         revision = self.revision
         self.update_controls()
@@ -1105,7 +1118,7 @@ class StudioPanel(QtWidgets.QWidget):
         self.confirmed_new_thread = self.thread_id if created and not value.get("thread", {}).get("turns") else None
         self.uncertain_send = False
         self.render_reference()
-        self.transcript.hydrate(value.get("thread"))
+        self.transcript.bind(self.thread_id, self.connection_generation)
         self.load_history()
         self.load_threads()
         self.refresh()
@@ -1118,85 +1131,146 @@ class StudioPanel(QtWidgets.QWidget):
         self.refresh()
         self.update_controls()
 
-    def load_history(self, *, automatic=False):
-        if not self.thread_id or not self.logged_in:
-            return
-        if self.hydrating and self.history_thread == self.thread_id:
-            self.history_again = True
-            return
-        if not automatic:
-            # One repair per explicit read/reconnect, never a full-history polling
-            # loop for each delta in an active snapshot. Turn completion is separate.
-            self.history_repairs_left = 1
-        thread_id = self.thread_id
-        request = object()
-        self.history_request, self.history_thread = request, thread_id
-        self.history_events, self.history_event_bytes = [], 0
-        self.history_again = False
-        self.history_terminal_pending = False
+    def invalidate_history(self):
+        self.history_generation += 1
+        self.history_request = None
+        self.hydrating = False
+        self.history_pending.clear()
+        self.history_attempts.clear()
+        self.history_cursor = None
         self.history_refresh.stop()
+        self.transcript.older.hide()
+        self.transcript.older.setEnabled(True)
+
+    def advance_connection(self, *, reset_cursor=False):
+        self.connection_generation += 1
+        self.revision += 1
+        self.invalidate_history()
+        self.transcript.bind(self.thread_id, self.connection_generation)
+        if reset_cursor:
+            self.cursor = 0
+            self.lifecycle_revision = None
+            self.account_revision = None
+        if self.submitting:
+            self.submitting = False
+            self.uncertain_send = True
+            self.show_notice("连接已变化；上次提交尚未确认，请查询原提交。")
+
+    def accept_connection(self, generation):
+        if generation is None or generation == self.native_generation:
+            return
+        if self.native_generation is not None:
+            self.advance_connection(reset_cursor=True)
+        self.native_generation = generation
+
+    def load_history(self, *, automatic=False, turn_id=None, older=False):
+        if not self.thread_id or not self.logged_in or self.thread_id in self.deleted_threads:
+            return
+        if self.history_thread != self.thread_id:
+            self.invalidate_history()
+        self.transcript.bind(self.thread_id, self.connection_generation)
+        if self.hydrating:
+            if automatic:
+                self.history_pending[turn_id] = True
+            return
+        if older and self.history_cursor is None:
+            return
+        thread_id, generation = self.thread_id, self.connection_generation
+        request = object()
+        self.history_generation += 1
+        history_generation = self.history_generation
+        self.history_request, self.history_thread = request, thread_id
         self.hydrating = True
+        self.transcript.older.setEnabled(False)
+        params = {"thread_id": thread_id}
+        if turn_id:
+            params["turn_id"] = turn_id
+        if older:
+            params["cursor"] = self.history_cursor
+
+        def current():
+            return (not self.closed and self.history_request is request and self.thread_id == thread_id
+                    and generation == self.connection_generation and history_generation == self.history_generation
+                    and thread_id not in self.deleted_threads and thread_id not in self.archived_threads)
+
+        def finish():
+            self.hydrating = False
+            self.transcript.older.setEnabled(True)
+            if self.history_pending:
+                self.history_refresh.start(0)
 
         def loaded(value):
-            if self.history_request is not request or self.thread_id != thread_id or self.closed:
+            if not current():
                 return
-            self.hydrating = False
-            thread = value.get("thread")
+            native_generation = value.get("connection_generation")
+            if self.native_generation is not None and native_generation not in {None, self.native_generation}:
+                self.accept_connection(native_generation)
+                self.load_history()
+                return
+            self.accept_connection(native_generation)
             if value.get("history_available") is False:
-                # Native Codex may not have materialized a new thread's rollout.
-                # Metadata-only reads are not evidence that existing items vanished.
-                if self.thread_id == thread_id:
-                    self.show_notice(value.get("history_message", "会话历史尚未物化，可继续当前对话。"))
-            elif self.thread_id == thread_id and thread and thread.get("id") == thread_id:
-                self.transcript.hydrate(thread)
-            buffered, self.history_events = self.history_events, []
-            self.history_event_bytes = 0
-            for event in buffered:
-                if self.transcript.apply_event(event):
-                    self.history_again = True
-            repair, terminal = self.history_again, self.history_terminal_pending
-            self.history_again = self.history_terminal_pending = False
-            if repair or terminal:
-                self.schedule_history(terminal=terminal)
+                self.show_notice(value.get("history_message", "会话历史尚未物化，可继续当前对话。"))
+            else:
+                self.transcript.hydrate(value.get("thread"), generation=generation, revision=history_generation, older=older)
+            if not turn_id:
+                self.history_cursor = value.get("next_cursor")
+                self.transcript.older.setVisible(bool(self.history_cursor))
+            finish()
 
         def failed(message):
-            if self.history_request is not request or self.thread_id != thread_id or self.closed:
+            if not current():
                 return
-            self.hydrating = False
-            self.history_again = False
-            buffered, self.history_events = self.history_events, []
-            self.history_event_bytes = 0
-            for event in buffered:
-                self.transcript.apply_event(event)
+            finish()
             self.show_notice("原生历史读取失败：" + str(message))
-            terminal, self.history_terminal_pending = self.history_terminal_pending, False
-            self.schedule_history(terminal=terminal)
-        self.call("GET", "/thread", done=loaded, failed=failed)
 
-    def schedule_history(self, *, terminal=False):
-        if self.closed or self.history_refresh.isActive():
+        self.call("GET", "/thread/history?" + urlencode(params), done=loaded, failed=failed)
+
+    def schedule_history(self, *, turn_id=None, terminal=False):
+        if self.closed or not self.thread_id:
             return
-        if not terminal:
-            if self.history_repairs_left <= 0:
-                return
-            self.history_repairs_left -= 1
-        self.history_refresh.start()
+        key = (turn_id, terminal)
+        if key in self.history_attempts:
+            return
+        self.history_attempts.add(key)
+        self.history_pending[turn_id] = terminal or self.history_pending.get(turn_id, False)
+        if not self.hydrating and not self.history_refresh.isActive():
+            self.history_refresh.start(750)
+
+    def read_pending_history(self):
+        if self.hydrating or not self.history_pending:
+            return
+        turn_id = next(iter(self.history_pending))
+        self.history_pending.pop(turn_id)
+        self.load_history(automatic=True, turn_id=turn_id)
 
     def apply_events(self, value):
-        if value.get("resync_required") or value.get("cursor", self.cursor) < self.cursor:
-            self.load_history()
+        self.accept_connection(value.get("connection_generation"))
+        if value.get("cursor", self.cursor) < self.cursor:
+            return  # A late same-connection poll is not evidence of reconnection.
+        if value.get("resync_required"):
+            target = self.state.get("turn_id") or self.transcript.last_turn_id
+            self.transcript.mark_gap(target)
+            self.schedule_history(turn_id=target)
         previous_cursor = self.cursor
-        self.cursor = value.get("cursor", self.cursor)
         for event in value.get("events", []):
-            if event.get("sequence", previous_cursor + 1) <= previous_cursor:
+            sequence = event.get("sequence", previous_cursor + 1)
+            if sequence <= previous_cursor:
                 continue
-            params = event.get("params", {})
-            method = event.get("method", "")
+            previous_cursor = sequence
+            params, method = event.get("params", {}), event.get("method", "")
+            event_thread = params.get("threadId")
             if method in {"thread/name/updated", "thread/archived", "thread/unarchived", "thread/deleted"}:
                 self.threads_generation += 1
                 if method == "thread/deleted":
-                    self.deleted_threads.add(params.get("threadId"))
-                    self.discard_deleted_draft(params.get("threadId"))
+                    self.deleted_threads.add(event_thread)
+                    self.discard_deleted_draft(event_thread)
+                elif method == "thread/archived":
+                    self.archived_threads.add(event_thread)
+                    if event_thread == self.thread_id:
+                        self.invalidate_history()
+                        self.revision += 1
+                elif method == "thread/unarchived":
+                    self.archived_threads.discard(event_thread)
                 self.load_threads()
                 if self.conversation_manager and not self.conversation_manager.busy:
                     self.conversation_manager.invalidate()
@@ -1205,26 +1279,22 @@ class StudioPanel(QtWidgets.QWidget):
                 if method == "account/login/completed" and params.get("success") is False:
                     self.login_failed(params.get("error") or "登录未完成，请重试。")
                 self.refresh_account()
-            if params.get("threadId") != self.thread_id:
+            if (event_thread != self.thread_id or event_thread in self.deleted_threads
+                    or event_thread in self.archived_threads):
                 continue
-            if self.hydrating:
-                size = len(json.dumps(event, ensure_ascii=False).encode("utf-8"))
-                if len(self.history_events) < 256 and self.history_event_bytes + size <= 512 * 1024:
-                    self.history_events.append(event)
-                    self.history_event_bytes += size
-                else:
-                    self.history_again = True  # Native history recovers bounded buffer overflow.
-                    self.show_notice("部分历史事件超出临时缓冲；本轮结束时会读取完整内容，也可手动刷新连接。")
-            elif self.transcript.apply_event(event):
-                self.schedule_history()
+            previous_recovery = self.transcript.projection.recovering_turns()
+            self.transcript.apply_event(event, generation=self.connection_generation)
+            recovery = self.transcript.projection.recovering_turns()
+            for turn_id in recovery - previous_recovery:
+                self.schedule_history(turn_id=turn_id)
             if method == "turn/completed":
-                if self.hydrating:
-                    self.history_terminal_pending = True
-                else:
-                    self.schedule_history(terminal=True)
+                turn_id = (params.get("turn") or {}).get("id") or params.get("turnId")
+                if turn_id in recovery:
+                    self.schedule_history(turn_id=turn_id, terminal=True)
             if method in {"error", "warning"}:
                 error = params.get("error") or {}
                 self.show_notice(error.get("message") or params.get("message") or method)
+        self.cursor = max(previous_cursor, value.get("cursor", previous_cursor))
 
     def send(self):
         if not self.send_button.isEnabled():
@@ -1247,7 +1317,7 @@ class StudioPanel(QtWidgets.QWidget):
                                    "document_revision": self.input.document().revision(), "request_text": text,
                                    "attachments": [dict(item) for item in self.attachments],
                                    "selection": self.selection_reference,
-                                   "seen_items": set(self.transcript.cards),
+                                   "seen_items": {(key.turn, key.item) for key in self.transcript.cards},
                                    "history_known": (self.transcript.history_known and not self.hydrating
                                                      or self.confirmed_new_thread == self.thread_id
                                                      and self.transcript.last_turn_id is None),
@@ -1290,7 +1360,7 @@ class StudioPanel(QtWidgets.QWidget):
             self.state["turn_settings"] = value["turn_settings"]
         self.accept_submission()
         for item in value.get("turn", {}).get("items", []):
-            self.transcript.put(item)
+            self.transcript.put(item, turn_id=value["turn"]["id"])
         self.refresh()
         self.update_controls()
 
@@ -1375,7 +1445,12 @@ class StudioPanel(QtWidgets.QWidget):
         self.reconciling = True
         self.revision += 1
         self.update_controls()
-        self.call("POST", "/reconcile", {}, done=self.reconciled, failed=self.reconcile_failed, unique=True)
+        revision, generation = self.revision, self.connection_generation
+        self.call("POST", "/reconcile", {},
+                  done=lambda value: self.reconciled(value) if revision == self.revision
+                  and generation == self.connection_generation else None,
+                  failed=lambda message: self.reconcile_failed(message) if revision == self.revision
+                  and generation == self.connection_generation else None, unique=True)
 
     def reconciled(self, value):
         self.reconciling = False
@@ -1392,8 +1467,9 @@ class StudioPanel(QtWidgets.QWidget):
             if value.get("codex_state"):
                 self.state["codex"] = {**self.state.get("codex", {}), "state": value["codex_state"]}
             if value.get("history_available") is not False:
-                self.history_repairs_left = 1
-                self.transcript.hydrate(value.get("thread"))
+                self.invalidate_history()
+                self.transcript.hydrate(value.get("thread"), generation=self.connection_generation,
+                                        revision=self.history_generation)
             self.show_notice("已在原生会话中确认原消息；Houdini 结果以执行详情为准。" if accepted else
                              "已读取会话，但尚不能确认原消息是否提交；草稿和图片继续保留。" if self.uncertain_send else
                              "已读取对话状态；Houdini 结果以执行详情为准。")
@@ -1414,7 +1490,7 @@ class StudioPanel(QtWidgets.QWidget):
             return False  # A truncated read cannot establish what came after our snapshot.
         for turn in turns[start:]:
             for item in turn.get("items", []):
-                if item.get("type") != "userMessage" or not item.get("id") or item["id"] in snapshot["seen_items"]:
+                if item.get("type") != "userMessage" or not item.get("id") or (turn.get("id"), item["id"]) in snapshot["seen_items"]:
                     continue
                 content = item.get("content") or []
                 text = "\n\n".join(block.get("text", "") for block in content if block.get("type") == "text")
