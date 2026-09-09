@@ -17,13 +17,16 @@ COLORS = MappingProxyType({
 SPACING = (4, 8, 12, 16, 24, 32)
 RADII = MappingProxyType({"control": 6, "surface": 8, "composer": 10})
 FONT_POINTS = MappingProxyType({"body": 11, "meta": 9.5, "section": 13, "title": 19})
+PANEL_ROOT = "QWidget[studioStyleRoot='studioPanel']"
 
 
 def studio_stylesheet(root_name):
     """Every selector has the caller's root ID, including pseudo states."""
     if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", root_name):
         raise ValueError("Use a plain Studio root object name")
-    root, c = "QWidget#" + root_name, COLORS
+    # Houdini renames a Python Panel root to QT_Feel. A Studio-owned property
+    # keeps its existing theme scoped locally through that host rename.
+    root, c = PANEL_ROOT if root_name == "studioPanel" else "QWidget#" + root_name, COLORS
     rules = []
 
     def rule(selectors, declarations):

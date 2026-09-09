@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 
 os.environ['QT_QPA_PLATFORM'] = 'offscreen'
-from PySide6 import QtCore, QtWidgets  # noqa: E402
+from PySide6 import QtCore, QtGui, QtWidgets  # noqa: E402
 from scripts.preview_ui import PreviewApi, configure_preview_fonts, process_until  # noqa: E402
 from studio.common import AppPaths  # noqa: E402
 from studio.ui.conversation import Transcript  # noqa: E402
@@ -116,6 +116,14 @@ class ActivityTests(unittest.TestCase):
         self.addCleanup(api.close)
         panel.show()
         process_until(lambda: panel.transcript.history_known)
+        host = QtWidgets.QLabel('Unrelated host')
+        self.addCleanup(host.deleteLater)
+        host_color = host.palette().color(QtGui.QPalette.Window)
+        panel.setObjectName('QT_Feel')
+        panel.style().unpolish(panel)
+        panel.style().polish(panel)
+        self.assertEqual(panel.palette().color(QtGui.QPalette.Window).name(), '#17181c')
+        self.assertEqual(host.palette().color(QtGui.QPalette.Window), host_color)
         panel.resize(360, 720)
         process_until(lambda: all(not c.fit_timer.isActive() and (c.text.isHidden() or
             c.text.viewport().height() >= c.text.document().size().height()) for c in panel.transcript.cards.values()))

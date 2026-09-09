@@ -17,15 +17,15 @@ from .icons import icon_diagnostics, set_button_icon
 from .model_settings import ChoiceBox, ModelSettings
 from .requests import RequestCard, SessionTrustControl
 from .shared import Api, ErrorDetails, button, label
-from .theme import COLORS, apply_theme, studio_stylesheet
+from .theme import COLORS, PANEL_ROOT, apply_theme, studio_stylesheet
 
 
 PANEL_STYLE = studio_stylesheet("studioPanel") + f"""
-QWidget#studioPanel QLabel#workspaceName {{ font-size: 12pt; font-weight: 600; }}
-QWidget#studioPanel QLabel#workStatus {{ font-weight: 600; }}
-QWidget#studioPanel QLabel#messageAuthor {{ color: {COLORS['text_secondary']}; font-size: 9.5pt; font-weight: 600; }}
-QWidget#studioPanel QLabel#warning {{ color: {COLORS['warning']}; }}
-QWidget#studioPanel QToolButton::menu-indicator {{ image: none; }}
+{PANEL_ROOT} QLabel#workspaceName {{ font-size: 12pt; font-weight: 600; }}
+{PANEL_ROOT} QLabel#workStatus {{ font-weight: 600; }}
+{PANEL_ROOT} QLabel#messageAuthor {{ color: {COLORS['text_secondary']}; font-size: 9.5pt; font-weight: 600; }}
+{PANEL_ROOT} QLabel#warning {{ color: {COLORS['warning']}; }}
+{PANEL_ROOT} QToolButton::menu-indicator {{ image: none; }}
 """
 
 CODEX_STATES = {"idle": "就绪", "starting": "正在提交", "running": "正在工作", "stopping": "已请求停止，等待确认",
@@ -154,6 +154,7 @@ class StudioPanel(QtWidgets.QWidget):
         self.connected_api = None
         self.narrow_layout = None
         self.setObjectName("studioPanel")
+        self.setProperty("studioStyleRoot", "studioPanel")
         self.setWindowTitle("Big-Chicken · Houdini Studio")
         self.setStyleSheet(PANEL_STYLE)
         self.resize(720, 900)
