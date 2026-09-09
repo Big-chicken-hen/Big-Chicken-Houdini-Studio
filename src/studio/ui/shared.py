@@ -120,26 +120,6 @@ class ErrorDetails(QtWidgets.QFrame):
                         text="收起详情" if expanded else "查看详情", size=16)
         self.toggle.setAccessibleName("收起错误详情" if expanded else "展开错误详情")
 
-class _ApiCompletion(QtCore.QObject):
-    """Give reply delivery an explicit Qt receiver and exactly one lifetime."""
-    def __init__(self, callback, forgotten, parent):
-        super().__init__(parent)
-        self.callback = callback
-        self.pending = [True]
-        pending = self.pending
-        self.destroyed.connect(lambda *_: forgotten() if pending[0] else None)
-
-    @QtCore.Slot()
-    def finish(self):
-        if not self.pending[0]:
-            return
-        self.pending[0] = False
-        callback, self.callback = self.callback, None
-        if isValid(self):
-            self.deleteLater()
-        callback()
-
-
 class Api(QtCore.QObject):
     def __init__(self, url, token, parent=None):
         super().__init__(parent)
@@ -205,11 +185,7 @@ class Api(QtCore.QObject):
                     reply.deleteLater()
             if callback:
                 callback(value)
-        def forgotten():
-            self.inflight.discard(key)
-            self.replies.discard(reply)
-        delivery = _ApiCompletion(finished, forgotten, self)
-        reply.finished.connect(delivery.finish)
+        reply.finished.connect(finished)
         return True
 
     def close(self):
@@ -249,3 +225,4 @@ class Task(QtCore.QRunnable):
             # its cleanup. Delivery failure is not failure of the completed work.
             if isValid(self.signals):
                 raise
+
