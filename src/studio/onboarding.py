@@ -24,7 +24,8 @@ ONBOARDING_POLICY = ProtocolPolicy(client_requests=frozenset({
 def codex_candidates(paths, preferred=None):
     """Enumerate known native installations without executing shell wrappers."""
     name = "codex.exe" if os.name == "nt" else "codex"
-    values = [preferred, paths.local("toolchains", "codex", name), shutil.which(name)]
+    values = [preferred, paths.install("tools", "codex", "bin", name),
+              paths.local("toolchains", "codex", name), shutil.which(name)]
     if os.name == "nt":
         local = os.environ.get("LOCALAPPDATA")
         if local:
@@ -147,6 +148,12 @@ class Onboarding:
         self.houdini = {"state": "found" if selected else "missing", "path": str(Path(selected).resolve()) if selected else "",
                         "version": version.group() if version else None, "installations": installations,
                         "message": "已找到安装；许可证将在启动时确认。" if selected else "未找到 Houdini，请选择已有安装。"}
+        if selected and (self.paths.root / "release-manifest.json").is_file():
+            from .release import installed_houdini_version
+            observed = installed_houdini_version(selected)
+            self.houdini["version"] = observed
+            if observed != "22.0.368":
+                self.houdini.update(state="incompatible", message="当前发行候选要求 Houdini FX 22.0.368，请选择兼容安装。")
 
     def probe(self, codex_override=None, houdini_override=None):
         with self.action:

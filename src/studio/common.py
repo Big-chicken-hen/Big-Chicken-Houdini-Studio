@@ -78,6 +78,9 @@ class AppPaths:
                          Path(__file__).resolve().parents[2]).resolve()
         if not (self.root / "pyproject.toml").is_file():
             raise StudioError("APP_ROOT_INVALID", "Select the Big-Chicken Studio installation directory")
+        if (self.root / "release-manifest.json").is_file():
+            from .release import hold_installed_version
+            hold_installed_version(self.root)
         self.runtime = inside(self.root / ".runtime", self.root)
         data_root = data_root or (None if explicit_root else os.environ.get("BCS_DATA_ROOT")) or self.runtime
         cache_root = cache_root or (None if explicit_root else os.environ.get("BCS_CACHE_ROOT")) or self.runtime / "cache"

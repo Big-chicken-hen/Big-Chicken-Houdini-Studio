@@ -393,6 +393,8 @@ class StudioLauncher(QtWidgets.QWidget):
         self.diagnostics_text.setReadOnly(True)
         self.diagnostics_text.setAccessibleName("原始启动诊断")
         diagnostics.addWidget(self.diagnostics_text, 1)
+        self.export_diagnostics_button = self.action_button("导出诊断…", self.export_diagnostics)
+        diagnostics.addWidget(self.export_diagnostics_button, 0, QtCore.Qt.AlignLeft)
 
     def projection(self):
         return project_page(self._snapshot, request_id=self._request_id, launch_record=self._launch_record,
@@ -431,6 +433,21 @@ class StudioLauncher(QtWidgets.QWidget):
     def show_details(self):
         self.show_secondary("diagnostics")
 
+    def export_diagnostics(self):
+        from ..release import export_diagnostics
+        default = Path(QtCore.QStandardPaths.writableLocation(QtCore.QStandardPaths.DocumentsLocation)) / "Studio-diagnostics.zip"
+        target, _ = QtWidgets.QFileDialog.getSaveFileName(self, "导出诊断", str(default), "ZIP (*.zip)")
+        if not target:
+            return
+        answer = QtWidgets.QMessageBox.question(self, "确认导出内容",
+            "将导出版本、安装完整性、连接与账号确认状态、最近失败代码和阶段。\n"
+            "不包含聊天、脚本、账号凭证、场景或图片；不会自动上传。\n\n位置：" + target)
+        if answer != QtWidgets.QMessageBox.Yes:
+            return
+        snapshot, failure, phase = dict(self._snapshot), self._failure, self.projection().name
+        self._submit("diagnostic-export", lambda: export_diagnostics(self.paths, Path(target).resolve(), snapshot,
+            failure=failure, phase=phase), lambda path: QtWidgets.QMessageBox.information(self, "诊断已导出", path))
+
     def failure_message(self):
         if isinstance(self._failure, dict):
             return str(self._failure.get("message", "需要查看详情"))
@@ -463,7 +480,7 @@ class StudioLauncher(QtWidgets.QWidget):
                 "codex_incompatible": ("当前 Codex 版本不受支持", f"需要 Codex {SUPPORTED_CODEX_VERSION}，请选择兼容安装。"),
                 "codex_error": ("无法启动 Codex", "尚未确认可用的 Codex 连接，请重新检查或选择其他安装。"),
                 "codex_unconfirmed": ("无法确认可用安装", f"需要 Codex {SUPPORTED_CODEX_VERSION}。请选择已有安装，或查看要求。"),
-                "houdini": ("需要 Houdini 安装", "请选择本机已有的 Houdini 安装。"),
+                "houdini": ("需要 Houdini 安装", self._snapshot.get("houdini", {}).get("message") or "请选择本机已有的 Houdini 安装。"),
             }
             title, message = modes[view.mode]
             self.setup_title.setText(title)

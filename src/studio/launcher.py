@@ -97,7 +97,8 @@ def discover_houdini():
 
 def codex_executable(paths):
     name = "codex.exe" if os.name == "nt" else "codex"
-    candidates = [os.environ.get("BCS_CODEX_PATH"), paths.local("toolchains", "codex", name), shutil.which(name)]
+    candidates = [os.environ.get("BCS_CODEX_PATH"), paths.install("tools", "codex", "bin", name),
+                  paths.local("toolchains", "codex", name), shutil.which(name)]
     for value in candidates:
         if value and Path(value).is_file():
             return str(Path(value).resolve())
@@ -126,6 +127,10 @@ def check_codex(codex, paths=None):
 def preflight(houdini, codex, paths=None):
     if not Path(houdini).is_file() or Path(houdini).name.lower() not in {"houdini.exe", "houdini", "houdinifx.exe"}:
         raise StudioError("HOUDINI_REQUIRED", "Select a Houdini GUI executable")
+    if paths is not None and (paths.root / "release-manifest.json").is_file():
+        from .release import installed_houdini_version
+        if installed_houdini_version(houdini) != "22.0.368":
+            raise StudioError("HOUDINI_VERSION_UNTESTED", "当前发行候选要求 Houdini FX 22.0.368，请选择兼容安装。")
     return {"houdini": str(Path(houdini).resolve()), "codex": check_codex(codex, paths),
             "codex_version": SUPPORTED_CODEX_VERSION}
 
