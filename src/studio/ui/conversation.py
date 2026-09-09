@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..message_projection import MessageProjection, ProjectedItem
+from .activity import activity_segments, is_tool, tool_facts
 from .icons import set_button_icon
 from .shared import Task, button, label
 from .theme import COLORS, apply_theme
@@ -239,6 +241,7 @@ def image_sources(item, app_root):
 class MessageCard(QtWidgets.QFrame):
     layout_will_change = QtCore.Signal()
     layout_changed = QtCore.Signal()
+    activity_boundary_changed = QtCore.Signal()
     def __init__(self, item, app_root, parent=None):
         super().__init__(parent)
         self.setObjectName("messageCard")
@@ -251,16 +254,25 @@ class MessageCard(QtWidgets.QFrame):
         self.render_timer.setSingleShot(True)
         self.render_timer.setInterval(50)
         self.render_timer.timeout.connect(self.render_item)
+        self.fit_timer = QtCore.QTimer(self)
+        self.fit_timer.setSingleShot(True)
+        self.fit_timer.timeout.connect(self.fit_text)
         self.image_tiles = []
+        self.activity_expanded = True
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
-        self.title = label("", "messageAuthor")
+        self.title = label("", "messageAuthor", True)
         layout.addWidget(self.title)
         self.sync_note = label("恢复中的消息：完整内容到达时更新，也可手动刷新连接。", "muted", True)
         self.sync_note.hide()
         layout.addWidget(self.sync_note)
+        self.activity_warning = label("", "warning", True)
+        self.activity_warning.setProperty("tone", "warning")
+        self.activity_warning.hide()
+        layout.addWidget(self.activity_warning)
         self.text = SafeBrowser()
+        self.text.document().documentLayout().documentSizeChanged.connect(lambda _size: self.schedule_fit())
         self.text.source_text = self.source_text
         self.text.setToolTip("右键可复制完整正文")
         self.text.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
@@ -279,6 +291,9 @@ class MessageCard(QtWidgets.QFrame):
         self.image_scroll.viewport().setAutoFillBackground(False)
         self.image_scroll.setWidgetResizable(True)
         layout.addWidget(self.image_scroll)
+        self.image_caption = label("", "muted", True)
+        self.image_caption.hide()
+        layout.addWidget(self.image_caption)
         self.details_button = button("查看工具内容", self.toggle_details, "quiet")
         layout.addWidget(self.details_button, 0, QtCore.Qt.AlignLeft)
         self.details = QtWidgets.QPlainTextEdit()
@@ -291,6 +306,8 @@ class MessageCard(QtWidgets.QFrame):
     def retire(self):
         self.retired = True
         self.render_timer.stop()
+        self.fit_timer.stop()
+        self.hide()
         for _source, tile in self.image_tiles:
             tile.retired = True
 
@@ -325,8 +342,8 @@ class MessageCard(QtWidgets.QFrame):
             self.style().unpolish(self)
             self.style().polish(self)
         status = item.get("status", "")
-        titles = {"userMessage": "你", "agentMessage": "CODEX", "reasoning": "CODEX · 思考摘要",
-                  "plan": "CODEX · 计划", "contextCompaction": "CODEX · 原生上下文压缩",
+        titles = {"userMessage": "你", "agentMessage": "Codex", "reasoning": "Codex · 思考摘要",
+                  "plan": "Codex · 计划", "contextCompaction": "Codex · 原生上下文压缩",
                   "mcpToolCall": "工具 · " + str(item.get("tool", "")), "commandExecution": "命令执行",
                   "fileChange": "文件变更", "webSearch": "网页检索", "imageView": "图片"}
         self.title.setText(titles.get(kind, kind) + ("  /  " + status if status else ""))
@@ -349,6 +366,7 @@ class MessageCard(QtWidgets.QFrame):
             text = "此会话由 Codex 自动压缩，可继续当前对话。"
         elif not text:
             text = status or "等待原生事件…"
+        boundary_changed = kind == "reasoning" and bool(self.rendered_text) != bool(text)
         text_changed = self.rendered_text != str(text)
         if text_changed:
             self.rendered_text = str(text)
@@ -383,28 +401,70 @@ class MessageCard(QtWidgets.QFrame):
                 self.images.insertWidget(index, tile)
             for _source, tile in unused:
                 self.images.removeWidget(tile)
+                tile.hide()
                 tile.retired = True
                 tile.deleteLater()
         self.image_scroll.setVisible(bool(sources))
+        facts = tool_facts(item) if is_tool else {"warning": "", "caption": ""}
+        if is_tool:
+            title = {"hia_context": "场景观察", "hia_inspect": "目标查询", "hia_lookup": "节点与帮助查询",
+                     "hia_execute_hom": "场景操作", "hia_capture": "获取视图", "hia_operation": "执行记录",
+                     "hia_project_memory": "项目约定"}.get(item.get("tool"), titles.get(kind, "工具活动"))
+            self.title.setText(title)  # Native item completion is not HOM completion.
+        self.activity_warning.setText(facts["warning"])
+        self.activity_warning.setVisible(bool(facts["warning"]))
+        self.image_caption.setText(facts["caption"])
+        self.image_caption.setVisible(bool(sources and facts["caption"]))
+        self.set_activity_expanded(self.activity_expanded)
         self.fit_images()
         if text_changed:
             QtCore.QTimer.singleShot(0, self, self.fit_text)
+        if boundary_changed:
+            self.activity_boundary_changed.emit()
         self.layout_changed.emit()
+
+    def set_activity_expanded(self, expanded):
+        collapse = self.activity_expanded and not expanded
+        self.activity_expanded = expanded
+        if not is_tool(self.item):
+            if self.item.get("type") == "reasoning":
+                self.setVisible(bool(self.rendered_text) or not self.sync_note.isHidden())
+            return
+        critical = bool(self.activity_warning.text()) or not self.sync_note.isHidden()
+        if collapse:
+            self.details.hide()
+        explicit_detail = not self.details.isHidden()
+        self.title.setVisible(expanded or critical or explicit_detail)
+        self.details_button.setVisible(expanded or critical or explicit_detail)
+        self.text.setVisible(expanded and bool(self.rendered_text))
+        self.setVisible(expanded or critical or bool(self.image_tiles) or explicit_detail)
 
     def set_recovering(self, recovering):
         self.sync_note.setVisible(recovering)
+        self.set_activity_expanded(self.activity_expanded)
+
+    def schedule_fit(self):
+        if not self.retired:
+            self.fit_timer.start()
 
     def fit_text(self):
         if self.retired:
             return
-        self.text.document().setTextWidth(max(100, self.text.viewport().width()))
-        height = int(self.text.document().size().height()) + 8
-        self.text.setFixedHeight(max(28, height))
+        width = max(100, self.text.viewport().width())
+        # Houdini's document layout can emit another size change even for the
+        # same width. Re-invalidating it keeps a zero timer alive and starves
+        # the host's idle-dispatched HOM queue.
+        if abs(self.text.document().textWidth() - width) > .5:
+            self.text.document().setTextWidth(width)
+        chrome = max(8, self.text.height() - self.text.viewport().height())
+        height = math.ceil(self.text.document().size().height()) + chrome
+        if self.text.height() != max(28, height):
+            self.text.setFixedHeight(max(28, height))
         self.text.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self.fit_text()
+        self.schedule_fit()
         self.fit_images()
 
     def fit_images(self):
@@ -437,6 +497,7 @@ class MessageCard(QtWidgets.QFrame):
         self.details.setVisible(not self.details.isVisible())
         if self.details.isVisible():
             self.show_details()
+        self.set_activity_expanded(self.activity_expanded)
 
 
 class Transcript(QtWidgets.QScrollArea):
@@ -459,6 +520,8 @@ class Transcript(QtWidgets.QScrollArea):
         self.last_turn_id = None
         self.item_turns = {}
         self.tool_groups = {}
+        self.segment_items = {}
+        self.turn_gaps = {}
         self.projection = MessageProjection()
         self.history_revision = 0
         self._scroll_target = None
@@ -467,6 +530,7 @@ class Transcript(QtWidgets.QScrollArea):
         self._scroll_restore.timeout.connect(self.restore_scroll)
         self.verticalScrollBar().actionTriggered.connect(self.cancel_scroll_restore)
         self.verticalScrollBar().sliderPressed.connect(self.cancel_scroll_restore)
+        self.verticalScrollBar().rangeChanged.connect(self.fit_cards)
         self.older = button("加载更早消息", self.older_requested.emit, "quiet")
         self.older.hide()
         self.layout.addWidget(self.older, 0, QtCore.Qt.AlignLeft)
@@ -500,8 +564,15 @@ class Transcript(QtWidgets.QScrollArea):
         self.cards.clear()
         for control in self.tool_groups.values():
             self.layout.removeWidget(control)
+            control.hide()
             control.deleteLater()
         self.tool_groups.clear()
+        self.segment_items.clear()
+        for gap in self.turn_gaps.values():
+            self.layout.removeWidget(gap)
+            gap.hide()
+            gap.deleteLater()
+        self.turn_gaps.clear()
         self.item_turns.clear()
         self.turn_notice.hide()
         self._notice_turn = None
@@ -563,25 +634,58 @@ class Transcript(QtWidgets.QScrollArea):
 
     def arrange(self):
         position = 2
-        placed = set()
-        for key in self.projection.ordered_keys():
+        expanded_items = {key for group_id, keys in self.segment_items.items()
+                          if group_id in self.tool_groups and self.tool_groups[group_id].isChecked() for key in keys}
+        ordered = [(key, self.cards[key].item) for key in self.projection.ordered_keys() if key in self.cards]
+        self.segment_items = activity_segments(ordered)
+        for group_id in tuple(self.tool_groups):
+            if group_id not in self.segment_items:
+                control = self.tool_groups.pop(group_id)
+                self.layout.removeWidget(control)
+                control.hide()
+                control.deleteLater()
+        self.item_turns.clear()
+        for group_id, keys in self.segment_items.items():
+            for key in keys:
+                self.item_turns[key] = group_id
+            if group_id not in self.tool_groups:
+                control = QtWidgets.QToolButton()
+                control.setObjectName("quiet")
+                control.setCheckable(True)
+                control.setChecked(any(key in expanded_items for key in keys))
+                control.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+                control.setMinimumHeight(40)
+                control.toggled.connect(lambda _checked, group_id=group_id: self.update_tool_group(group_id)
+                    if group_id in self.tool_groups else None)
+                self.tool_groups[group_id] = control
+            self.update_tool_group(group_id)
+        previous_turn = None
+        for key, _item in ordered:
             card = self.cards.get(key)
-            if card is None:
-                continue
-            group = self.tool_groups.get(key.turn) if self.is_tool(card.item) else None
-            if group and key.turn not in placed:
-                self.layout.insertWidget(position, group)
+            if previous_turn is not None and key.turn != previous_turn:
+                if key.turn not in self.turn_gaps:
+                    gap = QtWidgets.QWidget()
+                    gap.setFixedHeight(16)
+                    self.turn_gaps[key.turn] = gap
+                self.layout.insertWidget(position, self.turn_gaps[key.turn])
                 position += 1
-                placed.add(key.turn)
+            previous_turn = key.turn
+            group = self.tool_groups.get(key)
+            if group:
+                self.layout.insertWidget(position, group)
+                self.layout.setAlignment(group, QtCore.Qt.AlignLeft)
+                position += 1
             if self.layout.indexOf(card) != position:
                 self.layout.insertWidget(position, card)
+            self.layout.setAlignment(card, QtCore.Qt.AlignRight if card.item.get("type") == "userMessage" else QtCore.Qt.AlignmentFlag(0))
             position += 1
+        self.fit_cards()
         if self._notice_turn:
             self.set_turn_notice(self._notice_turn, self.turn_notice.text())
 
     @staticmethod
     def is_tool(item):
-        return item.get("type") not in {"userMessage", "agentMessage", "reasoning", "plan", "contextCompaction", "imageView"}
+        return is_tool(item)
 
     def put(self, item, *, preserve_scroll=True, turn_id=None):
         turn_id = turn_id or self.last_turn_id
@@ -603,6 +707,8 @@ class Transcript(QtWidgets.QScrollArea):
         else:
             card = MessageCard(item, self.app_root)
             card.setProperty('nativeTurnId', key.turn)
+            card.activity_boundary_changed.connect(lambda key=key, card=card: self.arrange()
+                if self.cards.get(key) is card and not card.retired else None)
             card.layout_will_change.connect(lambda key=key, card=card: self.image_will_change()
                 if self.cards.get(key) is card and not card.retired else None)
             card.layout_changed.connect(lambda key=key, card=card: self.image_changed()
@@ -612,29 +718,47 @@ class Transcript(QtWidgets.QScrollArea):
             self.empty.hide()
             changed = True
         self.cards[key].set_recovering(record.recovering)
-        if self.is_tool(item):
-            group_id = key.turn
-            self.item_turns[key] = group_id
-            if group_id not in self.tool_groups:
-                control = QtWidgets.QToolButton()
-                control.setCheckable(True)
-                control.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
-                control.toggled.connect(lambda _checked, group_id=group_id: self.update_tool_group(group_id)
-                    if group_id in self.tool_groups else None)
-                self.tool_groups[group_id] = control
-                self.layout.insertWidget(self.layout.indexOf(self.cards[key]), control)
-            self.update_tool_group(group_id)
+        if changed and not defer and preserve_scroll:
+            self.arrange()
         if changed and preserve_scroll and not defer:
             self.queue_scroll_restore(target)
 
     def update_tool_group(self, group_id):
         control = self.tool_groups[group_id]
-        cards = [self.cards[key] for key, turn_id in self.item_turns.items() if turn_id == group_id]
-        set_button_icon(control, "chevron-down" if control.isChecked() else "chevron-right",
-                        text="本轮执行详情 · " + str(len(cards)) + " 项", size=16)
+        cards = [self.cards[key] for key in self.segment_items[group_id]]
+        counts = {"查询": 0, "执行": 0, "取图": 0, "其他操作": 0}
+        images = 0
         for card in cards:
-            # Native images remain in the conversation even when tool internals fold away.
-            card.setVisible(control.isChecked() or bool(card.image_tiles))
+            tool = card.item.get("tool", "")
+            action = (card.item.get("arguments") or {}).get("action")
+            query = tool in {"hia_context", "hia_inspect", "hia_lookup"} or (
+                tool == "hia_operation" and action in {"get", "detail", "list"}) or (
+                tool == "hia_project_memory" and action == "list")
+            key = "执行" if tool == "hia_execute_hom" else "取图" if tool == "hia_capture" else "查询" if query else "其他操作"
+            counts[key] += 1
+            images += len(card.image_tiles)
+        parts = [f"{count} 次{kind}" for kind, count in counts.items() if count and kind != "取图"]
+        if images:
+            parts.append(f"{images} 张视图")
+        elif counts["取图"]:
+            parts.append(f"{counts['取图']} 次取图")
+        title = "在 Houdini 中工作" if all(str(card.item.get("tool", "")).startswith("hia_") for card in cards) else "工具活动"
+        set_button_icon(control, "chevron-down" if control.isChecked() else "chevron-right",
+                        text=title + "\n" + " · ".join(parts), size=16)
+        control.setAccessibleName("工具活动：" + "，".join(parts))
+        for card in cards:
+            card.set_activity_expanded(control.isChecked())
+
+    def fit_cards(self):
+        width = max(120, self.viewport().width())
+        for card in self.cards.values():
+            if card.item.get("type") == "userMessage":
+                card.setFixedWidth(int(width * .86))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "cards"):
+            self.fit_cards()
 
     def image_will_change(self):
         self._image_anchor = self.scroll_target()

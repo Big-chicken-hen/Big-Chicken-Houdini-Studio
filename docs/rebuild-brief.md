@@ -4,11 +4,15 @@ The [Release Readiness approval](release-readiness-brief.md) is now the current
 stage entry. It permits PR #10's technical merge (completed at `890284b`) while
 retaining all frozen [model results](model-acceptance-results.md). R1 merged as PR
 #11 at `fe57c7a`; its native-message/history fixes passed the [real Panel gate](r1-validation.md).
-[R2](r2-validation.md) on `codex/tool-use-efficiency` simplifies scene instructions,
+[R2](r2-validation.md), merged as PR #12 at `2b180da`, simplifies scene instructions,
 gives field-level schema errors and removes measured request-local metadata/result
 overhead. It preserves general HOM, optional verification and durable step gates.
 These limited corrections supersede the earlier record-only/UI-freeze statements
-below; they describe prior scope. R3 and R4 remain separate PRs with their own gates.
+below; they describe prior scope. [R3](r3-validation.md) covers approved native
+conversation/activity/progress presentation and its real-host checks. R4 remains
+independent PR #14; the user currently lacks a clean Windows 11 non-administrator
+test environment and asked to complete other preparation. That environment and
+the full installed-package authoring flow remain mandatory release gates.
 No new tool capability, second chat store or rendering expansion is approved.
 
 The independent [native conversation lifecycle approval](native-conversations-brief.md)

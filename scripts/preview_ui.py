@@ -59,7 +59,7 @@ class PreviewApi:
         self.thread = {"id": "preview_thread", "turns": [{"id": "preview_turn", "status": "interrupted", "items": [
             {"id": "user_1", "type": "userMessage", "content": [{"type": "text", "text": "把选中的几何体做成磨砂玻璃，保留轮廓，先调整材质再看一帧效果。"}]},
             {"id": "agent_1", "type": "agentMessage", "text": "材质参数已提交给 Houdini。你刚刚停止了本轮对话，当前 cook 仍在运行。\n\n请在 **执行记录** 查看原操作的持久化结果。"},
-            {"id": "tool_1", "type": "mcpToolCall", "tool": "execute", "status": "inProgress", "arguments": {"label": "调整玻璃材质"}}
+            {"id": "tool_1", "type": "mcpToolCall", "tool": "hia_execute_hom", "status": "inProgress", "arguments": {"label": "调整玻璃材质"}}
         ]}]}
         self.operation = {"operation_id": "preview_operation", "state": "running", "kind": "execute", "label": "调整玻璃材质 · 定向 cook",
                           "scene_epoch": "preview_epoch", "mutation_outcome": "unknown", "checks_outcome": "not_run",
