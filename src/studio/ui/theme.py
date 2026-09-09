@@ -44,7 +44,8 @@ def studio_stylesheet(root_name):
     rule("QFrame#card,QFrame#surface", f"background: {c['surface']}; border: 0; border-radius: 8px;")
     rule("QFrame#panelHeader,QWidget#header,QFrame#messageCard,QFrame#imageTile,QWidget#imageBody",
          "background: transparent; border: 0;")
-    rule("QFrame#messageCard[studioRole='user']", f"background: {c['surface']}; border: 0; border-radius: 8px;")
+    rule("QFrame#messageCard[studioRole='user']", f"background: {c['surface_elevated']}; border: 0; border-radius: 8px;")
+    rule("QLabel#messageAuthor", f"color: {c['text_muted']}; font-size: {FONT_POINTS['meta']}pt;")
     rule("QFrame#composer", f"background: {c['surface_elevated']}; border: 1px solid {c['border_subtle']}; border-radius: 10px;")
     rule("QFrame#studioError,QFrame#requestCard", f"background: {c['surface_elevated']}; border: 1px solid {c['border_control']}; border-radius: 8px;")
     rule("QPushButton,QToolButton", f"background: {c['surface_elevated']}; border: 0; border-radius: 6px; padding: 6px 10px; min-height: 16px;")
