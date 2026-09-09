@@ -323,7 +323,7 @@ class PanelProductTest(unittest.TestCase):
         picture = self.root / "result-image.png"
         fixture_image(picture)
         self.panel.transcript.put({"id": "result_picture", "type": "imageView", "path": str(picture)}, turn_id="preview_turn")
-        tile = self.panel.transcript.cards["result_picture"].image_tiles[0][1]
+        tile = self.panel.transcript.card("result_picture").image_tiles[0][1]
         process_until(lambda: not tile.decoded.isNull())
         self.panel.resize(720, 800)
         self.app.processEvents()

@@ -8,6 +8,7 @@ import os
 import shutil
 import sys
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 APP_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(APP_ROOT / "src"))
@@ -70,8 +71,10 @@ class PreviewApi:
         if self.closed:
             return False
         self.calls.append((method, path, copy.deepcopy(body)))
-        if path in self.hold:
-            self.hold[path].append((done, failed, copy.deepcopy(body)))
+        route = urlsplit(path).path
+        hold_key = path if path in self.hold else route
+        if hold_key in self.hold:
+            self.hold[hold_key].append((done, failed, copy.deepcopy(body)))
             return True
         if path in self.errors:
             if failed:
@@ -95,6 +98,13 @@ class PreviewApi:
                       "thread_settings": {**self.state["thread_settings"], "thread_id": self.thread["id"]}}
         elif path == "/thread":
             result = {"thread": self.thread}
+        elif route == "/thread/history":
+            query = parse_qs(urlsplit(path).query)
+            turn_id = query.get("turn_id", [None])[0]
+            turns = self.thread.get("turns", [])
+            if turn_id:
+                turns = [turn for turn in turns if turn.get("id") == turn_id]
+            result = {"thread": {**self.thread, "turns": turns}, "next_cursor": None, "turn_id": turn_id}
         elif path == "/reconcile":
             result = {"reconciled": True, "thread": self.thread, "codex_state": self.state["codex"]["state"]}
         elif path == "/turn":
@@ -185,7 +195,7 @@ def capture_panel_previews(root, *, widths=(360, 440, 720), states=None):
     try:
         panel.show()
         process_until(lambda: len(panel.transcript.cards) == 4 and panel.models_loaded)
-        tile = panel.transcript.cards["native_picture"].images.itemAt(0).widget()
+        tile = panel.transcript.card("native_picture").images.itemAt(0).widget()
         process_until(lambda: not tile.picture.pixmap().isNull())
         panel.input.insertPlainText("把宽度改为 1.6 米，其他尺寸保留。\n参考图片中的分格比例。")
         baseline = copy.deepcopy(api.state)

@@ -19,6 +19,7 @@ from .codex.trust import SessionTrust, STUDIO_TOOLS
 from .common import TERMINAL, StudioError, atomic_json, new_id, read_json
 from .conversations import Conversations, NOTIFICATIONS
 from .http import Client, serve
+from .history import NativeHistory
 from .instructions import SCENE_INSTRUCTIONS
 from .launcher import codex_app_server_command, helper_environment
 from .workspace import WorkspaceData, Workspaces
@@ -44,6 +45,7 @@ class Bridge:
         self.completed_turns = collections.deque(maxlen=256)
         self.pending_requests = {}
         self.conversations = Conversations(self)
+        self.history = NativeHistory(self)
         self.scene_trust = SessionTrust()
         self.settings = NativeSettings()
         self.scene_epoch = self.scene_runtime_id = self.thread_scene_epoch = None
@@ -85,6 +87,9 @@ class Bridge:
                 approval_runtime = {"connection": "unavailable"}
         with self.lock:
             method, params = event.get("method"), event.get("params", {})
+            if event.get("type") == "process_started":
+                self.history.reset()
+                self.events.clear()  # Retire only the old connection's transient event ring.
             event_thread = params.get("threadId")
             if method in NOTIFICATIONS:
                 if self.conversations.observe(method, params):
@@ -180,6 +185,7 @@ class Bridge:
         with self.lock:
             self._observe_scene(runtime)
             return {"workspace": self.workspace, "thread_id": self.thread_id, "turn_id": self.turn_id,
+                    "connection_generation": self.history.generation,
                     "codex": {"state": self.codex_state, "alive": self.client.is_running,
                               "stop_requested": self.stop_requested}, "runtime": runtime,
                     "scene_trust": self._scene_trust_state(runtime),
@@ -567,6 +573,7 @@ class Bridge:
                     gap = bool(self.events and cursor and cursor < self.events[0]["sequence"] - 1)
                     events = [e for e in self.events if e["sequence"] > cursor][:100]
                     return {"events": events, "cursor": events[-1]["sequence"] if events else self.sequence,
+                            "connection_generation": self.history.generation,
                             "resync_required": gap}
             if method == "GET" and path == "/operations":
                 return self.runtime().call("GET", "/operations")
@@ -589,6 +596,12 @@ class Bridge:
                 if not self.thread_id:
                     return {"thread": None}
                 return self.read_thread(self.thread_id)
+            if method == "GET" and path == "/thread/history":
+                thread_id = query.get("thread_id", [None])[0]
+                if not thread_id:
+                    raise StudioError("HISTORY_SCOPE_REQUIRED", "Supply the selected native thread")
+                return self.history.page(thread_id, cursor=query.get("cursor", [None])[0],
+                                         turn_id=query.get("turn_id", [None])[0])
             if method == "POST" and path == "/reconcile":
                 return self.reconcile()
             if method == "POST" and path == "/selection":
