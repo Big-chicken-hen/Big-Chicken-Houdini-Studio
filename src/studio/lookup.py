@@ -6,6 +6,7 @@ import re
 
 from .common import StudioError
 from .inspection import bounded_value, optional_bool, optional_call, parameter_template
+from .installed_help import HelpReader, installed_help
 from .tool_schema import LOOKUP_SCHEMA, validate_schema
 
 
@@ -13,7 +14,7 @@ def validate_lookup(arguments):
     try:
         validate_schema(arguments, LOOKUP_SCHEMA)
     except StudioError as exc:
-        raise StudioError("INVALID_ARGUMENTS", exc.message) from None
+        raise StudioError("INVALID_ARGUMENTS", exc.message, **exc.details) from None
 
 
 def metadata_requests(arguments):
@@ -27,7 +28,7 @@ def metadata_requests(arguments):
         request.setdefault("query", "")
         request.setdefault("include_hidden", True)
         request.setdefault("include_deprecated", True)
-        request.setdefault("limit", 80)
+        request.setdefault("limit", 12)
     return [request], False
 
 
@@ -35,8 +36,8 @@ def type_identity(node_type):
     return {"name": node_type.name(), "category": node_type.category().name()}
 
 
-def type_status(node_type, categories, redact):
-    hidden, deprecated = optional_bool(node_type, "hidden"), optional_bool(node_type, "deprecated")
+def type_status(node_type, categories, redact, get_types, state=None):
+    hidden, deprecated = state if state is not None else (optional_bool(node_type, "hidden"), optional_bool(node_type, "deprecated"))
     result = {"hidden": hidden, "deprecated": deprecated,
               "state_source": "installed_hou.OpNodeType", "deprecation": None}
     if deprecated is not True:
@@ -52,7 +53,7 @@ def type_status(node_type, categories, redact):
             try:
                 identity = type_identity(replacement)
                 category = categories.get(identity["category"])
-                present = category.nodeTypes().get(identity["name"]) if category is not None else None
+                present = get_types(identity["category"]).get(identity["name"]) if category is not None else None
                 record["replacement"] = {**identity, "installed": present is not None}
             except Exception:
                 record["replacement"] = {"available": False, "reason": "replacement_identity_unavailable"}
@@ -83,10 +84,20 @@ def template_page(node_type, request, redact):
 
 
 def installed_lookup(hou, arguments, redact, error):
+    with HelpReader() as help_reader:
+        return _installed_lookup(hou, arguments, redact, error, help_reader)
+
+
+def _installed_lookup(hou, arguments, redact, error, help_reader):
     requests, batch = metadata_requests(arguments)
     categories = hou.nodeTypeCategories()
     version = hou.applicationVersionString()
     catalogs = {}  # One call only; a later HDA install/uninstall cannot leave stale metadata.
+    type_maps = {}
+    def get_types(name):
+        if name not in type_maps:
+            type_maps[name] = categories[name].nodeTypes()
+        return type_maps[name]
     results = []
     for index, request in enumerate(requests):
         identity = {"index": index, "kind": request["kind"],
@@ -99,15 +110,14 @@ def installed_lookup(hou, arguments, redact, error):
                 category_name = next((name for name in categories if name.casefold() == request["category"].casefold()), None)
                 if category_name is None:
                     raise StudioError("CATEGORY_NOT_FOUND", "Node category is absent in this installation", 404)
-                category = categories[category_name]
-                types = category.nodeTypes()
+                types = get_types(category_name)
                 if request["kind"] == "search":
                     if category_name not in catalogs:
                         catalogs[category_name] = [
-                            {**type_identity(nt), "label": bounded_value(nt.description(), redact),
-                             "_label": nt.description(), "_aliases": optional_call(nt, "aliases"),
-                             **type_status(nt, categories, redact)} for nt in {nt.name(): nt for nt in types.values()}.values()]
-                    result = search_types(catalogs[category_name], request, redact)
+                            {**type_identity(nt), "_type": nt, "_label": nt.description(),
+                             "_aliases": optional_call(nt, "aliases")}
+                            for nt in {nt.name(): nt for nt in types.values()}.values()]
+                    result = search_types(catalogs[category_name], request, redact, categories, get_types)
                 else:
                     node_type = types.get(request["type_name"])
                     if node_type is None:
@@ -130,12 +140,11 @@ def installed_lookup(hou, arguments, redact, error):
                               "source": {"kind": "hda" if definition is not None else "builtin" if source_path == "Internal" else "unknown",
                                          "native": str(native_source) if native_source is not None else None,
                                          "path": bounded_value(source_path, redact)},
-                              **type_status(node_type, categories, redact)}
+                              **type_status(node_type, categories, redact, get_types)}
                     if request.get("include_parameters", True):
                         result.update(template_page(node_type, request, redact))
                     if request.get("include_help", True):
-                        from .installed_help import installed_help
-                        result["help"] = installed_help(hou, node_type, request, redact)
+                        result["help"] = installed_help(hou, node_type, request, redact, reader=help_reader)
             results.append({**identity, **result, "status": "ok", "houdini_version": version})
         except Exception as exc:
             if not batch:
@@ -149,7 +158,7 @@ def installed_lookup(hou, arguments, redact, error):
             "status": "partial" if any(result["status"] != "ok" for result in results) else "ok"}
 
 
-def search_types(catalog, request, redact):
+def search_types(catalog, request, redact, categories, get_types):
     query = request.get("query", "").strip().casefold()
     words = list(dict.fromkeys(re.findall(r"\w+", query)))[:16]
     matches = []
@@ -161,25 +170,31 @@ def search_types(catalog, request, redact):
         terms = set().union(*hits.values())
         if words and not terms:
             continue
-        hidden = record["hidden"] is True and not request.get("include_hidden", False)
-        deprecated = record["deprecated"] is True and not request.get("include_deprecated", False)
+        if "_state" not in record:
+            record["_state"] = (optional_bool(record["_type"], "hidden"), optional_bool(record["_type"], "deprecated"))
+        hidden = record["_state"][0] is True and not request.get("include_hidden", False)
+        deprecated = record["_state"][1] is True and not request.get("include_deprecated", False)
         filtered["hidden"] += int(hidden)
         filtered["deprecated"] += int(deprecated)
         filtered["total"] += int(hidden or deprecated)
         if hidden or deprecated:
             continue
         exact = 2 if query == record["name"].casefold() else 1 if query in {a.casefold() for a in names["alias"]} else 0
-        aliases = record["_aliases"]
-        public = {key: value for key, value in record.items() if not key.startswith("_")}
-        public.update(aliases=[bounded_value(a, redact) for a in aliases[:16]] if aliases is not None else None,
-                      aliases_truncated=len(aliases) > 16 if aliases is not None else None,
-                      matched_on=[field for field, terms in hits.items() if terms], matched_terms=sorted(terms))
-        matches.append(((-exact, -len(terms), record["name"].casefold(), record["name"]), public))
+        matches.append(((-exact, -len(terms), record["name"].casefold(), record["name"]), record,
+                        [field for field, terms in hits.items() if terms], sorted(terms)))
     matches.sort(key=lambda entry: entry[0])
     offset, limit = request.get("offset", 0), request.get("limit", 12)
-    page = matches[offset:offset + limit]
+    page = []
+    for _, record, matched_on, matched_terms in matches[offset:offset + limit]:
+        aliases = record["_aliases"]
+        public = {"name": record["name"], "category": record["category"], "label": bounded_value(record["_label"], redact),
+                  **type_status(record["_type"], categories, redact, get_types, record["_state"])}
+        public.update(aliases=[bounded_value(a, redact) for a in aliases[:16]] if aliases is not None else None,
+                      aliases_truncated=len(aliases) > 16 if aliases is not None else None,
+                      matched_on=matched_on, matched_terms=matched_terms)
+        page.append(public)
     end = offset + len(page)
-    return {"types": [record for _, record in page], "total": len(matches), "offset": offset,
+    return {"types": page, "total": len(matches), "offset": offset,
             "next_offset": end if end < len(matches) else None, "truncated": end < len(matches),
             "filters": {"include_hidden": request.get("include_hidden", False),
                         "include_deprecated": request.get("include_deprecated", False),
