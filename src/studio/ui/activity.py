@@ -12,6 +12,8 @@ def activity_segments(ordered):
     """Keep native order: an intervening message or another turn ends a segment."""
     segments, active = {}, None
     for key, item in ordered:
+        if item.get("type") == "reasoning" and not any(item.get("summary", [])):
+            continue  # An empty native summary has no visible explanation to separate.
         if not is_tool(item):
             active = None
             continue

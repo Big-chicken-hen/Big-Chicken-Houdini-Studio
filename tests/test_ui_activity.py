@@ -82,6 +82,28 @@ class ActivityTests(unittest.TestCase):
         card.set_recovering(False)
         self.assertTrue(card.isHidden())
 
+    def test_empty_summary_keeps_activity_compact_until_real_summary_arrives(self):
+        view = Transcript(self.root)
+        self.addCleanup(view.deleteLater)
+        self.addCleanup(view.close)
+        view.resize(360, 700)
+        view.show()
+        view.reset('a')
+        for item in (tool('before'), {'id':'summary','type':'reasoning','summary':[]}, tool('after')):
+            view.apply_event({'method':'item/started','params':{'threadId':'a','turnId':'one','item':item}})
+        self.assertEqual(len(view.tool_groups), 1)
+        self.assertTrue(view.card('summary').isHidden())
+        view.card('summary').set_recovering(True)
+        self.assertFalse(view.card('summary').isHidden())
+        view.card('summary').set_recovering(False)
+        view.apply_event({'method':'item/reasoning/summaryTextDelta','params':{
+            'threadId':'a','turnId':'one','itemId':'summary','summaryIndex':0,'delta':'需要确认这个部位。'}})
+        process_until(lambda: len(view.tool_groups) == 2)
+        self.assertFalse(view.card('summary').isHidden())
+        controls = list(view.tool_groups.values())
+        self.assertLess(view.layout.indexOf(controls[0]),view.layout.indexOf(view.card('summary')))
+        self.assertLess(view.layout.indexOf(view.card('summary')),view.layout.indexOf(controls[1]))
+
     def test_unchanged_document_size_does_not_self_schedule_forever(self):
         view = Transcript(self.root)
         self.addCleanup(view.deleteLater)

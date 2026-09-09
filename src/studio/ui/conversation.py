@@ -241,6 +241,7 @@ def image_sources(item, app_root):
 class MessageCard(QtWidgets.QFrame):
     layout_will_change = QtCore.Signal()
     layout_changed = QtCore.Signal()
+    activity_boundary_changed = QtCore.Signal()
     def __init__(self, item, app_root, parent=None):
         super().__init__(parent)
         self.setObjectName("messageCard")
@@ -365,6 +366,7 @@ class MessageCard(QtWidgets.QFrame):
             text = "此会话由 Codex 自动压缩，可继续当前对话。"
         elif not text:
             text = status or "等待原生事件…"
+        boundary_changed = kind == "reasoning" and bool(self.rendered_text) != bool(text)
         text_changed = self.rendered_text != str(text)
         if text_changed:
             self.rendered_text = str(text)
@@ -417,12 +419,16 @@ class MessageCard(QtWidgets.QFrame):
         self.fit_images()
         if text_changed:
             QtCore.QTimer.singleShot(0, self, self.fit_text)
+        if boundary_changed:
+            self.activity_boundary_changed.emit()
         self.layout_changed.emit()
 
     def set_activity_expanded(self, expanded):
         collapse = self.activity_expanded and not expanded
         self.activity_expanded = expanded
         if not is_tool(self.item):
+            if self.item.get("type") == "reasoning":
+                self.setVisible(bool(self.rendered_text) or not self.sync_note.isHidden())
             return
         critical = bool(self.activity_warning.text()) or not self.sync_note.isHidden()
         if collapse:
@@ -701,6 +707,8 @@ class Transcript(QtWidgets.QScrollArea):
         else:
             card = MessageCard(item, self.app_root)
             card.setProperty('nativeTurnId', key.turn)
+            card.activity_boundary_changed.connect(lambda key=key, card=card: self.arrange()
+                if self.cards.get(key) is card and not card.retired else None)
             card.layout_will_change.connect(lambda key=key, card=card: self.image_will_change()
                 if self.cards.get(key) is card and not card.retired else None)
             card.layout_changed.connect(lambda key=key, card=card: self.image_changed()
