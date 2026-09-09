@@ -148,3 +148,7 @@ class ActivityTests(unittest.TestCase):
         panel.operation_progress_due = 0
         panel.apply_state(copy.deepcopy(api.state))
         process_until(lambda: panel.runtime_status.text() == '正在获取视图')
+        with patch.object(panel, 'refresh'):
+            panel.stopped({'scene': {'future_operations_stopped': True}})
+        self.assertIn('等待当前步骤结束', panel.work_status.text())
+        self.assertIs(panel.action_slot.currentWidget(), panel.stop_button)

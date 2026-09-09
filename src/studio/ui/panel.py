@@ -1433,6 +1433,9 @@ class StudioPanel(QtWidgets.QWidget):
 
     def stopped(self, value):
         self.stop_pending = False
+        # Bridge acknowledged the request; retain that fact while the next
+        # state read is in flight. This does not establish HOM cancellation.
+        self.state.setdefault("codex", {})["stop_requested"] = True
         self.revision += 1
         error = value.get("codex_interrupt_error")
         scene = value.get("scene", {})
