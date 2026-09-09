@@ -449,6 +449,22 @@ class StudioLauncher(QtWidgets.QWidget):
             failure=failure, phase=phase), lambda path: QtWidgets.QMessageBox.information(self, "诊断已导出", path))
 
     def failure_message(self):
+        code = self._failure.get("code") if isinstance(self._failure, dict) else getattr(self._failure, "code", None)
+        messages = {
+            "PYTHON_REQUIRED": "Studio 的运行组件缺失，请使用安装器修复后重新打开。",
+            "CODEX_REQUIRED": "未找到可用的 Codex，请修复 Studio 安装或选择兼容程序。",
+            "CODEX_UNAVAILABLE": "无法启动 Codex，请重新检查；仍失败时可查看详情。",
+            "CODEX_VERSION_UNTESTED": f"需要 Codex {SUPPORTED_CODEX_VERSION}，请选择兼容程序。",
+            "HOUDINI_REQUIRED": "未找到 Houdini，请选择本机已有安装，再重新检测。",
+            "HIP_INVALID": "请选择已有的 Houdini 场景文件（.hip、.hiplc 或 .hipnc）。",
+            "LAUNCH_FAILED": "Studio 启动进程未能启动。请查看详情；确认原因后可重新打开场景。",
+            "RUNTIME_START_FAILED": "Houdini 已启动，但 Studio 未能连接。请查看详情并确认该 Houdini 会话的状态。",
+            "LAUNCH_STATE_UNKNOWN": "启动结果尚未确认。请查询原启动请求，避免重复打开。",
+            "LAUNCH_STATUS_UNCONFIRMED": "启动状态尚未确认，请查询原启动请求。",
+            "CONNECTION_LOST": "暂时无法连接。请检查网络，并查询当前账号或启动请求的状态。",
+        }
+        if code in messages:
+            return messages[code]
         if isinstance(self._failure, dict):
             return str(self._failure.get("message", "需要查看详情"))
         return str(self._failure or "").splitlines()[0] if self._failure else ""
@@ -1051,7 +1067,10 @@ class StudioLauncher(QtWidgets.QWidget):
             self.show_failure(ApiFailure("未能打开浏览器，可重新打开登录页", code="BROWSER_UNAVAILABLE"))
 
     def open_install_guide(self):
-        self.open_url("https://developers.openai.com/codex/cli/")
+        QtWidgets.QMessageBox.information(self, "Studio 安装帮助",
+            f"Studio 安装包包含所需运行组件和 Codex {SUPPORTED_CODEX_VERSION}。\n\n"
+            "组件缺失时，请使用同版本 Studio 安装器修复；也可以选择已有的兼容 Codex 程序。\n"
+            "Houdini 需要在本机单独安装。完成后返回启动器，重新检查。")
 
     @staticmethod
     def dropped_path(mime):

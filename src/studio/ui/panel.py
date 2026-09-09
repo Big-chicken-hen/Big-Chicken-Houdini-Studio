@@ -3,27 +3,29 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 from urllib.parse import urlencode
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..common import AppPaths, StudioError, new_id, read_json
+from .activity import running_operation_text
 from .conversation import ImageTile, Transcript
 from .conversations import ConversationManager
 from .icons import icon_diagnostics, set_button_icon
 from .model_settings import ChoiceBox, ModelSettings
 from .requests import RequestCard, SessionTrustControl
 from .shared import Api, ErrorDetails, button, label
-from .theme import COLORS, apply_theme, studio_stylesheet
+from .theme import COLORS, PANEL_ROOT, apply_theme, studio_stylesheet
 
 
 PANEL_STYLE = studio_stylesheet("studioPanel") + f"""
-QWidget#studioPanel QLabel#workspaceName {{ font-size: 12pt; font-weight: 600; }}
-QWidget#studioPanel QLabel#workStatus {{ font-weight: 600; }}
-QWidget#studioPanel QLabel#messageAuthor {{ color: {COLORS['text_secondary']}; font-size: 9.5pt; font-weight: 600; }}
-QWidget#studioPanel QLabel#warning {{ color: {COLORS['warning']}; }}
-QWidget#studioPanel QToolButton::menu-indicator {{ image: none; }}
+{PANEL_ROOT} QLabel#workspaceName {{ font-size: 12pt; font-weight: 600; }}
+{PANEL_ROOT} QLabel#workStatus {{ font-weight: 600; }}
+{PANEL_ROOT} QLabel#messageAuthor {{ color: {COLORS['text_secondary']}; font-size: 9.5pt; font-weight: 600; }}
+{PANEL_ROOT} QLabel#warning {{ color: {COLORS['warning']}; }}
+{PANEL_ROOT} QToolButton::menu-indicator {{ image: none; }}
 """
 
 CODEX_STATES = {"idle": "就绪", "starting": "正在提交", "running": "正在工作", "stopping": "已请求停止，等待确认",
@@ -152,6 +154,7 @@ class StudioPanel(QtWidgets.QWidget):
         self.connected_api = None
         self.narrow_layout = None
         self.setObjectName("studioPanel")
+        self.setProperty("studioStyleRoot", "studioPanel")
         self.setWindowTitle("Big-Chicken · Houdini Studio")
         self.setStyleSheet(PANEL_STYLE)
         self.resize(720, 900)
@@ -741,6 +744,15 @@ class StudioPanel(QtWidgets.QWidget):
             self.operation_summary_key = summary_key
             if runtime.get("connection") == "connected":
                 self.load_operations()
+        elif active and time.monotonic() >= getattr(self, "operation_progress_due", 0):
+            self.operation_progress_due = time.monotonic() + 1
+            generation = self.connection_generation
+            def progress(receipt):
+                if (generation == self.connection_generation and receipt.get("operation_id") == active
+                        and self.state.get("runtime", {}).get("active_operation_id") == active):
+                    self.receipts[active] = receipt
+                    self.update_work_status()
+            self.call("GET", "/operations/" + active, done=progress, unique=True)
         self.update_controls()
         if account_changed:
             self.account_known = self.logged_in = False
@@ -827,13 +839,13 @@ class StudioPanel(QtWidgets.QWidget):
         elif self.submitting:
             text = "正在提交消息；可以继续写下一段草稿。"
         elif self.request_cards:
-            text = "需要你的回应，完成后继续。"
+            text = "等待你的授权或回应"
         elif self.selection_pending or self.selection_inflight:
             text = "正在读取当前选择…"
         elif not codex.get("alive"):
             text = "对话服务不可用；草稿已保留。"
         elif native in {"starting", "running", "stopping", "unknown", "failed", "interrupted"}:
-            text = {"failed": "本轮对话失败，请查看对话中的原因。", "interrupted": "本轮对话已中断。"}.get(native, CODEX_STATES[native])
+            text = {"running": "Codex 正在处理", "failed": "本轮对话失败，请查看对话中的原因。", "interrupted": "本轮对话已中断。"}.get(native, CODEX_STATES[native])
         elif not self.logged_in:
             text = ""  # Account feedback stays beside the sign-in action.
         elif not self.thread_id:
@@ -848,7 +860,8 @@ class StudioPanel(QtWidgets.QWidget):
         elif runtime.get("storage_fault"):
             fact = "Houdini 执行记录存储异常，修改结果尚未确认。"
         elif runtime.get("main_thread_busy") or runtime.get("active_operation_id"):
-            fact = "Houdini 仍在执行，请等待当前操作结束。"
+            fact = running_operation_text(runtime, self.receipts, stopping=self.stop_pending or
+                                          bool(codex.get("stop_requested")))
         elif runtime.get("queue_depth", 0):
             fact = "Houdini 还有操作在排队，等待执行。"
         elif any(r.get("state") == "unknown" or r.get("receipt_confirmed") is False
@@ -1420,6 +1433,9 @@ class StudioPanel(QtWidgets.QWidget):
 
     def stopped(self, value):
         self.stop_pending = False
+        # Bridge acknowledged the request; retain that fact while the next
+        # state read is in flight. This does not establish HOM cancellation.
+        self.state.setdefault("codex", {})["stop_requested"] = True
         self.revision += 1
         error = value.get("codex_interrupt_error")
         scene = value.get("scene", {})

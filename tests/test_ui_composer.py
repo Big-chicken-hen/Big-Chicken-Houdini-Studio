@@ -212,7 +212,7 @@ class ComposerTest(unittest.TestCase):
         self.assertTrue(self.panel.settings_area.isHidden())
         self.assertTrue(self.panel.tabs.tabBar().isHidden())
         self.assertTrue(self.panel.transcript.card("tool_1").isHidden())
-        group = self.panel.transcript.tool_groups["preview_turn"]
+        group = next(iter(self.panel.transcript.tool_groups.values()))
         group.click()
         self.assertFalse(self.panel.transcript.card("tool_1").isHidden())
         self.api.state["codex"]["state"] = "completed"
