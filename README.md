@@ -2,9 +2,11 @@
 
 一个独立的 Houdini 创作工作室：原生 Qt 启动器与 Python Panel，Codex App Server 负责对话和推理，Houdini 主线程负责批量 HOM，runtime 保存场景身份与操作收据。它不依赖旧 HIA 安装目录。
 
-当前版本是 **0.1.0 开发预览**。真实 Houdini 节点闭环，以及从 Panel 经 Codex 推理完成 Box 创建和参数回读的小任务已通过验收；渲染、场景切换和长 cook 中断仍待验证。实际证据和范围见 [阶段验收记录](docs/stage-readiness-results.md)。启动器显示“已连接”只代表 Runtime 注册成功。
+当前进入 **0.1.0-rc.1 内部发行候选准备**，尚未公开发行。R1–R3 已技术合并；R4 的 per-user Windows 安装器、私有运行包和诊断导出保持 Draft。实际包仍有 [R4-NET-1 历史显示故障](docs/acceptance-issues.md)，干净的非管理员新用户验收也尚未完成。构建与实际检查见 [R4 记录](docs/r4-validation.md)，[中文 RC 步骤](docs/rc-acceptance.md) 已备好。
 
-## 在 Windows 开始
+首发目标为 Windows 11 x64 / Houdini FX 22.0.368 / Codex 0.153.4；这是待验收目标，并非多平台认证。普通用户的发行入口为随包提供依赖的安装器和开始菜单，以下源码 setup 仅供开发。既有 [模型实验结论](docs/model-acceptance-results.md) 保持不变；技术合并不代表全部资产质量或模型效率通过。
+
+## 从源码在 Windows 开始（开发者）
 
 1. 将整个项目放在可写目录。支持空格和中文路径；不要放进 Houdini 安装目录。
 2. 准备 Python 3.10+、带 PySide6 的 Houdini GUI 安装，以及本项目固定使用的 **Codex CLI 0.153.4 原生可执行文件**。Houdini Panel 使用 Houdini 自带的 PySide6，不向它安装 Qt。

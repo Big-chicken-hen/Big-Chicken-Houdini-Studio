@@ -1,6 +1,12 @@
 # 安装与交付
 
-## 安装边界
+R4 正在准备普通用户的 per-user Windows 安装器，随包固定 CPython 3.13.15、
+PySide6 Essentials 6.8.3 和原生 Codex 0.153.4，不依赖用户 Python/Node/Git。
+它目前仍为内部候选：R4-NET-1 与干净的非管理员安装/创作验收未完成。
+当前结果见 [R4 验证记录](r4-validation.md)，安装器验收使用 [RC 步骤](rc-acceptance.md)。
+不要把下面的源码开发流程当作普通用户的发行入口。
+
+## 源码开发的安装边界
 
 分发单位是完整仓库或解压目录，必须保留 `src`、`houdini`、`scripts` 和 `pyproject.toml`。安装根默认按当前源码/入口的位置解析，也可用 `HIA_PROJECT_ROOT` 指定。普通场景工作在用户持久数据根的 `workspaces/<id>/work` 内，不能把插件源码目录当成创作项目。
 

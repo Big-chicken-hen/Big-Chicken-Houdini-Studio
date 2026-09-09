@@ -14,6 +14,9 @@ its real-host checks. R4 has integrated R3 and remains draft PR #14; see
 [the package preparation record](r4-validation.md). The user currently lacks a clean Windows 11 non-administrator
 test environment and asked to complete other preparation. That environment and
 the full installed-package authoring flow remain mandatory release gates.
+The integrated package also reproduced [R4-NET-1](acceptance-issues.md), an
+intermittent native reply failure that prevents reliable history display. It is
+an open release blocker, not cleared by the earlier successful R1/R3 checks.
 No new tool capability, second chat store or rendering expansion is approved.
 
 The independent [native conversation lifecycle approval](native-conversations-brief.md)

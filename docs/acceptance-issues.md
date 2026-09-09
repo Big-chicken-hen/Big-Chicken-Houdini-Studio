@@ -30,3 +30,17 @@ PANEL-1 的 R1 诊断和修复。它不阻塞 PR #10 的技术合并，但阻塞
 - 实际发现的新对话尚未物化响应也已修正并在新进程复验。缺失终态事件时，实际完整 native history 能收口已有流式消息。
 - **当前状态：R1 范围内已修复并通过验收，可技术收口。** 原用户进程与当时事件链仍未还原；不将受控复现写成原现场的唯一根因。原始失败和报告继续保留。
 - 公开发行仍需实际 RC 包中的消息完整性与完整新用户链路通过；不能用本轮源代码环境测试代替 R3/R4 的发行验收。
+
+## R4-NET-1：实际包中的原生网络回复失效，历史显示失败
+
+- 记录日期：2026-09-09；**状态：已复现，根因未确认，阻断 R4 合并与公开发行**。
+- 候选：`3150c15041ebedca1d266305d7375f30777c25a0`，已包含 R3 合并 `b48ceae`。
+- 环境：Houdini 22.0.368 自带 Python 3.13.10 / PySide6 6.8.3；独立 helper 为包内 CPython 3.13.15。模块路径确认没有把私有 Qt 混入 Houdini。
+- 会话：`b3bd5306a57e46b1a176fbc03d5fe997`；仅使用 HIP 副本和明确的隔离验收目录，没有新模型 Turn。
+- 第一处可见失败：读取原生 TC3 对话 `01a0809b-2d19-7853-bd8c-cd260aadd352` 后，Panel 显示“原生历史读取失败：Network reply is no longer available; query the original request state.”，消息卡数量为 0。
+- 证据：观察检查收据 `2fe0362051fe4c16885e3f37bd53f955` 为 failed/partial；其后的状态收据 `629b64ca0c0f4bc7aa14bce10ccde44b` 确认 Panel 仍连接、无 Python Panel 脚本异常，但历史未显示。[失败截图](evidence/r4/native-history-failure.png) 已提交。
+- 原生数据核对：同一 Bridge 可以重新读取原对话的两轮历史。后来 Panel 显示 98 个原生 item、10 个活动分组、4 条原始失败/部分完成提示和 3 张图片；不能因此把先前失败改为通过。
+- 新建第二个 Panel 的前两次有界观察成功，稍后两个 Panel 都再次显示 unavailable-reply 提示，最终观察见收据 `9f74de2bbb0f42f4a216bd2d758ffa49`。这说明重新打开 Panel 不能当作已证实的修复。
+- 同进程诊断出现 `ICON_EVENT_UNAVAILABLE`，参数类型为 `QNetworkReply`。目前只确认它与回复失效同时出现；没有证明图标事件过滤器、Qt/PySide 包装层或其他生命周期路径中的哪一处是根因。
+- 下一步应针对仍存活的 Api/manager、reply finished/destroyed 与非事件参数的顺序做小型关联复现；先获得能区分原因的证据，再做局部修复。不要替换 Houdini 的 Qt、重放场景写操作，或借此重做 UI/图标系统。
+- 包清单、独立启动、诊断导出、进程持有的安装器 mutex、helper 路径检查分别保留其实际结果；完整 native Panel 与新用户 RC 链路继续未通过。详见 [R4 验证记录](r4-validation.md)。
