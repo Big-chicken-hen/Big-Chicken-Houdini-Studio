@@ -98,6 +98,23 @@ class NativeHistoryTests(unittest.TestCase):
         late = self.history.page("a", turn_id="13")
         self.assertTrue(late["thread"]["turns"][0]["history_turn_terminal"])
 
+    def test_unmaterialized_thread_preserves_metadata_without_disabling_pagination(self):
+        def handler(method, params):
+            if method == "thread/read":
+                self.assertFalse(params["includeTurns"])
+                return {"thread": {"id": "a", "turns": []}}
+            raise CodexRPCError(method, {"code": -32600, "message":
+                "thread a is not materialized yet; thread/turns/list is unavailable before first user message"})
+        self.handler = handler
+        result = self.history.page("a")
+        self.assertFalse(result["history_available"])
+        self.assertEqual(result["history_source"], "metadata")
+        self.assertFalse(self.history.unsupported)
+        self.handler = lambda *_: {"data": [self.turns[-1]], "nextCursor": None}
+        materialized = self.history.page("a")
+        self.assertTrue(materialized["history_available"])
+        self.assertEqual(materialized["history_source"], "thread/turns/list")
+
 
 if __name__ == "__main__":
     unittest.main()

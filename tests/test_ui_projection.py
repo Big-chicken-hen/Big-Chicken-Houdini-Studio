@@ -7,7 +7,7 @@ os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
 from PySide6 import QtCore, QtGui, QtTest, QtWidgets  # noqa: E402
 
-from scripts.preview_ui import configure_preview_fonts  # noqa: E402
+from scripts.preview_ui import configure_preview_fonts, process_until  # noqa: E402
 from studio.ui.conversation import Transcript  # noqa: E402
 
 
@@ -98,7 +98,7 @@ class ProjectionRegressionTests(unittest.TestCase):
             self.event("item/agentMessage/delta", itemId="reply", delta="中文")
         self.assertEqual(card.source_text(), "中文" * 100)
         self.assertEqual(card.markdown_updates, initial)
-        QtTest.QTest.qWait(70)
+        process_until(lambda: card.markdown_updates > initial)
         self.assertEqual(card.markdown_updates, initial + 1)
         self.event("item/agentMessage/delta", itemId="reply", delta="unfinished")
         self.event("item/completed", item=self.message("# 完整\n\n```python\nvalue = 1\n```\n\nEND"))

@@ -53,11 +53,21 @@ class NativeHistory:
                          "next_cursor": page.get("nextCursor"), "history_available": True,
                          "history_source": method, "turn_id": turn_id}
         except BridgeError as error:
-            if not self.unsupported_error(error):
+            if (error.code == "CODEX_RPC_ERROR"
+                    and f"thread {thread_id} is not materialized yet;" in error.message):
+                # This is a per-thread lifecycle fact, not unsupported pagination.
+                metadata = bridge.client.request("thread/read", {"threadId": thread_id, "includeTurns": False})
+                if (metadata.get("thread") or {}).get("id") != thread_id:
+                    raise StudioError("HISTORY_SCOPE_CHANGED", "Native metadata returned another thread", 409)
+                value = {**metadata, "history_available": False, "next_cursor": None,
+                         "history_source": "metadata", "turn_id": turn_id,
+                         "history_message": "对话尚无已保存的消息，可继续发送。"}
+            elif not self.unsupported_error(error):
                 raise
-            if generation == self.generation:
-                self.unsupported.add(method)
-            value = self.fallback(thread_id, turn_id, cursor, limit)
+            else:
+                if generation == self.generation:
+                    self.unsupported.add(method)
+                value = self.fallback(thread_id, turn_id, cursor, limit)
         if (generation != self.generation or thread_id != bridge.thread_id
                 or thread_id in bridge.conversations.deleted):
             raise StudioError("HISTORY_SCOPE_CHANGED", "连接或对话已变化，忽略旧历史读取。", 409)
