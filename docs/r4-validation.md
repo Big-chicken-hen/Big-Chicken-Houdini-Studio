@@ -1,8 +1,8 @@
 # R4 Windows release package preparation
 
 Scope: [Release Readiness](release-readiness-brief.md), section G. Branch
-`codex/windows-release-package`, based on R2 merge `2b180da`; R3 stays a separate
-UI PR and must be integrated before the final package. Target is an unsigned
+`codex/windows-release-package`, draft PR #14. R3 merged independently as PR #13
+at `b48ceae` and is now integrated. Target is an unsigned
 `0.1.0-rc.1` for Windows 11 x64 and Houdini FX 22.0.368.
 
 ## Package and ownership
@@ -68,13 +68,17 @@ Local materials and builds are under `.runtime/reviews/r4` in the coordinating
 checkout. The first R3 package successfully ran native Bridge/MCP/Houdini but its
 offscreen preview failed because the reduced package omitted `qoffscreen.dll`.
 Windows reported Qt6Core `0xc0000409`. The failed package is preserved; the builder
-now includes the plugin, with a new package required for the screenshot gate.
+now includes the plugin. The new clean-assets R3 review assembly passed 30 private
+Python/Qt fixture captures and the real Houdini package-source check documented in
+[R3 validation](r3-validation.md). Retired artwork is excluded from production.
 
 Five focused tests passed: diagnostic redaction and tamper reporting, containment,
 no directory scan, a real process-held installer mutex, and rejection of an
 incompatible Houdini build. The 17 existing Launcher UI tests and Ruff also passed.
-These tests do not certify a real install/upgrade/uninstall or a new-user authoring
-flow. Final-source CI, fresh package checks and remaining review continue below.
+R4 source `1180e73` passed all five CI jobs in run `34333389962`. After integrating
+R3, the five release tests, 17 Launcher tests and Ruff passed again. These tests do
+not certify a real install/upgrade/uninstall or a new-user authoring flow. The
+integrated package check follows below; the complete installed-user gate stays open.
 
 ## Required release acceptance
 

@@ -8,9 +8,10 @@ retaining all frozen [model results](model-acceptance-results.md). R1 merged as 
 gives field-level schema errors and removes measured request-local metadata/result
 overhead. It preserves general HOM, optional verification and durable step gates.
 These limited corrections supersede the earlier record-only/UI-freeze statements
-below; they describe prior scope. [R3](r3-validation.md) covers approved native
-conversation/activity/progress presentation and its real-host checks. R4 remains
-independent PR #14; the user currently lacks a clean Windows 11 non-administrator
+below; they describe prior scope. [R3](r3-validation.md), merged as PR #13 at
+`b48ceae`, covers approved native conversation/activity/progress presentation and
+its real-host checks. R4 has integrated R3 and remains draft PR #14; see
+[the package preparation record](r4-validation.md). The user currently lacks a clean Windows 11 non-administrator
 test environment and asked to complete other preparation. That environment and
 the full installed-package authoring flow remain mandatory release gates.
 No new tool capability, second chat store or rendering expansion is approved.
