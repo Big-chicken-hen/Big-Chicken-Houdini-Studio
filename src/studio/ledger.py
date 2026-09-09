@@ -6,7 +6,7 @@ import sqlite3
 import threading
 from pathlib import Path
 
-from .common import StudioError, encoded, now, payload_hash
+from .common import TERMINAL, StudioError, encoded, now, payload_hash
 
 
 class Ledger:
@@ -48,8 +48,13 @@ class Ledger:
                        "automatic_retry_safe": False, "cancel_requested": False,
                        "created_at": now(), "result_ref": None, "timings": {}}
             receipt = self.sanitize(receipt)
-            self.db.execute("INSERT INTO operations VALUES (?,?,?,NULL)",
-                            (op["operation_id"], digest, encoded(receipt)))
+            detail = None
+            if op["kind"] == "execute" and "steps" in op.get("arguments", {}):
+                from .staged import initial_detail
+                detail = self.sanitize(initial_detail(op["arguments"]))
+                receipt.update(detail, result=detail, result_ref=op["operation_id"])
+            self.db.execute("INSERT INTO operations VALUES (?,?,?,?)",
+                            (op["operation_id"], digest, encoded(receipt), encoded(detail) if detail is not None else None))
             return receipt, True
 
     def get(self, operation_id):
@@ -74,14 +79,27 @@ class Ledger:
             return [json.loads(row[0]) for row in self.db.execute(
                 "SELECT receipt FROM operations ORDER BY rowid DESC LIMIT ?", (min(100, max(1, limit)),))]
 
-    def detail(self, operation_id, offset=0, limit=24000):
-        self.get(operation_id)
+    def detail(self, operation_id, offset=0, limit=24000, step_id=None):
         with self.lock:
+            receipt = self.get(operation_id)
             raw = self.db.execute("SELECT detail FROM operations WHERE id=?", (operation_id,)).fetchone()[0]
+            if step_id is not None:
+                from .staged import step_id as validate_step_id
+                validate_step_id(step_id)
+                value = json.loads(raw) if raw else {}
+                step = next((s for s in value.get("steps", []) if s["id"] == step_id), None)
+                if step is None:
+                    raise StudioError("STEP_NOT_FOUND", "The original operation has no such step", 404)
+                if step["state"] in {"not_run", "running"}:
+                    return {"operation_id": operation_id, "step_id": step_id, "available": False, "state": step["state"]}
+                raw = encoded(step)
+            elif receipt.get("mode") == "staged" and receipt["state"] not in TERMINAL:
+                raise StudioError("DETAIL_NOT_SEALED", "Read progress with get, or request a closed step_id; running whole-detail pages are not stable", 409)
         if raw is None:
             return {"operation_id": operation_id, "available": False}
         offset, limit = max(0, int(offset)), min(48000, max(1, int(limit)))
-        return {"operation_id": operation_id, "available": True, "text": raw[offset:offset + limit],
+        return {"operation_id": operation_id, **({"step_id": step_id} if step_id else {}),
+                "available": True, "text": raw[offset:offset + limit],
                 "offset": offset, "next_offset": offset + limit if offset + limit < len(raw) else None,
                 "total_characters": len(raw)}
 
@@ -92,10 +110,25 @@ class Ledger:
             for op_id, raw in rows:
                 state = json.loads(raw)["state"]
                 if state in {"running", "queued"}:
-                    self.update(op_id, state="unknown" if state == "running" else "cancelled",
-                                mutation_outcome="unknown" if state == "running" else "not_run",
-                                error={"code": "RUNTIME_RESTARTED", "message": "Previous runtime ended before confirmation"},
-                                finished_at=now())
+                    self.interrupt(op_id, "RUNTIME_RESTARTED", "Previous runtime ended before confirmation",
+                                   queued_cancel=state == "queued")
+
+    def interrupt(self, op_id, code, message, *, queued_cancel=False):
+        with self.lock:
+            receipt = self.get(op_id)
+            changes = {"state": "cancelled" if queued_cancel else "unknown",
+                       "mutation_outcome": "not_run" if queued_cancel else "unknown",
+                       "error": {"code": code, "message": message}, "finished_at": now()}
+            if receipt.get("mode") == "staged":
+                from .staged import interrupted, summary
+                raw = self.db.execute("SELECT detail FROM operations WHERE id=?", (op_id,)).fetchone()[0]
+                detail = interrupted(json.loads(raw), code, message)
+                brief = summary(detail)
+                changes.update(detail=detail, result=brief, **brief)
+                values = [s["mutation_outcome"] for s in detail["steps"]]
+                changes["mutation_outcome"] = ("unknown" if "unknown" in values else "completed" if
+                    all(v == "completed" for v in values) else "partial" if any(v != "not_run" for v in values) else "not_run")
+            return self.update(op_id, **changes)
 
     def close(self):
         with self.lock:

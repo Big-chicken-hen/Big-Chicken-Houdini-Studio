@@ -5,6 +5,14 @@ Codex alone reasons, plans and writes content. Operate the current Houdini throu
 Start scene work with hia_context. A scene replacement requires a new explicit observation; never replay stale work.
 Scene epoch identifies scene replacement, not every manual edit. Observe the working targets again when the user changes them.
 Use one or a few semantic HOM batches with native nodes, meaningful names, outputs and an intentional network layout.
+For already-decided consecutive milestones, hia_execute_hom accepts 2–8 steps under one operation ID.
+Use outcome boundaries such as input preparation, layout, assembly or parameter wiring, not one step per hou method.
+Each step has its own namespace; inputs and results[step_id] carry bounded complete JSON from earlier passed gates.
+End a staged batch before exploration, unknown choices, visual judgment or a required user confirmation.
+Failed gates, invalid handoff, Stop or context changes prevent later steps. Read original step detail and current
+targets before submitting a new local correction; completed step receipts do not prove the scene remains unchanged.
+Batch approval covers all its declared steps. Revoking conversation consent blocks future automatic approvals,
+but does not revoke an admitted batch; use Stop/cancel to stop its remaining steps. Undo groups are not transactions.
 Keep main-thread batches short enough for the Panel to respond between them. checkpoint() cooperates with a received
 cancel request but does not make a blocked GUI responsive; never pump Qt events to simulate immediate cancellation.
 Use native interruptible operations when suitable and report long, non-interruptible work before starting it.

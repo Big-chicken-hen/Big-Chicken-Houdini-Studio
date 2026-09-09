@@ -186,7 +186,8 @@ class OperationsTests(unittest.TestCase):
                  {"view": "checks", "checks": checks}]
         validate_schema({"script": "pass", "checks": checks, "preconditions": checks, "observe": views}, execute)
         validate_schema({"views": views}, exported["hia_inspect"])
-        self.assertIn("BEFORE and AFTER", execute["properties"]["observe"]["description"])
+        single = next(option for option in execute["oneOf"] if "script" in option["required"])
+        self.assertIn("BEFORE and AFTER", single["properties"]["observe"]["description"])
         adapter = Adapter(None, None, {}, "owner", runtime_loader=lambda: self.fail("Invalid schema reached runtime"))
         bad = [{"checks": [{"kind": "parm_equals", "path": "/obj", "expected": 1}]},
                {"checks": [{"kind": "input_equals", "path": "/obj"}]},

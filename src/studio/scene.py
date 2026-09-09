@@ -23,6 +23,7 @@ class ExecutionResult:
     checks_outcome: str = "not_run"
     state: str = "finished"
     error: dict | None = None
+    transfer: object = None  # Internal complete JSON only; never a display summary.
 
 
 class DiscardOutput:
@@ -118,6 +119,9 @@ def validate_view(view):
 
 def validate_arguments(kind, args):
     """Pure validation: no node lookup, cook, observation or side effect."""
+    if kind == "execute" and isinstance(args, dict) and "steps" in args:
+        from .staged import validate_staged
+        return validate_staged(args)
     allowed = {"context": set(), "inspect": {"views"},
                "execute": {"script", "label", "preconditions", "checks", "observe", "observe_after"},
                "capture": {"frame", "resolution", "purpose", "bounds", "target", "view"},
@@ -462,7 +466,21 @@ class HoudiniScene:
             records.append(record)
         return records
 
-    def execute(self, args, cancelled):
+    def staged_context(self):
+        if self._file_transition:
+            raise StudioError("SCENE_TRANSITION", "Scene is being replaced")
+        frame = float(self.hou.frame())
+        if not math.isfinite(frame):
+            raise StudioError("FRAME_UNAVAILABLE", "Current frame is not finite")
+        take, path = self.hou.takes.currentTake(), []
+        while take is not None and len(path) < 64:
+            path.append(take.name())
+            take = take.parent()
+        if take is not None or not path:
+            raise StudioError("TAKE_UNAVAILABLE", "Current Take identity is unavailable")
+        return {"scene_epoch": self.epoch, "frame": frame, "take_path": list(reversed(path))}
+
+    def execute(self, args, cancelled, *, handoff=None, compiled=None):
         outcome = ExecutionResult()
         expected_epoch, entered, completed = self.epoch, False, False
         phase = "validation"
@@ -489,13 +507,15 @@ class HoudiniScene:
                 raise StudioError("COOPERATIVE_STOP", "Stopped at an explicit script checkpoint")
         namespace = {"hou": self.hou, "result": None, "checkpoint": checkpoint,
                        "cancel_requested": cancelled, "output_path": output_path, "__name__": "__studio_hom__"}
+        if handoff is not None:
+            namespace.update(handoff)
         # Redirect only for this batch; no raw print/traceback reaches the host log.
         with contextlib.redirect_stdout(DiscardOutput()), contextlib.redirect_stderr(DiscardOutput()):
             try:
                 validate_arguments("execute", args)
                 try:
                     phase = "compile"
-                    code = compile(args["script"], SCRIPT_FILENAME, "exec")
+                    code = compiled if compiled is not None else compile(args["script"], SCRIPT_FILENAME, "exec")
                 except (SyntaxError, ValueError) as exc:
                     outcome.state = "rejected"
                     outcome.error = self.error(exc, "COMPILE_FAILED")
@@ -566,6 +586,9 @@ class HoudiniScene:
                 except BaseException as exc:
                     outcome.detail["observe_after_error"] = self.error(exc, "OBSERVATION_FAILED")
             try:
+                if completed and handoff is not None:
+                    from .staged import json_data
+                    outcome.transfer = json_data(namespace.get("result"))
                 outcome.detail["value"] = (json_value(namespace.get("result"), redact=self.redact) if completed else
                                            partial_value(namespace.get("result"), self.redact))
                 if not completed and len(encoded(outcome.detail["value"]).encode("utf-8")) > 4096:
@@ -574,6 +597,8 @@ class HoudiniScene:
                 outcome.detail["value_verified"] = False
             except BaseException as exc:
                 outcome.detail["result_error"] = self.error(exc, "RESULT_CONVERSION_FAILED")
+                if completed and handoff is not None:
+                    outcome.detail["value_status"] = "invalid"
         return outcome
 
     def _feedback_skip(self, expected_epoch, cancelled):
