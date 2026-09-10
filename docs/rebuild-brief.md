@@ -59,7 +59,7 @@ The approved Lucide Outline 0.468.0 subset is the only product icon source. Keep
 
 ## Integration/API contract for the Panel
 
-Use authenticated Qt network calls through `ui.shared.Api`. Bridge URL is in `sessions/<BCS_SESSION_ID>/bridge.json` beneath the selected persistent data root; token is only in BCS_SESSION_TOKEN environment. Do not block Qt's main thread.
+Use authenticated asynchronous calls through `ui.shared.Api`. NET-1's local correction performs HTTP IO in Python tasks because the actual Houdini QNetworkReply binding returned aliased objects; Qt receives copied Python results after IO cleanup. See `docs/r4-net-validation.md`. Bridge URL is in `sessions/<BCS_SESSION_ID>/bridge.json` beneath the selected persistent data root; token is only in BCS_SESSION_TOKEN environment. Do not block Qt's main thread or replay requests after ambiguous completion.
 
 GET `/state`: workspace, thread_id, turn_id, codex {state, alive, stop_requested}, runtime {connection, scene, main_thread_busy, active_operation_id, queue_depth}, pending_requests, thread_settings, turn_settings, account_revision and scene_context. File state follows confirmed HIP events; Save As preserves execution identity.
 GET `/events?after=N`: native Codex projections, monotonic sequence, cursor, resync_required. No separate durable chat history. GET `/thread` rehydrates native thread history.

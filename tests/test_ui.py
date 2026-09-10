@@ -9,12 +9,11 @@ import time
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
-from PySide6 import QtCore, QtGui, QtNetwork, QtWidgets  # noqa: E402
+from PySide6 import QtCore, QtGui, QtWidgets  # noqa: E402
 from shiboken6 import delete as delete_qobject, isValid  # noqa: E402
 
 from scripts.preview_ui import PreviewApi, configure_preview_fonts, fixture_image, process_until  # noqa: E402
@@ -334,7 +333,7 @@ class PanelTest(unittest.TestCase):
         launcher.close()
         launcher.deleteLater()
 
-    def test_real_qt_http_is_nonblocking_and_authenticates(self):
+    def test_real_http_is_nonblocking_and_authenticates(self):
         token = secrets.token_urlsafe(32)
         observed = []
         receipts = {
@@ -421,56 +420,33 @@ class PanelTest(unittest.TestCase):
                         if isValid(owner):
                             owned_api.close()
                             delete_qobject(owner)
-            for retired in ("owner", "reply", "closed"):
-                with self.subTest(queued_finished_after=retired):
+            for retired in ("owner", "closed"):
+                with self.subTest(queued_delivery_after=retired):
                     owner = QtCore.QObject()
                     owned_api = Api(api.url, token, owner)
                     received, failures, callback_errors = [], [], []
-                    completion = QtCore.QEventLoop()
-                    timeout = QtCore.QTimer()
-                    timeout.setSingleShot(True)
-                    timeout.timeout.connect(completion.quit)
-                    native_get = owned_api.manager.get
-
-                    def queued_get(request):
-                        reply = native_get(request)
-                        signal = reply.finished
-                        signal.connect(completion.quit)
-                        # Real HTTP and reply; only delay Python delivery so teardown
-                        # deterministically occurs after finished was posted.
-                        reply.finished = SimpleNamespace(connect=lambda callback:
-                            signal.connect(lambda: QtCore.QTimer.singleShot(0, callback)))
-                        return reply
+                    completion = threading.Event()
 
                     try:
-                        with patch.object(owned_api.manager, "get", queued_get):
-                            owned_api.call("GET", "/slow", done=received.append, failed=failures.append)
-                        reply = next(iter(owned_api.replies))
-                        self.assertIsInstance(reply, QtNetwork.QNetworkReply)
-                        timeout.start(3000)
-                        completion.exec()
-                        timeout.stop()
-                        self.assertTrue(reply.isFinished())
+                        owned_api.call("GET", "/slow", done=received.append, failed=failures.append)
+                        job = next(iter(owned_api._pending.values()))[0]
+                        job.signals.result.connect(lambda *_: completion.set(), QtCore.Qt.DirectConnection)
+                        # Transport has completed and cleaned up, but do not pump
+                        # Qt until the owner is retired: delivery remains queued.
+                        self.assertTrue(completion.wait(3))
                         self.assertEqual(received + failures, [])
-                        delete_qobject(owner if retired == "owner" else reply)
-                        if retired == "closed":
+                        if retired == "owner":
+                            delete_qobject(owner)
+                        else:
                             owned_api.close()
                         with patch("sys.excepthook", capture_error):
                             self.app.sendPostedEvents(None, QtCore.QEvent.MetaCall)
                             self.app.processEvents()
                         self.assertEqual(callback_errors, [])
-                        self.assertEqual(received, [])
+                        self.assertEqual(received + failures, [])
                         self.assertEqual(owned_api.inflight, set())
-                        self.assertEqual(owned_api.replies, set())
-                        if retired == "reply":
-                            self.assertEqual(len(failures), 1)
-                            self.assertIsInstance(failures[0], ApiFailure)
-                            self.assertEqual(failures[0].code, "REPLY_UNAVAILABLE")
-                            self.assertEqual(failures[0].submission_state, "unknown")
-                        else:
-                            self.assertEqual(failures, [])
+                        self.assertEqual(owned_api._pending, {})
                     finally:
-                        timeout.stop()
                         if isValid(owner):
                             owned_api.close()
                             delete_qobject(owner)
