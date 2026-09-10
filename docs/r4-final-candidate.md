@@ -1,5 +1,9 @@
 # R4 final candidate
 
+This is the preserved `991cbce` baseline. The later approved bounded policy/identity
+follow-up and current `f0fce6e` installer are recorded in [RC trial handover](rc-trial-validation.md).
+The baseline's original results and hash below remain unchanged.
+
 Current decision follows [Pro's final approval](final-release-brief.md).
 **PR #14 stays Draft: the Windows 11 standard-user installed workflow remains
 untested.** The user currently has no suitable environment. The candidate below is
