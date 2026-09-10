@@ -10,7 +10,10 @@ observations, 242 verified payload entries and five-file ZIP hashes. The owner
 explicitly supplied the static background and authorized the palette/portrait
 icon correction. Owner Houdini workflow/preferences confirmation and independent
 standard-user installed acceptance remain pending. There was no Owner installation
-or external test. The entries below describe historical candidates.
+or external test. The current ZIP uses the owner's `README-1` Markdown handoff;
+its installer is unchanged. Subsequent owner-authorized cleanup retained only the
+latest ZIP in `发布包` and preserved data plus written evidence. The entries below
+describe historical candidates and their file locations at the time of review.
 
 ## Single EXE delivery follow-up
 

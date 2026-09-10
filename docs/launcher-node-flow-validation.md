@@ -57,15 +57,34 @@ of instantaneous teardown; no backend or shutdown repair was added.
 
 Installer: 216136916 bytes, SHA-256
 `a7e5409d6963411f5704803d658dc5b0a437fb7af45abb9b81f9f4760930468e`.
-Five-file ZIP: 216142270 bytes, SHA-256
-`6929b5310f5602a40a42dedfa027091438404e79c5469f8a749046f65fc2f077`.
-Its exact five entries and all reconstructed bytes matched on full ZIP readback:
-`Installer.exe`, `SHA256.txt`, `开始使用.txt`, `测试步骤.txt`,
-`出现问题怎么办.txt`. The instructions now use selection followed by Launch and
-the flat Settings/Diagnostics toolbar. The previous 4e9db5d ZIP and then-current
-entry note are archived; the original release remains preserved. No installation
-was performed on the owner's development machine. Local delivery evidence is in
-`.runtime/maintenance/node-flow-delivery-20260910`.
+Current five-file ZIP, documentation revision `README-1`: 216142602 bytes, SHA-256
+`82aafc7c0c27d7b7ee6e24a206a81272d3d530aab9dda8b8313674ecb5401331`.
+Its entries are `Installer.exe`, `README.md`, `验收指南.md`, `问题反馈.md` and
+`SHA256.txt`. Full ZIP readback verified every document and the unchanged installer
+hash above; 17 relative document/section links passed. The exact document sources
+are versioned in [release/handoff](../release/handoff/README.md). The owner's
+README request changed only the outer handoff documents, not the installed
+application or its build identity. The previous TXT-wrapper hash
+`6929b5310f5602a40a42dedfa027091438404e79c5469f8a749046f65fc2f077` is historical.
+
+The owner subsequently requested removal of unused project artifacts and all old
+release ZIPs. The completed cleanup removed 31 verified targets totaling
+3,973,476,803 bytes: disposable build payloads, duplicate installers, two clean
+temporary build worktrees, ZIP readback copies, obsolete previews/scripts and
+bytecode caches. The current ZIP and checksum moved into the ignored `发布包`
+directory. Previous ZIPs and duplicate installer files are no longer retained in
+that project. Small manifests, checksums and written evidence remain available;
+historical paths do not imply those binaries still exist. Runtime dependencies,
+credentials, history, workspaces, scenes, receipts, preferences, current previews,
+backups and historical worktrees containing changes or durable data were preserved.
+The pre-existing `docs/authoring-results.md` change was not modified or committed.
+
+No installation was performed on the owner's development machine. Local evidence
+is in `.runtime/maintenance/node-flow-delivery-20260910`,
+`.runtime/maintenance/e-project-cleanup-20260910` and
+`.runtime/maintenance/readme-delivery-20260910`. The initial forced-delete command
+was rejected before execution; the cleanup completed with the review tool's
+recommended non-force deletion and normal Git worktree removal.
 
 The owner has deferred real official-login/selection/Launch/Houdini preference confirmation.
 Standard-user installed acceptance also remains untested. Neither offscreen

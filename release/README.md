@@ -37,3 +37,15 @@ installation while Studio resolves inside the selected package.
 Before distribution, review the package's THIRD-PARTY-NOTICES, corresponding source
 archives and binary/file inventory, and complete the real installer flow. The
 candidate is unsigned; never instruct users to disable Windows protection.
+
+## Current tester handoff
+
+The [handoff README](handoff/README.md), acceptance guide, feedback guide and
+installer checksum under `handoff/` are the exact documents in the current
+five-file ZIP. They are versioned separately from the installer so a documentation
+revision does not rebuild or change the tested application. The Installer.exe
+links resolve in the delivered ZIP; the executable itself is not tracked here.
+
+The owner-selected `发布包` directory contains only the latest ZIP and its checksum.
+See [the current validation record](../docs/launcher-node-flow-validation.md) for
+the README-1 archive identity and the completed, user-authorized local cleanup.
