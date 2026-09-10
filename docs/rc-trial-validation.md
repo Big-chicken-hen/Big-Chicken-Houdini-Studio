@@ -1,8 +1,20 @@
 # RC trial handover — 2026-09-10
 
+## Current owner-approved node Launcher delivery
+
+The current prepared delivery is `0.1.0-rc.1-042c66b9be95`, source/builder
+`042c66b9be95d6fdeb48fb1367734f93e6b66295`. See the
+[node Launcher validation](launcher-node-flow-validation.md) for its five passing
+CI jobs, 41 focused tests, white/blue native previews, package startup/close
+observations, 242 verified payload entries and five-file ZIP hashes. The owner
+explicitly supplied the static background and authorized the palette/portrait
+icon correction. Owner Houdini workflow/preferences confirmation and independent
+standard-user installed acceptance remain pending. There was no Owner installation
+or external test. The entries below describe historical candidates.
+
 ## Single EXE delivery follow-up
 
-Current prepared delivery: `0.1.0-rc.1-4e9db5dec1d7`, source/builder
+Historical prepared delivery: `0.1.0-rc.1-4e9db5dec1d7`, source/builder
 `4e9db5dec1d7c385314262332d0824c5afa0babb`. Installer: 211659513 bytes,
 SHA-256 `d6a5d23f96023107902815a784d5e164a071e4897ace236ae5093d0d8176fed5`.
 The five-file ZIP is 211664679 bytes, SHA-256

@@ -8,7 +8,7 @@ supersedes the staged Launcher pages, direct-open activation, isolated ellipsis
 toolbar and previous hero/font limits below. Account, the three scene-source
 branches and Launch remain visible together. Local selection has no admission
 side effects; only Launch creates a request. Changa One Italic is approved only
-for the Chicken hero, with local violet/pink surfaces and geometric connectors.
+for the Chicken hero, with the owner-approved white/blue surfaces, supplied static background and geometric connectors.
 Panel presentation, approved icons, native Qt and backend boundaries are unchanged.
 The earlier text is retained as historical approval; it does not restore direct
 Recent/Open/Empty/drop launching.
