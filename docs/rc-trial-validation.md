@@ -2,6 +2,25 @@
 
 ## Single EXE delivery follow-up
 
+Current prepared delivery: `0.1.0-rc.1-4e9db5dec1d7`, source/builder
+`4e9db5dec1d7c385314262332d0824c5afa0babb`. Installer: 211659513 bytes,
+SHA-256 `d6a5d23f96023107902815a784d5e164a071e4897ace236ae5093d0d8176fed5`.
+The five-file ZIP is 211664679 bytes, SHA-256
+`4b236bc87f7b52309e0b2f579d147a6faab0fb47a72bb20c13de0465838fb73f`.
+It contains only `Installer.exe`, `SHA256.txt`, `开始使用.txt`, `测试步骤.txt`,
+and `出现问题怎么办.txt` within `Big-Chicken Studio 测试版/`.
+All 232 payload hashes and the extracted installer matched; the actual packaged
+EXE displayed a responding native Launcher and accepted normal window close,
+using isolated local state and preferences. No installation or Houdini authoring
+was performed in this check. All five [candidate CI jobs](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio/actions/runs/34472688742)
+passed. The current ZIP and prior handoffs are organized under the Owner-selected
+development drive; private paths and inventory are excluded from this repository.
+
+The old four-file f0fce6e handoff was copied into the local Archive, every file
+hash verified, then its old active directory removed. Original frozen/rollback
+installers and referenced source/history/state remain in place. The intermediate
+4e86f96 ZIP is archived separately because it lacks the preferences fix.
+
 ### Houdini preferences correction (Owner-authorized)
 
 The Owner reported missing desktop layouts and colors after opening Studio.
