@@ -1,5 +1,11 @@
 # R4 Windows release package preparation
 
+Current scope is the [final release approval](final-release-brief.md). The
+NET-only package `a5731cf` passed its two fresh Houdini checks; see the separate
+[NET-1 validation](r4-net-validation.md). Native steer and the final standard-user
+installed workflow remain pending. The original packaging and failed integrated
+candidate evidence below is preserved, not rewritten as a pass.
+
 Scope: [Release Readiness](release-readiness-brief.md), section G. Branch
 `codex/windows-release-package`, draft PR #14. R3 merged independently as PR #13
 at `b48ceae` and is now integrated. Target is an unsigned
@@ -152,17 +158,19 @@ preparation. Do not create a Windows account, copy authentication or treat the
 development account as that environment. This is a release gate, not a deferred
 exception permitting publication.
 
-The [Chinese RC runbook](rc-acceptance.md) is ready for the tester. Resolve R4-NET-1
-before final acceptance; when the environment is available, use the actual installer
+The [Chinese RC runbook](rc-acceptance.md) now includes working-time steering.
+NET-1 has its separate completed gate. When the environment is available, use the final steer-enabled installer
 and record its SHA-256:
 
-1. Install to a path containing spaces and Chinese characters, without a development
-   checkout, Studio Python environment or global PYTHONPATH. Open from the Start menu.
+1. Install to a path containing spaces and Chinese characters. Prove there is no
+   dependency on a development checkout, PYTHONPATH or external Python/Node/Git;
+   other installed development software need not be removed. Open from the Start menu.
 2. Confirm missing/incompatible Houdini feedback where applicable, then select FX
    22.0.368. Complete official login without importing another installation's account.
 3. Open the designated test HIP, grant the conversation's scene permission once,
    request an edit, inspect an image and make a second edit. Check long replies,
-   native message ownership and compact activity/error visibility.
+   native message ownership and compact activity/error visibility. Successfully add
+   guidance through the working Composer in the original native Thread/Turn.
 4. Save, close, reopen, resume the original native conversation and make a third
    edit. Record the unchanged native cwd and retained operation receipts/artifacts.
 5. Request Stop during staged work. Record Codex and Runtime outcomes independently;
@@ -173,4 +181,5 @@ and record its SHA-256:
 7. Export diagnostics and inspect the ZIP whitelist. Uninstall, verify all user data
    remains, reinstall and resume the same conversation. Preserve failures as failures.
 
-No public release until this full flow and outstanding distribution review pass.
+No public release until the three gates in the final approval pass. Publish the same
+accepted installer bytes, with their source/builder commits, lock and SHA-256 recorded.

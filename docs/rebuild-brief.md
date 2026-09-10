@@ -21,9 +21,12 @@ its real-host checks. R4 has integrated R3 and remains draft PR #14; see
 [the package preparation record](r4-validation.md). The user currently lacks a clean Windows 11 non-administrator
 test environment and asked to complete other preparation. That environment and
 the full installed-package authoring flow remain mandatory release gates.
-The integrated package also reproduced [R4-NET-1](acceptance-issues.md), an
-intermittent native reply failure that prevents reliable history display. It is
-an open release blocker, not cleared by the earlier successful R1/R3 checks.
+The integrated package reproduced [R4-NET-1](acceptance-issues.md), an
+intermittent native reply failure that prevented reliable history display.
+The local HTTP correction at `a5731cf` passed the [NET-1 gate](r4-net-validation.md)
+in two fresh actual-package Houdini processes. Earlier R1/R3 checks and the old
+failed package remain historical; native steer and final installed-user acceptance
+still have to pass.
 No new tool capability, second chat store or rendering expansion is approved.
 
 The independent [native conversation lifecycle approval](native-conversations-brief.md)
@@ -66,6 +69,16 @@ GET `/events?after=N`: native Codex projections, monotonic sequence, cursor, res
 Before a new native thread has a rollout, `/thread` can return `history_available: false` with native metadata. Preserve existing rendered items; this is not evidence of empty history.
 POST `/threads/select` {thread_id?}; GET `/threads`; POST `/turn` {text, attachments: [attachment_id], model?, effort?, expected_thread_id?, settings_revision?}; POST `/stop` {}. The Panel binds submitted settings to the selected native thread revision; requested and natively rerouted current-turn models stay separate from the next-turn choice.
 POST `/reconcile` reads native state without inferring Houdini outcomes. POST `/selection` submits one queued context read, returning nodes and epoch or an operation ID to query. This Panel read does not bind the MCP adapter's observation.
+The final steering approval adds independent POST `/turn/steer` with the clicked
+Thread/Turn, current native connection generation and an immutable client message ID.
+The Composer supplies exact identity for both `/turn` and `/turn/steer`; new starts
+also bind the clicked `turn_revision`. One unresolved input blocks another send,
+without a per-Turn quota or fallback start. `/state` projects input acceptance
+separately from native Turn liveness. `/reconcile` may take the original client ID;
+recovery verifies the original account before exposing its bounded workspace
+snapshot, even when no Thread is selected. ACK never revives a stopped/completed
+Turn, clears later drafts or changes accepted HOM/staged work. See
+[steering validation](r4-steer-validation.md) for the fixed-version contract and gates.
 GET `/operations`; GET `/operations/<id>`; GET `/operations/<id>/detail?offset=N`; POST `/operations/<id>/cancel` {}.
 POST `/attachments` {path}: explicitly selected image copied into workspace, returns attachment_id, name, path.
 GET `/models` aggregates native pagination and preserves native capability metadata; GET `/account`; POST `/account/login` {}, `/account/login/cancel` {}, `/account/logout` {}. Authentication URLs belong only to an explicit browser action, never diagnostics. Launcher onboarding has its own short-lived client using the production executable and native CODEX_HOME; it closes before launching the production supervisor.
