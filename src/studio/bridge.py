@@ -207,7 +207,7 @@ class Bridge:
                                                       self.thread_scene_epoch != self.scene_epoch)},
                     **self.settings.snapshot(), "account_revision": self.account.revision,
                     "conversations": self.conversations.snapshot(),
-                    **self.submissions.snapshot(self.thread_id),
+                    **self._submission_snapshot(),
                     "pending_requests": list(self.pending_requests.values())}
 
     def _observe_scene(self, runtime):
@@ -383,13 +383,38 @@ class Bridge:
             raise StudioError(exc.code, exc.message, exc.status,
                               **{**exc.details, "submission_state": "not_submitted"}) from exc
 
-    def _account_identity(self):
-        account = self.account.snapshot().get("account") or {}
+    def _account_identity(self, snapshot=None):
+        account = (snapshot if snapshot is not None else self.account.snapshot()).get("account") or {}
         return payload_hash({"type": account.get("type"), "email": account["email"]}) if account.get("email") else None
+
+    def _public_submission(self, record):
+        value = self.submissions.public(record)
+        if value is None:
+            return None
+        # The saved account revision is a process-local counter, not identity.
+        # Grant only a read/recovery projection for the presently confirmed owner;
+        # the original message ID, connection and account revision remain frozen.
+        account = self.account.snapshot()
+        owned = (self.client.is_running and account.get("status") == "signed_in"
+                 and record.get("account_identity") and record["account_identity"] == self._account_identity(account))
+        value["recovery_binding"] = ({"connection_generation": self.history.generation,
+                                      "account_revision": account["account_revision"]} if owned else None)
+        if not owned:
+            value.pop("snapshot", None)
+        return value
+
+    def _submission_snapshot(self):
+        value = self.submissions.snapshot(self.thread_id)
+        for key in ("user_submission", "unresolved_submissions"):
+            records = value[key] if isinstance(value[key], list) else [value[key]]
+            projected = [self._public_submission(self.submissions.records.get(record["client_user_message_id"]))
+                         for record in records if record]
+            value[key] = projected if isinstance(value[key], list) else next(iter(projected), None)
+        return value
 
     def _submission_response(self, record):
         value = {"connection_generation": self.history.generation,
-                 "submission": self.submissions.public(record)}
+                 "submission": self._public_submission(record)}
         if record.get("turn_id"):
             value["turnId"] = record["turn_id"]
             if record["intent"] == "start":
@@ -735,11 +760,12 @@ class Bridge:
                 record = self.submissions.records.get(message_id) if message_id else None
                 if message_id and not record:
                     raise StudioError("INPUT_RECORD_UNAVAILABLE", "原发送身份记录不可用；不会重新发送。", 409)
-                if record and (self.account.snapshot().get("status") != "signed_in"
-                        or not record.get("account_identity") or record["account_identity"] != self._account_identity()):
+                account = self.account.snapshot()
+                if record and (account.get("status") != "signed_in"
+                        or not record.get("account_identity") or record["account_identity"] != self._account_identity(account)):
                     raise StudioError("INPUT_ACCOUNT_CHANGED", "请使用原账号核对原发送；保留的内容不会发送到其他账号。", 409)
                 thread_id = record["thread_id"] if record else self.thread_id
-                revision, generation, account_revision = self.turn_revision, self.history.generation, self.account.revision
+                revision, generation, account_revision = self.turn_revision, self.history.generation, account["account_revision"]
             if not thread_id:
                 return {"reconciled": False, "message": "Select a native conversation first"}
             if record and thread_id != self.thread_id:
@@ -757,11 +783,13 @@ class Bridge:
                 if fresh:
                     self._apply_native_state(value["thread"])
                 turn_id = self.turn_id if fresh and self.stop_requested else None
-                submission = self.submissions.public(record) if record else self.submissions.snapshot(self.thread_id)["user_submission"]
+                submission = self._public_submission(record) if record else self._submission_snapshot()["user_submission"]
+                if not source_current:
+                    value = {"history_available": False, "message": "连接或账号已变化，请重新查询原发送。"}
             if turn_id:
                 self.client.request("turn/interrupt", {"threadId": thread_id, "turnId": turn_id})
             return {**value, "reconciled": fresh, "codex_state": self.codex_state,
-                    "connection_generation": generation, "submission": submission}
+                    "connection_generation": generation, "account_revision": account_revision, "submission": submission}
 
     def read_thread(self, thread_id):
         try:
@@ -918,8 +946,20 @@ class Bridge:
                 thread_id = query.get("thread_id", [None])[0]
                 if not thread_id:
                     raise StudioError("HISTORY_SCOPE_REQUIRED", "Supply the selected native thread")
-                return self.history.page(thread_id, cursor=query.get("cursor", [None])[0],
-                                         turn_id=query.get("turn_id", [None])[0])
+                with self.lock:
+                    generation, account_revision = self.history.generation, self.account.revision
+                value = self.history.page(thread_id, cursor=query.get("cursor", [None])[0],
+                                          turn_id=query.get("turn_id", [None])[0])
+                with self.lock:
+                    if generation != self.history.generation or account_revision != self.account.revision:
+                        raise StudioError("HISTORY_SCOPE_CHANGED", "连接或账号已变化，忽略原历史读取。", 409)
+                    if (self.account.snapshot().get("status") == "signed_in"
+                            and value.get("history_available") is not False
+                            and (value.get("thread") or {}).get("id") == thread_id):
+                        for turn in value["thread"].get("turns", []):
+                            for item in turn.get("items", []):
+                                self._confirm_user_item(thread_id, turn.get("id"), item, generation, recovering=True)
+                return {**value, "account_revision": account_revision}
             if method == "POST" and path == "/reconcile":
                 return self.reconcile(body)
             if method == "POST" and path == "/selection":
