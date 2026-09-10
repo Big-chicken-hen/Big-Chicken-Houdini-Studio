@@ -96,7 +96,9 @@ class Bridge:
         self.client.start()
         initialized = self.client.initialize()
         user_agent = initialized.get('userAgent') if isinstance(initialized, dict) else None
-        version = re.match(r'big_chicken_studio/(\d+\.\d+\.\d+)\b', user_agent) if isinstance(user_agent, str) else None
+        # Native originator may be inherited (for example "Codex Desktop").
+        # Its leading version is the binary's, unlike the clientInfo suffix.
+        version = re.match(r'^[^/()\r\n]{1,128}/(\d+\.\d+\.\d+)\s+\(', user_agent) if isinstance(user_agent, str) else None
         if version:
             self.release_identity['codex']['version'] = version.group(1)
 

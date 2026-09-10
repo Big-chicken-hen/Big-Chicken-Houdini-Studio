@@ -62,7 +62,8 @@ class BridgeTests(unittest.TestCase):
     def test_running_codex_version_uses_initialize_originator_not_client_suffix(self):
         for user_agent, expected in (
                 ('big_chicken_studio/0.153.4 (Windows 11.0.22631; x86_64) (big_chicken_studio; 0.1.0)', '0.153.4'),
-                ('other/0.153.4 (big_chicken_studio; 0.1.0)', None),
+                ('Codex Desktop/0.153.4 (Windows 10.0.22631; x86_64) dumb (big_chicken_studio; 0.1.0)', '0.153.4'),
+                ('Unknown native build (big_chicken_studio; 0.1.0)', None),
                 (None, None)):
             with self.subTest(user_agent=user_agent), patch('studio.bridge.serve', return_value=Mock(server_port=12345)):
                 self.bridge.client = Mock()
