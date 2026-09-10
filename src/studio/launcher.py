@@ -53,6 +53,7 @@ def storage_environment(paths):
     return {**{key: str(value) for key, value in directories.items()},
             "HIA_PROJECT_ROOT": str(paths.root), "BCS_DATA_ROOT": str(paths.data_root),
             "BCS_CACHE_ROOT": str(paths.cache_root), "PYTHONPATH": str(paths.install("src")),
+            "BCS_HOUDINI_PREF_MODE": "user" if paths.user_houdini_preferences else "isolated",
             "PYTHONDONTWRITEBYTECODE": "1", "PYTHONNOUSERSITE": "1",
             "PIP_CONFIG_FILE": os.devnull, "PIP_DISABLE_PIP_VERSION_CHECK": "1"}
 
@@ -66,6 +67,10 @@ def helper_environment(paths):
                  "PIP_TARGET", "PIP_PREFIX", "PIP_ROOT", "PIP_USER"):
         env.pop(name, None)
     env.update(storage_environment(paths))
+    if paths.user_houdini_preferences and os.environ.get("HOUDINI_USER_PREF_DIR"):
+        # Preserve an existing native override, including __HVER__; otherwise
+        # let Houdini resolve its normal user preferences. Never copy/edit them.
+        env["HOUDINI_USER_PREF_DIR"] = os.environ["HOUDINI_USER_PREF_DIR"]
     output_override = render_output_directory(paths)
     if output_override is not None:
         env["HIA_RENDER_OUTPUT_DIR"] = str(output_override)
@@ -137,16 +142,18 @@ def preflight(houdini, codex, paths=None, *, houdini_confirmation=None, request_
 
 def child_environment(paths, workspace_id, session_id, token):
     folder = paths.session(session_id)
-    for path in (folder, paths.cache("tmp"), paths.data("houdini-prefs")):
+    for path in (folder, paths.cache("tmp")):
         path.mkdir(parents=True, exist_ok=True)
     env = helper_environment(paths)
     env.update({"HIA_PROJECT_ROOT": str(paths.root), "BCS_WORKSPACE_ID": workspace_id,
                 "BCS_SESSION_ID": session_id, "BCS_SESSION_TOKEN": token, "BCS_AUTOSTART": "1",
                 "PYTHONPATH": str(paths.root / "src"), "HOUDINI_PACKAGE_DIR": str(paths.root / "houdini" / "packages"),
-                "HOUDINI_USER_PREF_DIR": str(paths.data("houdini-prefs", "__HVER__")),
                 "HOUDINI_TEMP_DIR": str(paths.cache("tmp")), "TEMP": str(paths.cache("tmp")),
                 "TMP": str(paths.cache("tmp")), "PYTHONDONTWRITEBYTECODE": "1",
                 "BCS_PYTHON_EXECUTABLE": console_python()})
+    if not paths.user_houdini_preferences:
+        paths.data("houdini-prefs").mkdir(parents=True, exist_ok=True)
+        env["HOUDINI_USER_PREF_DIR"] = str(paths.data("houdini-prefs", "__HVER__"))
     return env
 
 

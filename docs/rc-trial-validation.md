@@ -2,6 +2,28 @@
 
 ## Single EXE delivery follow-up
 
+### Houdini preferences correction (Owner-authorized)
+
+The Owner reported missing desktop layouts and colors after opening Studio.
+The original preference files remained present: the launch environment selected
+a different, Studio-owned preferences directory. This predates the EXE shim.
+The Owner explicitly approved normal launches using existing Houdini preferences
+while tests remain isolated. `AppPaths.for_user()` now selects native preferences
+unless the launcher is explicitly in an isolated test environment. Helper and
+supervisor boundaries preserve that choice and an existing native preference
+override. Studio does not copy, migrate or rewrite preference files.
+
+Two regression cases failed on the old implementation and passed after correction:
+native default resolution and custom preference override through helper/supervisor.
+Explicit fixture roots and test launchers stay isolated even under an ambient
+user mode. Ruff and 19 focused storage/launch tests passed. Read-only H22 `hconfig`
+with the generated child environment resolved the original user preferences and
+confirmed the custom desktop still exists. No real Houdini session was closed or
+launched for this check; visual restoration awaits the Owner's next normal launch.
+Reference: [SideFX Houdini Path](https://www.sidefx.com/docs/houdini/basics/houdinipath.html).
+The EXE-only candidate `4e86f96` passed five CI jobs and actual packaged-launcher
+open/close checks, but was superseded before delivery by this preferences fix.
+
 The Owner requested one `Studio.exe` entry instead of VBS/Python alternatives,
 and delivery files under the selected development project rather than a new
 Owner installation. The Windows Framework shim launches the existing private

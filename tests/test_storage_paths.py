@@ -33,18 +33,41 @@ class StoragePathsTests(unittest.TestCase):
         self.assertEqual(AppPaths.for_legacy(self.install).codex_home, paths.codex_home)
 
     def test_user_factory_resolves_roots_once_and_children_reconstruct_same_profile(self):
-        with patch.dict(os.environ, {"BCS_DATA_ROOT": "", "BCS_CACHE_ROOT": ""}), \
+        with patch.dict(os.environ, {"BCS_DATA_ROOT": "", "BCS_CACHE_ROOT": "", "BCS_HOUDINI_PREF_MODE": ""}), \
                 patch("studio.common.user_storage_roots", return_value=(self.data, self.cache)):
             paths = AppPaths.for_user(self.install)
         env = child_environment(paths, "workspace", "session", "test-only-credential")
         self.assertEqual(env["CODEX_HOME"], str(self.data / "codex-home"))
         self.assertEqual(Path(env["HOUDINI_TEMP_DIR"]), self.cache / "tmp")
-        self.assertEqual(Path(env["HOUDINI_USER_PREF_DIR"]), self.data / "houdini-prefs/__HVER__")
+        self.assertFalse("HOUDINI_USER_PREF_DIR" in env)
         with patch.dict(os.environ, env):
             child = AppPaths()
         self.assertEqual((child.root, child.data_root, child.cache_root), (paths.root, paths.data_root, paths.cache_root))
         self.assertEqual(child.session("session"), self.data / "sessions/session")
         self.assertEqual(paths.local("venv"), self.install / ".runtime/venv")
+
+    def test_user_preferences_override_survives_bootstrap_and_supervisor_without_copying(self):
+        preferences = self.base / '日常配置/__HVER__'
+        with patch.dict(os.environ, {"BCS_DATA_ROOT": str(self.data), "BCS_CACHE_ROOT": str(self.cache),
+                                     "BCS_HOUDINI_PREF_MODE": "", "HOUDINI_USER_PREF_DIR": str(preferences)}):
+            paths = AppPaths.for_user(self.install)
+            bootstrap = helper_environment(paths)
+            with patch.dict(os.environ, bootstrap, clear=True):
+                reconstructed = AppPaths()
+                child = child_environment(reconstructed, 'workspace', 'session', 'test-only-credential')
+            self.assertEqual(child['HOUDINI_USER_PREF_DIR'], str(preferences))
+        self.assertFalse(preferences.parent.exists(), 'Never copy, create or rewrite user preferences')
+        self.assertFalse((self.data / 'houdini-prefs').exists())
+
+    def test_fixture_and_explicit_test_launcher_remain_isolated_under_user_environment(self):
+        with patch.dict(os.environ, {"BCS_HOUDINI_PREF_MODE": "user", "HOUDINI_USER_PREF_DIR": "real-user-sentinel"}):
+            fixture = AppPaths(self.install)
+            env = child_environment(fixture, 'workspace', 'session', 'test-only-credential')
+            self.assertEqual(Path(env['HOUDINI_USER_PREF_DIR']), self.install / '.runtime/houdini-prefs/__HVER__')
+            with patch.dict(os.environ, env, clear=True):
+                launcher = AppPaths.for_user(self.install)
+                again = child_environment(launcher, 'workspace', 'session-2', 'test-only-credential')
+                self.assertEqual(again['HOUDINI_USER_PREF_DIR'], env['HOUDINI_USER_PREF_DIR'])
 
     def test_each_root_keeps_its_own_containment_and_cache_cannot_own_data(self):
         paths = AppPaths(self.install, data_root=self.data, cache_root=self.cache)

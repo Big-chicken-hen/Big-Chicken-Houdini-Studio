@@ -69,11 +69,13 @@ def now():
 
 
 class AppPaths:
-    def __init__(self, root=None, *, data_root=None, cache_root=None):
+    def __init__(self, root=None, *, data_root=None, cache_root=None, user_houdini_preferences=None):
         # Explicit installation roots retain the isolated development/legacy
         # default. The standalone launcher selects for_user() once; children
         # reconstruct the same roots from its controlled environment.
         explicit_root = root is not None
+        self.user_houdini_preferences = (user_houdini_preferences if user_houdini_preferences is not None else
+                                        not explicit_root and os.environ.get("BCS_HOUDINI_PREF_MODE") == "user")
         self.root = Path(root or os.environ.get("HIA_PROJECT_ROOT") or
                          Path(__file__).resolve().parents[2]).resolve()
         if not (self.root / "pyproject.toml").is_file():
@@ -92,11 +94,14 @@ class AppPaths:
 
     @classmethod
     def for_user(cls, root=None):
+        # Only an explicit test environment keeps a user-facing launcher isolated.
+        preferences = os.environ.get("BCS_HOUDINI_PREF_MODE") != "isolated"
         if os.environ.get("BCS_DATA_ROOT") and os.environ.get("BCS_CACHE_ROOT"):
-            return cls(root, data_root=os.environ["BCS_DATA_ROOT"], cache_root=os.environ["BCS_CACHE_ROOT"])
+            return cls(root, data_root=os.environ["BCS_DATA_ROOT"], cache_root=os.environ["BCS_CACHE_ROOT"],
+                       user_houdini_preferences=preferences)
         data, cache = user_storage_roots()
         return cls(root, data_root=os.environ.get("BCS_DATA_ROOT") or data,
-                   cache_root=os.environ.get("BCS_CACHE_ROOT") or cache)
+                   cache_root=os.environ.get("BCS_CACHE_ROOT") or cache, user_houdini_preferences=preferences)
 
     @classmethod
     def for_legacy(cls, root):

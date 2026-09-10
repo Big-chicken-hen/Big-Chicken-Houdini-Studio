@@ -1,5 +1,12 @@
 # Rebuild contract
 
+The user's 2026-09-10 correction restores native Houdini user preferences for
+normal Studio launches, including an existing `HOUDINI_USER_PREF_DIR` override.
+Studio must not copy or rewrite preferences; project-local preferences remain
+the explicit test default. The single `Studio.exe` entry applies to both source
+and installed use. These user-authorized launch corrections require a new RC;
+earlier isolation/frozen-candidate wording below is historical.
+
 Current bounded follow-up: [RC trial scope and direct user correction](rc-trial-scope.md),
 with the [full Pro audit](rc-trial-review.md). Shared Houdini trial policy and
 read-only identity details require a new RC; `991cbce` stays preserved. Clash is
