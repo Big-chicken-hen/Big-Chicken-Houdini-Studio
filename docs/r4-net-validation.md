@@ -92,7 +92,25 @@ delivery also pass. Socket cancellation uses a bounded cancellable `recv_into`
 around the standard library's HTTP parser; no custom HTTP parser or Win32 hook
 was added.
 
-NET-1 remains open pending two fresh actual-package Houdini checks. Native
-steering and the final Windows standard-user installed workflow are separate
-remaining gates. PR #14 remains draft; none of these investigation packages is
-approved for release.
+Candidate `a5731cf92197f93d00f4254d469f5f37b153fa97` passed all CI jobs in run
+`34449235075`. Its actual package is `0.1.0-rc.1-a5731cf92197`, with 229 files.
+The two required fresh Houdini processes passed:
+
+| Actual package run | Session / receipt | Result |
+| --- | --- | --- |
+| [A](evidence/r4-net1/package-a.json) | `a89dfce1e51741128a272df36cdf2339` / `59f3a4186770465dbcd219d708d7a296` | 90 s, 8 complete comparisons, zero transport notices |
+| [B](evidence/r4-net1/package-b.json) | `a931f091a0b349a8b3b57a50d67638a6` / `2da534aef7f247418ad749390600b0dd` | 90 s, 8 complete comparisons, zero transport notices |
+
+Each run used normal polling, long native history, two Panels, reconnect,
+close/reopen and a preserved draft. All 224 per-message comparisons across
+these 16 samples passed canonical/copy/render checks. Neither run recorded an
+icon diagnostic or Panel script error. The [actual Panel capture](evidence/r4-net1/package-a.png)
+was inspected; the previous TC3 partial-result warning remains visible as
+historical evidence. Both owned GUI/Bridge processes were closed. Neither test
+started a model Turn. No Api/reply instrumentation or transport replacement was
+injected into these runs: they used the packaged production implementation.
+
+**NET-1 passes its bounded technical gate.** Native steering and the final
+Windows standard-user installed workflow remain separate gates. PR #14 stays
+draft; this NET-only package is not the final release candidate and cannot
+replace the final package's installed-user acceptance.
