@@ -120,79 +120,137 @@ class ErrorDetails(QtWidgets.QFrame):
                         text="收起详情" if expanded else "查看详情", size=16)
         self.toggle.setAccessibleName("收起错误详情" if expanded else "展开错误详情")
 
+class _ApiReply(QtCore.QObject):
+    """One Qt request terminal, followed by delivery of plain Python data."""
+    def __init__(self, api, key, done, failed):
+        super().__init__(api)
+        self.api, self.key = api, key
+        self.done, self.failed = done, failed
+        self.reply = None
+        self.settled = False
+
+    def attach(self, reply):
+        self.reply = reply
+        self.api.replies.add(reply)
+        reply.finished.connect(self.finish)
+        reply.destroyed.connect(self.lost)
+
+    def settle(self, callback=None, value=None, *, abort=False):
+        if self.settled:
+            return
+        self.settled = True
+        api, reply = self.api, self.reply
+        self.reply = self.done = self.failed = None
+        api._deliveries.discard(self)
+        api.replies.discard(reply)
+        remaining = api._inflight_counts[self.key] - 1
+        if remaining:
+            api._inflight_counts[self.key] = remaining
+        else:
+            api._inflight_counts.pop(self.key)
+            api.inflight.discard(self.key)
+        if reply is not None and isValid(reply):
+            if abort:
+                reply.abort()  # A reentrant finished/lost sees settled first.
+            reply.deleteLater()
+        if isValid(self):
+            self.deleteLater()
+        if callback and not api.closed and isValid(api):
+            # Rendering/teardown may reenter a host event loop. Do not invoke it
+            # from the native reply's completion stack or retain Qt response data.
+            api._delivery_ready.emit(callback, value)
+
+    @QtCore.Slot()
+    def lost(self):
+        if self.settled:
+            return
+        self.api.replies.discard(self.reply)
+        self.reply = None  # Never access a QObject while it is being destroyed.
+        self.settle(self.failed, ApiFailure(
+            "Network reply is no longer available; query the original request state.",
+            code="REPLY_UNAVAILABLE", submission_state="unknown"))
+
+    @QtCore.Slot()
+    def finish(self):
+        if self.settled:
+            return
+        if self.api.closed or not isValid(self.api):
+            self.settle()
+            return
+        reply = self.reply
+        if reply is None or not isValid(reply):
+            self.lost()
+            return
+        callback, status = self.failed, None
+        try:
+            raw = bytes(reply.readAll())
+            status = reply.attribute(QtNetwork.QNetworkRequest.HttpStatusCodeAttribute)
+            network_error = reply.error() != QtNetwork.QNetworkReply.NoError
+            network_message = reply.errorString()
+            if not raw:
+                raise ValueError("Bridge returned an empty response")
+            value = json.loads(raw)
+            if not isinstance(value, dict):
+                raise ValueError("Bridge returned an invalid response")
+            if network_error or not (isinstance(status, int) and 200 <= status < 300):
+                error = value.get("error")
+                message = error.get("message", "Request failed") if isinstance(error, dict) else network_message
+                value = ApiFailure(message, code=error.get("code") if isinstance(error, dict) else None,
+                    status=status, submission_state=error.get("submission_state") if isinstance(error, dict) else None,
+                    details=error if isinstance(error, dict) else value)
+            else:
+                callback = self.done  # Successful receipt queries may contain a script error.
+        except (ValueError, TypeError, RuntimeError) as error:
+            value = ApiFailure(str(error), code="INVALID_RESPONSE", status=status, submission_state="unknown")
+        self.settle(callback, value)
+
+
 class Api(QtCore.QObject):
+    _delivery_ready = QtCore.Signal(object, object)
+
     def __init__(self, url, token, parent=None):
         super().__init__(parent)
         from ..http import loopback_url
         self.url, self.token = loopback_url(url), token
         self.manager = QtNetwork.QNetworkAccessManager(self)
         self.inflight = set()
+        self._inflight_counts = {}
+        self._deliveries = set()
         self.replies = set()
         self.closed = False
+        self._delivery_ready.connect(self._deliver, QtCore.Qt.QueuedConnection)
+
+    @QtCore.Slot(object, object)
+    def _deliver(self, callback, value):
+        if not self.closed:
+            callback(value)
 
     def call(self, method, path, body=None, done=None, failed=None, unique=False):
         key = (method, path.split("?", 1)[0])
-        if self.closed or unique and key in self.inflight:
+        if self.closed or not isValid(self) or unique and key in self.inflight:
             return False
         self.inflight.add(key)
+        self._inflight_counts[key] = self._inflight_counts.get(key, 0) + 1
+        delivery = _ApiReply(self, key, done, failed)
+        self._deliveries.add(delivery)
         request = QtNetwork.QNetworkRequest(QtCore.QUrl(self.url + path))
         request.setRawHeader(b"Authorization", ("Bearer " + self.token).encode())
         request.setHeader(QtNetwork.QNetworkRequest.ContentTypeHeader, "application/json")
         request.setAttribute(QtNetwork.QNetworkRequest.RedirectPolicyAttribute,
                              QtNetwork.QNetworkRequest.ManualRedirectPolicy)
         request.setTransferTimeout(45000)
-        reply = (self.manager.get(request) if method == "GET" else
-                 self.manager.post(request, json.dumps(body or {}).encode()))
-        self.replies.add(reply)
-
-        def finished():
-            self.inflight.discard(key)
-            self.replies.discard(reply)
-            # A posted Python callback can outlive its native owner/reply.
-            if self.closed or not isValid(self):
-                if isValid(reply):
-                    reply.deleteLater()
-                return
-            if not isValid(reply):
-                if failed:
-                    failed(ApiFailure("Network reply is no longer available; query the original request state.",
-                                      code="REPLY_UNAVAILABLE", submission_state="unknown"))
-                return
-            callback = None
-            try:
-                raw = bytes(reply.readAll())
-                value = json.loads(raw) if raw else {}
-                if not isinstance(value, dict):
-                    raise ValueError("Bridge returned an invalid response")
-                status = reply.attribute(QtNetwork.QNetworkRequest.HttpStatusCodeAttribute)
-                # A receipt can contain an execution error while its HTTP query succeeds.
-                if reply.error() != QtNetwork.QNetworkReply.NoError or not (isinstance(status, int) and 200 <= status < 300):
-                    error = value.get("error")
-                    message = error.get("message", "Request failed") if isinstance(error, dict) else reply.errorString()
-                    callback = failed
-                    value = ApiFailure(message, code=error.get("code") if isinstance(error, dict) else None,
-                                       status=status, submission_state=error.get("submission_state")
-                                       if isinstance(error, dict) else None,
-                                       details=error if isinstance(error, dict) else value)
-                else:
-                    callback = done
-            except (ValueError, TypeError) as exc:
-                callback, value = failed, ApiFailure(str(exc))
-            finally:
-                # Delivery may destroy Api's owner and its replies. Finish Qt
-                # cleanup first; do not access the reply after the callback.
-                if isValid(reply):
-                    reply.deleteLater()
-            if callback:
-                callback(value)
-        reply.finished.connect(finished)
+        try:
+            reply = (self.manager.get(request) if method == "GET" else
+                     self.manager.post(request, json.dumps(body or {}).encode()))
+            delivery.attach(reply)
+        except (ValueError, TypeError, RuntimeError) as error:
+            delivery.settle(failed, ApiFailure(str(error), code="REQUEST_UNAVAILABLE", submission_state="unknown"))
         return True
 
     def close(self):
         self.closed = True
-        for reply in tuple(self.replies):
-            if isValid(reply):
-                reply.abort()
+        for delivery in tuple(self._deliveries):
+            delivery.settle(abort=True)
 
 
 class TaskSignals(QtCore.QObject):
@@ -225,4 +283,3 @@ class Task(QtCore.QRunnable):
             # its cleanup. Delivery failure is not failure of the completed work.
             if isValid(self.signals):
                 raise
-

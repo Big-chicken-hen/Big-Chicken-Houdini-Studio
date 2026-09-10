@@ -125,6 +125,9 @@ class StudioPanel(QtWidgets.QWidget):
         self.hydrating = False
         self.history_request = None
         self.history_thread = None
+        self.history_recovery = None
+        self.history_retry_exhausted = False
+        self.history_failure_notice = None
         self.submitting = False
         self.pending_submission = None
         self.stop_pending = False
@@ -170,6 +173,10 @@ class StudioPanel(QtWidgets.QWidget):
         self.history_refresh.setSingleShot(True)
         self.history_refresh.setInterval(750)
         self.history_refresh.timeout.connect(self.read_pending_history)
+        self.history_retry = QtCore.QTimer(self)
+        self.history_retry.setSingleShot(True)
+        self.history_retry.setInterval(250)
+        self.history_retry.timeout.connect(self.retry_history)
         self.transcript.older_requested.connect(lambda: self.load_history(older=True))
         self.update_controls()
         QtCore.QTimer.singleShot(0, self.connect_bridge)
@@ -567,10 +574,13 @@ class StudioPanel(QtWidgets.QWidget):
         if self.closed or not self.api:
             return False
         api = self.api
+        generation = self.connection_generation
         failure = failed or self.show_notice
         return api.call(method, path, body,
-                        done=lambda value: done(value) if done and not self.closed and api is self.api else None,
-                        failed=lambda value: failure(value) if not self.closed and api is self.api else None,
+                        done=lambda value: done(value) if done and not self.closed and api is self.api
+                        and generation == self.connection_generation else None,
+                        failed=lambda value: failure(value) if not self.closed and api is self.api
+                        and generation == self.connection_generation else None,
                         unique=unique)
 
     def connect_bridge(self):
@@ -1152,6 +1162,10 @@ class StudioPanel(QtWidgets.QWidget):
         self.history_attempts.clear()
         self.history_cursor = None
         self.history_refresh.stop()
+        self.history_retry.stop()
+        self.history_recovery = None
+        self.history_retry_exhausted = False
+        self.history_failure_notice = None
         self.transcript.older.hide()
         self.transcript.older.setEnabled(True)
 
@@ -1176,20 +1190,26 @@ class StudioPanel(QtWidgets.QWidget):
             self.advance_connection(reset_cursor=True)
         self.native_generation = generation
 
-    def load_history(self, *, automatic=False, turn_id=None, older=False):
-        if not self.thread_id or not self.logged_in or self.thread_id in self.deleted_threads:
+    def load_history(self, *, automatic=False, turn_id=None, older=False, _recovery=False):
+        if (self.closed or not self.thread_id or not self.logged_in
+                or self.thread_id in self.deleted_threads or self.thread_id in self.archived_threads):
             return
         if self.history_thread != self.thread_id:
             self.invalidate_history()
         self.transcript.bind(self.thread_id, self.connection_generation)
-        if self.hydrating:
+        if automatic and self.history_retry_exhausted:
+            return
+        if self.hydrating or self.history_retry.isActive():
             if automatic:
                 self.history_pending[turn_id] = True
             return
         if older and self.history_cursor is None:
             return
+        if not automatic and not _recovery:
+            self.history_retry_exhausted = False
         thread_id, generation = self.thread_id, self.connection_generation
         request = object()
+        settled = False
         self.history_generation += 1
         history_generation = self.history_generation
         self.history_request, self.history_thread = request, thread_id
@@ -1202,18 +1222,25 @@ class StudioPanel(QtWidgets.QWidget):
             params["cursor"] = self.history_cursor
 
         def current():
-            return (not self.closed and self.history_request is request and self.thread_id == thread_id
+            return (not settled and not self.closed and self.history_request is request and self.thread_id == thread_id
                     and generation == self.connection_generation and history_generation == self.history_generation
                     and thread_id not in self.deleted_threads and thread_id not in self.archived_threads)
 
-        def finish():
+        def finish(*, pending=True):
+            nonlocal settled
+            settled = True
             self.hydrating = False
             self.transcript.older.setEnabled(True)
-            if self.history_pending:
+            if pending and self.history_pending:
                 self.history_refresh.start(0)
 
         def loaded(value):
             if not current():
+                return
+            try:
+                self.validate_history(value, thread_id)
+            except ValueError as error:
+                failed(str(error))
                 return
             native_generation = value.get("connection_generation")
             if self.native_generation is not None and native_generation not in {None, self.native_generation}:
@@ -1228,18 +1255,75 @@ class StudioPanel(QtWidgets.QWidget):
             if not turn_id:
                 self.history_cursor = value.get("next_cursor")
                 self.transcript.older.setVisible(bool(self.history_cursor))
+            if (value.get("history_available") is not False
+                    and self.presentation_notice == self.history_failure_notice):
+                self.show_notice("")
+            self.history_failure_notice = None
             finish()
 
         def failed(message):
             if not current():
                 return
-            finish()
-            self.show_notice("原生历史读取失败：" + str(message))
+            finish(pending=False)
+            self.history_refresh.stop()
+            if _recovery:
+                self.history_retry_exhausted = True
+                self.history_pending.clear()
+                self.history_failure_notice = "原生历史读取失败：" + str(message) + "；可在设置与连接详情中刷新连接重试。"
+            else:
+                self.history_recovery = (request, thread_id, generation, history_generation, turn_id, older)
+                self.history_retry.start()
+                self.history_failure_notice = "原生历史读取失败，正在补读一次：" + str(message)
+            self.show_notice(self.history_failure_notice)
 
-        self.call("GET", "/thread/history?" + urlencode(params), done=loaded, failed=failed)
+        if not self.call("GET", "/thread/history?" + urlencode(params), done=loaded, failed=failed):
+            failed("历史读取请求未能开始。")
+
+    @staticmethod
+    def validate_history(value, thread_id):
+        """Only a successful, scoped native payload can establish empty history."""
+        if not isinstance(value, dict):
+            raise ValueError("历史响应格式无效。")
+        if value.get("error") is not None:
+            raise ValueError("原生历史返回错误，消息列表尚未确认。")
+        thread = value.get("thread")
+        if not isinstance(thread, dict) or thread.get("id") != thread_id:
+            raise ValueError("历史响应缺少当前对话的身份。")
+        if "history_available" in value and type(value["history_available"]) is not bool:
+            raise ValueError("历史响应缺少有效的可用状态。")
+        if value.get("connection_generation") is not None and not isinstance(value["connection_generation"], str):
+            raise ValueError("历史响应包含无效连接身份。")
+        if value.get("history_available") is False:
+            return  # Native metadata before rollout materialization is not empty history.
+        turns = thread.get("turns")
+        if not isinstance(turns, list):
+            raise ValueError("历史响应缺少有效的回合列表。")
+        for turn in turns:
+            if not isinstance(turn, dict) or not isinstance(turn.get("id"), str) or not turn["id"]:
+                raise ValueError("历史响应包含无效回合。")
+            items = turn.get("items")
+            if turn.get("itemsView", "full") != "full":
+                continue
+            if not isinstance(items, list) or any(not isinstance(item, dict) or not isinstance(item.get("id"), str)
+                                                 or not item["id"] for item in items):
+                raise ValueError("历史响应包含无效消息列表。")
+        if value.get("next_cursor") is not None and not isinstance(value["next_cursor"], str):
+            raise ValueError("历史响应包含无效分页位置。")
+
+    def retry_history(self):
+        recovery, self.history_recovery = self.history_recovery, None
+        if recovery is None:
+            return
+        request, thread_id, generation, history_generation, turn_id, older = recovery
+        if (self.closed or self.history_request is not request or self.thread_id != thread_id
+                or generation != self.connection_generation or history_generation != self.history_generation
+                or thread_id in self.deleted_threads or thread_id in self.archived_threads):
+            return
+        # Read the original page once. This path never retries a user send or mutation.
+        self.load_history(automatic=True, turn_id=turn_id, older=older, _recovery=True)
 
     def schedule_history(self, *, turn_id=None, terminal=False):
-        if self.closed or not self.thread_id:
+        if self.closed or not self.thread_id or self.history_retry_exhausted:
             return
         key = (turn_id, terminal)
         if key in self.history_attempts:
@@ -1962,6 +2046,8 @@ class StudioPanel(QtWidgets.QWidget):
         self.poll.stop()
         self.account_poll.stop()
         self.history_refresh.stop()
+        self.history_retry.stop()
+        self.history_recovery = None
         if self.owns_api and self.api:
             self.api.close()
         super().closeEvent(event)
