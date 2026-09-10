@@ -1,6 +1,7 @@
 """Big-Chicken Studio Panel: a projection of Codex and runtime facts."""
 from __future__ import annotations
 
+import copy
 import json
 import os
 import time
@@ -16,7 +17,7 @@ from .conversations import ConversationManager
 from .icons import icon_diagnostics, set_button_icon
 from .model_settings import ChoiceBox, ModelSettings
 from .requests import RequestCard, SessionTrustControl
-from .shared import Api, ErrorDetails, button, label
+from .shared import Api, ApiFailure, ErrorDetails, button, label
 from .theme import COLORS, PANEL_ROOT, apply_theme, studio_stylesheet
 
 
@@ -130,7 +131,12 @@ class StudioPanel(QtWidgets.QWidget):
         self.history_failure_notice = None
         self.submitting = False
         self.pending_submission = None
+        self.awaiting_native = {}
+        self.retained_submissions = {}
+        self.awaiting_start = None
+        self.reconcile_request = None
         self.stop_pending = False
+        self.stop_unconfirmed = False
         self.switching = False
         self.uncertain_send = False
         self.reconciling = False
@@ -389,8 +395,11 @@ class StudioPanel(QtWidgets.QWidget):
         self.retry_attachments.hide()
         actions.addWidget(self.retry_attachments)
         actions.addStretch()
-        self.action_slot = QtWidgets.QStackedWidget()
-        self.action_slot.setFixedSize(36, 36)
+        self.action_slot = QtWidgets.QWidget()
+        action_layout = QtWidgets.QHBoxLayout(self.action_slot)
+        action_layout.setContentsMargins(0, 0, 0, 0)
+        action_layout.setSpacing(4)
+        action_layout.setSizeConstraint(QtWidgets.QLayout.SetFixedSize)
         self.stop_button = button("停止后续工作", self.stop, "stop")
         self.stop_button.setToolTip("请求停止后续工作；长操作占用主线程时，按钮可能延迟响应。")
         self.send_button = button("发送", self.send, "primary")
@@ -398,8 +407,9 @@ class StudioPanel(QtWidgets.QWidget):
                                            (self.stop_button, "square", "停止后续工作", COLORS["background"])):
             control.setFixedSize(36, 36)
             set_button_icon(control, name, text=text, fallback_text="发送" if control is self.send_button else "停止", color=color, icon_only=True)
-            self.action_slot.addWidget(control)
-        self.action_slot.setCurrentWidget(self.send_button)
+        action_layout.addWidget(self.stop_button)
+        action_layout.addWidget(self.send_button)
+        self.stop_button.hide()
         controls.addLayout(self.composer_action_layout)
         layout.addWidget(composer)
         footer = QtWidgets.QHBoxLayout()
@@ -684,6 +694,8 @@ class StudioPanel(QtWidgets.QWidget):
         account_changed = self.accept_account_revision(value.get("account_revision"))
         codex = value.get("codex", {})
         native = codex.get("state", "unknown")
+        if codex.get("stop_requested") or native in {"idle", "completed", "failed", "interrupted"}:
+            self.stop_unconfirmed = False
         self.codex_label.setText(CODEX_STATES.get(native, native) if codex.get("alive") else "App Server 不可用 · 状态未确认")
         self.codex_label.setToolTip("原生状态：" + native + "\n停止请求：" + str(bool(codex.get("stop_requested"))))
         runtime = value.get("runtime", {})
@@ -738,6 +750,7 @@ class StudioPanel(QtWidgets.QWidget):
         self.scene_context_note.setText("此对话来自之前的场景；请确认旧约定是否适用，或新建对话。" if changed_scene else "")
         self.scene_context_note.setVisible(changed_scene)
         self.sync_requests(value.get("pending_requests", []))
+        self.apply_submission_state(value)
         self.render_reference()
         observed_turn = (value.get("thread_id"), value.get("turn_id"))
         if self.observed_turn and (observed_turn[0] != self.observed_turn[0]
@@ -778,7 +791,9 @@ class StudioPanel(QtWidgets.QWidget):
         account = self.bridge_connected and self.logged_in
         response_unknown = any(card.response_unknown for card in self.request_cards.values())
         ready = (account and idle and not self.switching and not self.submitting and not self.uncertain_send
-                 and not self.reconciling and not response_unknown)
+                 and not self.reconciling and not response_unknown and not self.awaiting_start
+                 and not self.native_submission_unresolved())
+        intent = self.send_intent()
         scene_ready = runtime.get("connection") == "connected" and not runtime.get("storage_fault")
         self.uploading = sum(item.get("status") == "uploading" for item in self.attachments)
         self.models_loaded = self.model_controls.catalog_loaded and bool(self.model_controls.catalog)
@@ -793,18 +808,24 @@ class StudioPanel(QtWidgets.QWidget):
         self.input.setEnabled(True)
         text_ok = 0 < len(self.input.toPlainText().strip()) <= 64000
         reference_ok = not self.selection_reference or self.selection_reference.get("scene_epoch") == runtime.get("scene", {}).get("scene_epoch")
-        self.send_button.setEnabled(ready and bool(self.thread_id) and text_ok and not self.uploading and not self.selection_pending
-                                    and not self.selection_inflight and reference_ok and not runtime.get("storage_fault")
-                                    and self.model_controls.request_settings() is not None)
+        self.send_button.setEnabled(bool(intent) and text_ok and not self.uploading and not self.selection_pending
+                                    and not self.selection_inflight and reference_ok)
         self.attach_button.setEnabled(len(self.attachments) < 8)
         waiting_images = any(item.get("status") in {"waiting", "failed"} for item in self.attachments)
         self.retry_attachments.setVisible(waiting_images)
         self.retry_attachments.setEnabled(self.bridge_connected)
         if any(item.get("status") in {"waiting", "failed", "uploading"} for item in self.attachments):
             self.send_button.setEnabled(False)
-        model = self.model_controls.catalog.get(self.model_controls.next_model, {})
-        image_mismatch = bool(self.attachments and "image" not in model.get("inputModalities", ["text", "image"]))
-        self.model_block_reason = "当前模型不接收图片；请选择其他模型或移除图片。" if image_mismatch else ""
+        active_turn = codex.get("state") == "running" and bool(self.state.get("turn_id"))
+        running_settings = self.state.get("turn_settings") or {}
+        running_model = (running_settings.get("model") or running_settings.get("requested_model")) if (
+            running_settings.get("thread_id") == self.thread_id
+            and running_settings.get("turn_id") == self.state.get("turn_id")) else None
+        model = self.model_controls.catalog.get(running_model if active_turn else self.model_controls.next_model, {})
+        image_mismatch = bool(self.attachments and (active_turn and not model
+                              or "image" not in model.get("inputModalities", ["text", "image"])))
+        self.model_block_reason = ("当前运行模型的图片能力不可用；请移除图片后发送文字。" if active_turn else
+                                   "当前模型不接收图片；请选择其他模型或移除图片。") if image_mismatch else ""
         self.model_controls.set_constraint(self.model_block_reason)
         if image_mismatch:
             self.send_button.setEnabled(False)
@@ -813,19 +834,34 @@ class StudioPanel(QtWidgets.QWidget):
         self.reference_clear.setEnabled(True)
         working = (codex.get("state") in {"running", "starting", "stopping", "unknown"}
                    or bool(runtime.get("main_thread_busy")) or bool(runtime.get("active_operation_id"))
-                   or runtime.get("queue_depth", 0) > 0 or self.submitting)
-        self.send_button.setEnabled(self.send_button.isEnabled() and not working)
-        self.action_slot.setCurrentWidget(self.stop_button if working or self.stop_pending else self.send_button)
+                   or runtime.get("queue_depth", 0) > 0 or self.submitting or bool(self.awaiting_start))
+        self.stop_button.setVisible(working or self.stop_pending)
         self.stop_button.setEnabled(self.bridge_connected and working and not self.stop_pending)
         self.stop_button.setToolTip("停止请求已发送" if self.stop_pending else "停止后续工作")
         self.model_controls.set_interactive(ready and self.models_loaded and not working)
         self.model_controls.apply_turn(self.state.get("turn_settings"), active=working, turn_id=self.state.get("turn_id"))
-        self.reconcile_button.setEnabled(self.bridge_connected and bool(self.thread_id) and not self.switching
+        if self.submitting and self.pending_submission and self.pending_submission["intent"] == "start":
+            settings = self.pending_submission.get("settings") or {}
+            self.model_controls.apply_turn({"thread_id": self.thread_id, "turn_id": None,
+                "requested_model": settings.get("model"), "requested_effort": settings.get("effort"),
+                "model": settings.get("model"), "effort": settings.get("effort"), "confirmation": "requested"},
+                active=True, turn_id=None)
+        query_snapshot = self.query_submission_snapshot()
+        self.reconcile_button.setEnabled(self.bridge_connected and bool(self.thread_id or query_snapshot)
+                                         and (not self.native_submission_unresolved() or query_snapshot is not None) and not self.switching
                                          and not self.submitting and not self.reconciling)
-        self.reconcile_button.setVisible(self.uncertain_send or response_unknown
+        self.reconcile_button.setVisible(self.uncertain_send or self.stop_unconfirmed or response_unknown
                                          or codex.get("state") in {"unknown", "unavailable"})
         self.reconnect_button.setVisible(not self.bridge_connected)
-        self.pending_button.setVisible(self.uncertain_send and self.pending_submission is not None)
+        retained = self.visible_retained_submissions()
+        self.pending_button.setVisible(bool(retained))
+        self.pending_button.setText("查看未确认的原消息" if any(s["state"] in {"pending", "unknown"} for s in retained)
+                                    else "查看未发送的原消息")
+        if not retained:
+            self.pending_preview.hide()
+            self.pending_preview.clear()
+        self.shortcut_hint.setText("补充要求将发送到当前任务" if intent == "steer"
+                                   else "Enter 换行 · Ctrl+Enter 发送")
         self.update_work_status()
         for control in (self.decision_refresh, self.operations_refresh, self.lookup_button):
             control.setEnabled(self.bridge_connected)
@@ -838,16 +874,21 @@ class StudioPanel(QtWidgets.QWidget):
     def update_work_status(self):
         codex, runtime = self.state.get("codex", {}), self.state.get("runtime", {})
         native = codex.get("state", "unknown")
-        if self.uncertain_send:
+        if self.submission_account_blocked():
+            text = "原账号有一条未确认输入，请使用原账号查询；原内容已保留。"
+        elif self.uncertain_send:
             text = "上次提交结果未确认。可继续写草稿，请先查询提交状态。"
         elif any(card.response_unknown for card in self.request_cards.values()):
             text = ""  # The approval card owns this error; the query action remains available.
-        elif self.stop_pending or codex.get("stop_requested") and native in {"running", "starting", "stopping"}:
+        elif self.stop_pending or self.stop_unconfirmed or codex.get("stop_requested") and native in {"running", "starting", "stopping"}:
             text = "已请求停止后续工作，等待确认。"
         elif not self.bridge_connected:
             text = "连接未就绪；草稿可继续编辑。"
         elif self.submitting:
-            text = "正在提交消息；可以继续写下一段草稿。"
+            text = ("正在发送引导…" if self.pending_submission and self.pending_submission["intent"] == "steer"
+                    else "正在提交消息；可以继续写下一段草稿。")
+        elif self.awaiting_start:
+            text = "消息已接纳，正在确认当前任务身份。"
         elif self.request_cards:
             text = "等待你的授权或回应"
         elif self.selection_pending or self.selection_inflight:
@@ -855,7 +896,8 @@ class StudioPanel(QtWidgets.QWidget):
         elif not codex.get("alive"):
             text = "对话服务不可用；草稿已保留。"
         elif native in {"starting", "running", "stopping", "unknown", "failed", "interrupted"}:
-            text = {"running": "Codex 正在处理", "failed": "本轮对话失败，请查看对话中的原因。", "interrupted": "本轮对话已中断。"}.get(native, CODEX_STATES[native])
+            text = {"running": "补充要求将发送到当前任务" if self.send_intent() == "steer" else "Codex 正在处理",
+                    "failed": "本轮对话失败，请查看对话中的原因。", "interrupted": "本轮对话已中断。"}.get(native, CODEX_STATES[native])
         elif not self.logged_in:
             text = ""  # Account feedback stays beside the sign-in action.
         elif not self.thread_id:
@@ -908,10 +950,13 @@ class StudioPanel(QtWidgets.QWidget):
         self.work_status.setVisible(bool(primary))
 
     def toggle_pending_submission(self):
-        if self.pending_submission:
-            snapshot = self.pending_submission
-            names = "、".join(item["name"] for item in snapshot["attachments"])
-            self.pending_preview.setPlainText(snapshot["request_text"] + ("\n\n保留的图片：" + names if names else ""))
+        snapshots = self.visible_retained_submissions()
+        if snapshots:
+            sections = []
+            for snapshot in snapshots:
+                images = "\n".join(item["name"] + " · " + item["path"] for item in snapshot["attachments"])
+                sections.append(snapshot["request_text"] + ("\n\n保留的图片：\n" + images if images else ""))
+            self.pending_preview.setPlainText("\n\n——\n\n".join(sections))
             self.pending_preview.setVisible(self.pending_preview.isHidden())
 
     def refresh_account(self):
@@ -925,6 +970,10 @@ class StudioPanel(QtWidgets.QWidget):
             return False
         if self.account_revision is not None and revision < self.account_revision:
             return False
+        self.reconcile_request = None
+        self.reconciling = False
+        if self.account_revision is not None:
+            self.invalidate_history()
         self.account_revision = revision
         self.model_controls.set_account_revision(revision)
         return True
@@ -1076,6 +1125,12 @@ class StudioPanel(QtWidgets.QWidget):
 
     def discard_deleted_draft(self, thread_id):
         # Called only for native-confirmed deletion, never on list absence.
+        for records in (self.awaiting_native, self.retained_submissions):
+            for message_id, snapshot in tuple(records.items()):
+                if snapshot["thread_id"] == thread_id:
+                    records.pop(message_id)
+        if self.awaiting_start and self.awaiting_start["thread_id"] == thread_id:
+            self.awaiting_start = None
         if self.draft_key == thread_id:
             self.revision += 1
             self.switching = False
@@ -1172,6 +1227,8 @@ class StudioPanel(QtWidgets.QWidget):
     def advance_connection(self, *, reset_cursor=False):
         self.connection_generation += 1
         self.revision += 1
+        self.reconciling = False
+        self.reconcile_request = None
         self.invalidate_history()
         self.transcript.bind(self.thread_id, self.connection_generation)
         if reset_cursor:
@@ -1207,7 +1264,7 @@ class StudioPanel(QtWidgets.QWidget):
             return
         if not automatic and not _recovery:
             self.history_retry_exhausted = False
-        thread_id, generation = self.thread_id, self.connection_generation
+        thread_id, generation, account_revision = self.thread_id, self.connection_generation, self.account_revision
         request = object()
         settled = False
         self.history_generation += 1
@@ -1224,6 +1281,7 @@ class StudioPanel(QtWidgets.QWidget):
         def current():
             return (not settled and not self.closed and self.history_request is request and self.thread_id == thread_id
                     and generation == self.connection_generation and history_generation == self.history_generation
+                    and account_revision == self.account_revision
                     and thread_id not in self.deleted_threads and thread_id not in self.archived_threads)
 
         def finish(*, pending=True):
@@ -1236,6 +1294,10 @@ class StudioPanel(QtWidgets.QWidget):
 
         def loaded(value):
             if not current():
+                return
+            if value.get("account_revision") not in {None, account_revision}:
+                finish(pending=False)
+                self.refresh()
                 return
             try:
                 self.validate_history(value, thread_id)
@@ -1252,6 +1314,7 @@ class StudioPanel(QtWidgets.QWidget):
                 self.show_notice(value.get("history_message", "会话历史尚未物化，可继续当前对话。"))
             else:
                 self.transcript.hydrate(value.get("thread"), generation=generation, revision=history_generation, older=older)
+                self.confirm_history_submissions(value)
             if not turn_id:
                 self.history_cursor = value.get("next_cursor")
                 self.transcript.older.setVisible(bool(self.history_cursor))
@@ -1356,6 +1419,10 @@ class StudioPanel(QtWidgets.QWidget):
             previous_cursor = sequence
             params, method = event.get("params", {}), event.get("method", "")
             event_thread = params.get("threadId")
+            if method in {"item/started", "item/completed"}:
+                item = params.get("item") or {}
+                self.confirm_submission_item(event_thread, params.get("turnId"), item,
+                                             value.get("connection_generation"))
             if method in {"thread/name/updated", "thread/archived", "thread/unarchived", "thread/deleted"}:
                 self.threads_generation += 1
                 if method == "thread/deleted":
@@ -1386,19 +1453,135 @@ class StudioPanel(QtWidgets.QWidget):
                 self.schedule_history(turn_id=turn_id)
             if method == "turn/completed":
                 turn_id = (params.get("turn") or {}).get("id") or params.get("turnId")
+                if turn_id == self.state.get("turn_id"):
+                    status = (params.get("turn") or {}).get("status", "completed")
+                    if status in {"completed", "interrupted", "failed"}:
+                        self.state.setdefault("codex", {})["state"] = status
+                        self.revision += 1
+                if self.awaiting_start and self.awaiting_start.get("turn_id") == turn_id:
+                    self.awaiting_start = None
                 if turn_id in recovery:
                     self.schedule_history(turn_id=turn_id, terminal=True)
             if method in {"error", "warning"}:
                 error = params.get("error") or {}
                 self.show_notice(error.get("message") or params.get("message") or method)
         self.cursor = max(previous_cursor, value.get("cursor", previous_cursor))
+        self.update_controls()
+
+    def native_submission_unresolved(self):
+        if self.state.get("submission_storage_fault"):
+            return True
+        records = list(self.state.get("unresolved_submissions") or [])
+        if isinstance(self.state.get("user_submission"), dict):
+            records.append(self.state["user_submission"])
+        return any(isinstance(record, dict) and record.get("state") in {"pending", "unknown"}
+                   and record.get("client_user_message_id") not in self.awaiting_native for record in records)
+
+    def recovery_binding_current(self, binding):
+        return (isinstance(binding, dict) and isinstance(self.native_generation, str)
+                and binding.get("connection_generation") == self.native_generation
+                and type(binding.get("account_revision")) is int
+                and binding["account_revision"] == self.account_revision)
+
+    def submission_source_current(self, snapshot):
+        if "recovery_binding" in snapshot:
+            return self.recovery_binding_current(snapshot["recovery_binding"])
+        # Locally composed input already has this connection's account fence.
+        # A saved/imported input requires Bridge's independently confirmed binding.
+        return (snapshot.get("connection_generation") == self.native_generation
+                and snapshot.get("account_revision") == self.account_revision)
+
+    def submission_account_blocked(self):
+        return any(isinstance(record, dict) and record.get("state") in {"pending", "unknown"}
+                   and "recovery_binding" in record and not self.recovery_binding_current(record["recovery_binding"])
+                   for record in self.state.get("unresolved_submissions", []))
+
+    def query_submission_snapshot(self):
+        return next((snapshot for snapshot in self.visible_retained_submissions()
+                     if snapshot.get("state") in {"pending", "unknown"}), None)
+
+    def send_intent(self):
+        codex = self.state.get("codex", {})
+        native = codex.get("state")
+        if (not self.bridge_connected or not self.logged_in or not self.account_known or not self.thread_id
+                or self.thread_id in self.deleted_threads or self.thread_id in self.archived_threads
+                or not isinstance(self.native_generation, str) or not self.native_generation
+                or type(self.account_revision) is not int or not codex.get("alive")
+                or self.switching or self.submitting or self.uncertain_send or self.reconciling
+                or self.awaiting_start or self.stop_pending or self.stop_unconfirmed or self.native_submission_unresolved()
+                or any(card.response_unknown for card in self.request_cards.values())
+                or native == "stopping" or codex.get("stop_requested") and native in {"starting", "running", "stopping"}):
+            return None
+        if native == "running" and isinstance(self.state.get("turn_id"), str) and self.state["turn_id"]:
+            return "steer"
+        runtime = self.state.get("runtime", {})
+        if (type(self.state.get("turn_revision")) is not int
+                or native not in {"idle", "completed", "failed", "interrupted"} or runtime.get("main_thread_busy")
+                or runtime.get("active_operation_id") or runtime.get("queue_depth", 0) or runtime.get("storage_fault")):
+            return None
+        settings = self.model_controls.request_settings()
+        return "start" if settings and settings["expected_thread_id"] == self.thread_id else None
+
+    def snapshot_visible(self, snapshot):
+        return (not self.closed and snapshot.get("thread_id") == self.thread_id
+                and snapshot.get("draft_key") == self.draft_key
+                and self.submission_source_current(snapshot)
+                and snapshot.get("account_revision") == self.account_revision
+                and snapshot.get("connection_generation") == self.native_generation
+                and self.thread_id not in self.deleted_threads and self.thread_id not in self.archived_threads)
+
+    def visible_retained_submissions(self):
+        records = dict(self.retained_submissions)
+        if self.pending_submission is not None:
+            records[self.pending_submission["client_user_message_id"]] = self.pending_submission
+        return [snapshot for snapshot in records.values() if (snapshot.get("thread_id") == self.thread_id
+                or self.thread_id is None and self.recovery_binding_current(snapshot.get("recovery_binding")))
+                and self.submission_source_current(snapshot)
+                and snapshot.get("state") in {"pending", "unknown", "not_submitted"}]
+
+    @staticmethod
+    def matching_submission(record, snapshot):
+        if not isinstance(record, dict):
+            return False
+        return all(record.get(key) == snapshot.get(key) for key in
+                   ("client_user_message_id", "intent", "connection_generation", "account_revision", "thread_id",
+                    "expected_turn_id"))
+
+    def clear_sent_draft(self):
+        cursor = self.input.textCursor()
+        cursor.beginEditBlock()
+        cursor.select(QtGui.QTextCursor.Document)
+        cursor.removeSelectedText()
+        cursor.endEditBlock()
+        self.attachments = []
+        self.selection_reference = None
+        self.save_draft()
+        self.render_attachments()
+        self.render_reference()
+
+    def restore_rejected_draft(self, snapshot):
+        if (not self.snapshot_visible(snapshot) or self.input.toPlainText()
+                or self.composer_preedit() or self.attachments or self.selection_reference):
+            return False
+        self.input.insertPlainText(snapshot["text"])
+        self.attachments = copy.deepcopy(snapshot["attachments"])
+        self.selection_reference = copy.deepcopy(snapshot["selection"])
+        self.save_draft()
+        self.render_attachments()
+        self.render_reference()
+        return True
+
+    def composer_preedit(self):
+        layout = self.input.textCursor().block().layout()
+        return bool(layout and layout.preeditAreaText())
 
     def send(self):
-        if not self.send_button.isEnabled():
+        if not self.send_button.isEnabled() or self.composer_preedit():
             return
-        settings = self.model_controls.request_settings()
-        if settings is None or settings["expected_thread_id"] != self.thread_id:
+        intent = self.send_intent()
+        if intent is None:
             return
+        settings = self.model_controls.request_settings() if intent == "start" else None
         text = self.input.toPlainText().strip()
         if self.selection_reference:
             reference = self.selection_reference
@@ -1406,110 +1589,145 @@ class StudioPanel(QtWidgets.QWidget):
         if len(text) > 64000:
             self.show_notice("消息含选择引用后超过 64000 字符，请缩短后发送。")
             return
-        body = {"text": text, "attachments": [item["attachment_id"] for item in self.attachments]}
-        body.update(settings)
+        message_id = self.native_generation + "." + new_id()
+        body = {"text": text, "attachments": [item["attachment_id"] for item in self.attachments],
+                "client_user_message_id": message_id, "connection_generation": self.native_generation,
+                "account_revision": self.account_revision, "expected_thread_id": self.thread_id,
+                "draft_text": self.input.toPlainText(), "draft_version": self.input.document().revision(),
+                "selection_reference": copy.deepcopy(self.selection_reference)}
+        if intent == "start":
+            body.update(settings)
+            body["expected_turn_revision"] = self.state["turn_revision"]
+        else:
+            body["expected_turn_id"] = self.state["turn_id"]
         self.save_draft()
         self.submitting = True
-        self.pending_submission = {"thread_id": self.thread_id, "text": self.input.toPlainText(),
+        snapshot = self.pending_submission = {"thread_id": self.thread_id, "text": self.input.toPlainText(),
                                    "document_revision": self.input.document().revision(), "request_text": text,
                                    "attachments": [dict(item) for item in self.attachments],
-                                   "selection": self.selection_reference,
-                                   "seen_items": {(key.turn, key.item) for key in self.transcript.cards},
-                                   "history_known": (self.transcript.history_known and not self.hydrating
-                                                     or self.confirmed_new_thread == self.thread_id
-                                                     and self.transcript.last_turn_id is None),
-                                   "last_turn_id": self.transcript.last_turn_id}
-        self.pending_submission.update(draft_key=self.draft_key, draft=self.drafts[self.draft_key],
-                                       settings=dict(settings), previous_turn_settings=self.state.get("turn_settings"),
-                                       previous_turn_id=self.state.get("turn_id"))
-        self.state["turn_id"] = None
-        self.state["turn_settings"] = {"thread_id": self.thread_id, "turn_id": None,
-                                       "requested_model": settings["model"], "requested_effort": settings.get("effort"),
-                                       "model": settings["model"], "effort": settings.get("effort"),
-                                       "confirmation": "requested", "from_model": None, "reason": None}
+                                   "selection": copy.deepcopy(self.selection_reference),
+                                   "client_user_message_id": message_id, "intent": intent,
+                                   "connection_generation": self.native_generation, "account_revision": self.account_revision,
+                                   "expected_turn_id": body.get("expected_turn_id"), "turn_id": None,
+                                   "state": "pending", "forward_attempted": False,
+                                   "draft_key": self.draft_key, "settings": copy.deepcopy(settings),
+                                   "previous_turn_id": self.state.get("turn_id")}
+        self.clear_sent_draft()
         self.revision += 1
         self.update_controls()
         self.show_notice("")
-        submitted_thread = self.thread_id
-        if not self.call("POST", "/turn", body,
-                         done=lambda value: self.sent(value) if submitted_thread not in self.deleted_threads else None,
-                         failed=lambda message: self.send_failed(message) if submitted_thread not in self.deleted_threads else None):
-            self.submitting = False
-            self.state["turn_settings"] = self.pending_submission.get("previous_turn_settings")
-            self.state["turn_id"] = self.pending_submission.get("previous_turn_id")
-            self.pending_submission = None
-            self.show_notice("连接尚未就绪，消息未发出。草稿已保留。")
-            self.update_controls()
+        snapshot["forward_attempted"] = None  # HTTP dispatch cannot prove native forwarding.
+        if not self.call("POST", "/turn" if intent == "start" else "/turn/steer", body,
+                         done=lambda value: self.sent(value, snapshot),
+                         failed=lambda message: self.send_failed(message, snapshot)):
+            snapshot["forward_attempted"] = False
+            self.send_failed(ApiFailure("连接尚未就绪，消息未发出。", submission_state="not_submitted"), snapshot)
 
-    def sent(self, value):
+    def sent(self, value, snapshot=None):
         if self.closed:
             return
-        if not (value.get("turn") or {}).get("id"):
-            self.send_failed("提交响应缺少原生消息轮次；请查询提交状态。")
+        snapshot = snapshot or self.pending_submission
+        if snapshot is None or snapshot["thread_id"] in self.deleted_threads:
             return
-        self.submitting = False
-        self.revision += 1
-        native_status = value.get("turn", {}).get("status", "inProgress")
-        self.state["codex"] = {**self.state.get("codex", {}),
-                               "state": "running" if native_status == "inProgress" else native_status}
-        self.state["turn_id"] = value["turn"]["id"]
-        if value.get("turn_settings"):
-            self.state["turn_settings"] = value["turn_settings"]
-        self.accept_submission()
-        for item in value.get("turn", {}).get("items", []):
-            self.transcript.put(item, turn_id=value["turn"]["id"])
-        self.refresh()
-        self.update_controls()
+        record = value.get("submission") if isinstance(value, dict) else None
+        if not self.matching_submission(record, snapshot):
+            self.send_failed(ApiFailure("提交回应与原消息身份不匹配，请查询原提交。", submission_state="unknown"), snapshot)
+            return
+        self.settle_submission(record, snapshot)
 
-    def accept_submission(self):
-        snapshot = self.pending_submission
-        if snapshot and snapshot.get("draft_key") == self.draft_key:
-            self.save_draft()
-        draft = self.drafts.get(snapshot.get("draft_key"), snapshot.get("draft")) if snapshot else None
-        if draft and (draft["document"].revision() == snapshot["document_revision"]
-                      and draft["document"].toPlainText() == snapshot["text"]
-                      and draft["attachments"] == snapshot["attachments"]
-                      and draft["selection"] == snapshot["selection"]):
-            # One deliberate edit after acknowledgement; native undo remains available.
-            cursor = QtGui.QTextCursor(draft["document"])
-            cursor.beginEditBlock()
-            cursor.select(QtGui.QTextCursor.Document)
-            cursor.removeSelectedText()
-            cursor.endEditBlock()
-            draft["attachments"].clear()
-            draft["selection"] = None
-            if snapshot.get("draft_key") == self.draft_key:
-                self.selection_reference = None
-                self.render_attachments()
-                self.render_reference()
-        elif snapshot:
-            self.show_notice("消息已确认提交；等待期间编辑的草稿已保留。")
-        self.pending_submission = None
-        self.confirmed_new_thread = None
-        self.uncertain_send = False
-        self.pending_preview.hide()
+    def settle_submission(self, record, snapshot):
+        if not self.matching_submission(record, snapshot) or snapshot["thread_id"] in self.deleted_threads:
+            return
+        if "recovery_binding" in record:
+            if not self.recovery_binding_current(record["recovery_binding"]):
+                return
+            snapshot["recovery_binding"] = copy.deepcopy(record["recovery_binding"])
+        elif not self.submission_source_current(snapshot):
+            return
+        state = record.get("state")
+        if state not in {"accepted", "not_submitted", "pending", "unknown"}:
+            self.send_failed(ApiFailure("提交回应缺少明确接纳状态。", submission_state="unknown"), snapshot)
+            return
+        if snapshot["state"] == "accepted" and state != "accepted":
+            return  # A stale error/unknown cannot undo exact native acceptance.
+        turn_id = record.get("turn_id")
+        if state == "accepted" and (not isinstance(turn_id, str) or not turn_id
+                                     or snapshot["intent"] == "steer" and turn_id != snapshot["expected_turn_id"]):
+            self.send_failed(ApiFailure("接纳回应的任务身份不匹配。", submission_state="unknown"), snapshot)
+            return
+        if (state == snapshot["state"] and (turn_id is None or turn_id == snapshot.get("turn_id"))
+                and (not record.get("native_item_id") or record["native_item_id"] == snapshot.get("native_item_id"))
+                and record.get("forward_attempted", snapshot["forward_attempted"]) == snapshot["forward_attempted"]):
+            return
+        owned = self.pending_submission is snapshot
+        visible = self.snapshot_visible(snapshot)
+        snapshot.update(state=state, turn_id=turn_id or snapshot.get("turn_id"),
+                        forward_attempted=record.get("forward_attempted", snapshot["forward_attempted"]))
+        if state == "accepted":
+            message_id = snapshot["client_user_message_id"]
+            if (self.state.get("user_submission") or {}).get("client_user_message_id") == message_id:
+                self.state["user_submission"] = dict(record)
+            self.state["unresolved_submissions"] = [item for item in self.state.get("unresolved_submissions", [])
+                                                    if item.get("client_user_message_id") != message_id]
+            self.retained_submissions.pop(message_id, None)
+            if record.get("native_item_id"):
+                snapshot["native_item_id"] = record["native_item_id"]
+                self.awaiting_native.pop(message_id, None)
+            elif not snapshot.get("native_item_id"):
+                self.awaiting_native[message_id] = snapshot
+            if owned:
+                self.pending_submission = None
+                self.submitting = self.uncertain_send = False
+                self.reconciling = False
+                self.reconcile_request = None
+                self.confirmed_new_thread = None
+            if (owned and visible and snapshot["intent"] == "start"
+                    and turn_id not in self.transcript.projection.closed_turns
+                    and self.state.get("turn_id") in {None, snapshot["previous_turn_id"]}):
+                self.awaiting_start = {key: snapshot.get(key) for key in ("client_user_message_id", "thread_id", "turn_id")}
+            if owned and visible:
+                self.show_notice("引导已接纳。" if snapshot["intent"] == "steer" else "消息已接纳。")
+        elif state == "not_submitted":
+            if owned:
+                self.pending_submission = None
+                self.submitting = self.uncertain_send = False
+            if not self.restore_rejected_draft(snapshot):
+                self.retained_submissions[snapshot["client_user_message_id"]] = snapshot
+            if visible:
+                error = record.get("error") or {}
+                self.show_notice("未发送，内容已保留。" + str(error.get("message", "")), failure=error or None)
+        else:
+            if owned:
+                self.submitting = state == "pending"
+                self.uncertain_send = state == "unknown"
+            if state == "unknown" and visible:
+                self.show_notice("发送结果待确认；原消息和图片已保留，请查询原提交。")
+        if owned or visible:
+            self.revision += 1
+            self.update_controls()
+            if state == "accepted" and owned:
+                self.refresh()
 
-    def send_failed(self, message):
-        self.submitting = False
-        self.uncertain_send = getattr(message, "submission_state", None) != "not_submitted"
-        if not self.uncertain_send:
-            if self.pending_submission:
-                self.state["turn_settings"] = self.pending_submission.get("previous_turn_settings")
-                self.state["turn_id"] = self.pending_submission.get("previous_turn_id")
-            self.pending_submission = None
-        self.revision += 1
-        prefix = ("提交未确认，原消息和图片已保留。请查询提交状态，避免重复发送。\n" if self.uncertain_send else
-                  "提交被拒绝，输入已保留。修正后可以再次发送。\n")
-        self.show_notice(prefix + str(message), failure=message)
-        self.refresh()
-        self.update_controls()
-        if self.uncertain_send:
-            self.reconcile()  # One read after loss; never submit again or loop over history.
+    def send_failed(self, message, snapshot=None):
+        snapshot = snapshot or self.pending_submission
+        if (snapshot is None or snapshot["state"] == "accepted" or snapshot["thread_id"] in self.deleted_threads):
+            return
+        state = "not_submitted" if getattr(message, "submission_state", None) == "not_submitted" else "unknown"
+        record = {key: snapshot.get(key) for key in ("client_user_message_id", "intent", "connection_generation",
+                  "account_revision", "thread_id", "expected_turn_id", "turn_id", "forward_attempted")}
+        record.update(state=state, error={"message": str(message), "code": getattr(message, "code", None),
+                                        "details": getattr(message, "details", None)})
+        self.settle_submission(record, snapshot)
+        if self.snapshot_visible(snapshot):
+            self.refresh()
+            if state == "unknown":
+                self.reconcile()  # One read of the original identity; never resubmit.
 
     def stop(self):
         if not self.stop_button.isEnabled():
             return
         self.stop_pending = True
+        self.stop_unconfirmed = True
         self.revision += 1
         self.show_notice("正在请求停止后续工作；Houdini 当前操作仍需单独确认。")
         self.update_controls()
@@ -1517,6 +1735,7 @@ class StudioPanel(QtWidgets.QWidget):
 
     def stopped(self, value):
         self.stop_pending = False
+        self.stop_unconfirmed = False
         # Bridge acknowledged the request; retain that fact while the next
         # state read is in flight. This does not establish HOM cancellation.
         self.state.setdefault("codex", {})["stop_requested"] = True
@@ -1534,6 +1753,7 @@ class StudioPanel(QtWidgets.QWidget):
 
     def stop_failed(self, message):
         self.stop_pending = False
+        self.stop_unconfirmed = True
         self.revision += 1
         self.show_notice("停止请求未确认：" + str(message), failure=message)
         self.refresh()
@@ -1545,25 +1765,48 @@ class StudioPanel(QtWidgets.QWidget):
         self.reconciling = True
         self.revision += 1
         self.update_controls()
-        revision, generation = self.revision, self.connection_generation
-        self.call("POST", "/reconcile", {},
-                  done=lambda value: self.reconciled(value) if revision == self.revision
-                  and generation == self.connection_generation else None,
-                  failed=lambda message: self.reconcile_failed(message) if revision == self.revision
-                  and generation == self.connection_generation else None, unique=True)
+        scope = self.thread_id, self.revision
+        request = self.reconcile_request = object()
+        snapshot = self.query_submission_snapshot()
+        body = {"client_user_message_id": snapshot["client_user_message_id"]} if snapshot else {}
+        self.call("POST", "/reconcile", body,
+                  done=lambda value: self.reconciled(value, snapshot, scope) if self.reconcile_request is request else None,
+                  failed=lambda message: self.reconcile_failed(message) if self.reconcile_request is request else None,
+                  unique=True)
 
-    def reconciled(self, value):
+    def reconciled(self, value, snapshot=None, scope=None):
+        if (value.get("connection_generation") not in {None, self.native_generation}
+                or value.get("account_revision") not in {None, self.account_revision}):
+            return
+        current_scope = scope is None or scope == (self.thread_id, self.revision)
+        self.reconcile_request = None
         self.reconciling = False
         self.revision += 1
+        snapshot = snapshot or self.pending_submission
+        record = value.get("submission")
+        accepted = False
+        if snapshot and self.matching_submission(record, snapshot):
+            self.settle_submission(record, snapshot)
+            accepted = snapshot["state"] == "accepted"
+        if not current_scope:
+            self.update_controls()
+            return
+        if snapshot and snapshot["thread_id"] != self.thread_id:
+            # A fresh Bridge need not resume/select the original Thread to
+            # recover its one unresolved input. Never hydrate that other Thread.
+            self.show_notice("已在原生会话中确认原消息；可以重新选择对话。" if accepted else
+                             "原消息是否提交仍待确认；内容已保留，可再次查询原提交。")
+            self.refresh()
+            self.update_controls()
+            return
         if (value.get("thread") or {}).get("id") not in {None, self.thread_id}:
             self.show_notice("收到其他会话的迟到状态；原消息与草稿继续保留。")
             self.refresh()
             self.update_controls()
             return
         if value.get("reconciled"):
-            accepted = self.submission_in_history(value)
-            if accepted:
-                self.accept_submission()
+            self.confirm_history_submissions(value)
+            accepted = accepted or bool(snapshot and snapshot["state"] == "accepted")
             if value.get("codex_state"):
                 self.state["codex"] = {**self.state.get("codex", {}), "state": value["codex_state"]}
             if value.get("history_available") is not False:
@@ -1578,29 +1821,118 @@ class StudioPanel(QtWidgets.QWidget):
         self.refresh()
         self.update_controls()
 
-    def submission_in_history(self, value):
-        snapshot, thread = self.pending_submission, value.get("thread") or {}
-        if (not snapshot or not snapshot["history_known"] or value.get("history_available") is False
-                or thread.get("id") != snapshot["thread_id"]):
+    def submission_in_history(self, value, snapshot=None):
+        snapshot, thread = snapshot or self.pending_submission, value.get("thread") or {}
+        if (not snapshot or value.get("history_available") is False
+                or thread.get("id") != snapshot["thread_id"]
+                or value.get("connection_generation") != self.native_generation
+                or not self.submission_source_current(snapshot)):
             return False
-        turns = thread.get("turns", [])
-        previous = snapshot["last_turn_id"]
-        start = next((i + 1 for i, turn in enumerate(turns) if turn.get("id") == previous), None) if previous else 0
-        if start is None:
-            return False  # A truncated read cannot establish what came after our snapshot.
-        for turn in turns[start:]:
+        for turn in thread.get("turns", []):
             for item in turn.get("items", []):
-                if item.get("type") != "userMessage" or not item.get("id") or (turn.get("id"), item["id"]) in snapshot["seen_items"]:
-                    continue
-                content = item.get("content") or []
-                text = "\n\n".join(block.get("text", "") for block in content if block.get("type") == "text")
-                images = [block.get("path") for block in content if block.get("type") == "localImage"]
-                if (text == snapshot["request_text"] and images == [image["path"] for image in snapshot["attachments"]]
-                        and not any(block.get("type") == "image" for block in content)):
+                if self.matching_native_item(snapshot, thread["id"], turn.get("id"), item):
                     return True
         return False
 
+    @staticmethod
+    def matching_native_item(snapshot, thread_id, turn_id, item):
+        expected = snapshot.get("expected_turn_id") if snapshot["intent"] == "steer" else snapshot.get("turn_id")
+        return (thread_id == snapshot["thread_id"] and isinstance(turn_id, str) and bool(turn_id)
+                and (expected is None or expected == turn_id) and item.get("type") == "userMessage"
+                and bool(item.get("id")) and item.get("clientId") == snapshot["client_user_message_id"]
+                and snapshot["client_user_message_id"].startswith(snapshot["connection_generation"] + "."))
+
+    def submission_snapshot(self, message_id):
+        if self.pending_submission and self.pending_submission["client_user_message_id"] == message_id:
+            return self.pending_submission
+        return self.awaiting_native.get(message_id) or self.retained_submissions.get(message_id)
+
+    def confirm_submission_item(self, thread_id, turn_id, item, source_generation):
+        snapshot = self.submission_snapshot(item.get("clientId"))
+        if (snapshot is None or source_generation != self.native_generation
+                or not self.submission_source_current(snapshot)
+                or not self.matching_native_item(snapshot, thread_id, turn_id, item)):
+            return
+        record = {key: snapshot.get(key) for key in ("client_user_message_id", "intent", "connection_generation",
+                  "account_revision", "thread_id", "expected_turn_id", "forward_attempted")}
+        record.update(state="accepted", turn_id=turn_id, native_item_id=item["id"])
+        self.settle_submission(record, snapshot)
+
+    def confirm_history_submissions(self, value):
+        if (value.get("history_available") is False
+                or value.get("account_revision") not in {None, self.account_revision}):
+            return
+        thread = value.get("thread") or {}
+        for turn in thread.get("turns", []):
+            for item in turn.get("items", []):
+                if item.get("type") == "userMessage":
+                    self.confirm_submission_item(thread.get("id"), turn.get("id"), item,
+                                                 value.get("connection_generation"))
+
+    def apply_submission_state(self, value):
+        if (value.get("connection_generation") != self.native_generation
+                or value.get("account_revision") != self.account_revision):
+            return
+        records = list(value.get("unresolved_submissions") or [])
+        if isinstance(value.get("user_submission"), dict):
+            records.append(value["user_submission"])
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            message_id = record.get("client_user_message_id")
+            snapshot = self.submission_snapshot(message_id)
+            if snapshot is not None and self.matching_submission(record, snapshot) and "recovery_binding" in record:
+                snapshot["recovery_binding"] = copy.deepcopy(record["recovery_binding"])
+            if snapshot is None and record.get("state") in {"pending", "unknown"}:
+                payload = record.get("snapshot")
+                if (not isinstance(payload, dict) or self.thread_id not in {None, record.get("thread_id")}
+                        or not self.recovery_binding_current(record.get("recovery_binding"))
+                        or record.get("intent") not in {"start", "steer"} or not isinstance(message_id, str)
+                        or not isinstance(record.get("connection_generation"), str)
+                        or not message_id.startswith(record["connection_generation"] + ".")
+                        or not self.valid_recovery_payload(payload)):
+                    continue
+                snapshot = {key: record.get(key) for key in ("client_user_message_id", "intent", "connection_generation",
+                    "account_revision", "thread_id", "expected_turn_id", "turn_id", "state", "forward_attempted", "recovery_binding")}
+                snapshot.update(text=payload.get("draft_text", payload.get("text", "")),
+                    request_text=payload.get("text", ""), attachments=copy.deepcopy(payload.get("attachments", [])),
+                    selection=copy.deepcopy(payload.get("selection_reference")), document_revision=payload.get("draft_version"),
+                    draft_key=record["thread_id"], settings=None, previous_turn_id=self.state.get("turn_id"))
+                snapshot["state"] = "unobserved"
+                if self.pending_submission is None:
+                    self.pending_submission = snapshot
+                else:
+                    self.retained_submissions[message_id] = snapshot
+            if snapshot is not None:
+                self.settle_submission(record, snapshot)
+        if self.awaiting_start:
+            snapshot = self.awaiting_start
+            native = value.get("codex", {}).get("state")
+            last = value.get("user_submission") or {}
+            if (value.get("thread_id") != snapshot["thread_id"]
+                    or value.get("turn_id") == snapshot.get("turn_id")
+                    or last.get("client_user_message_id") == snapshot["client_user_message_id"]
+                    and native in {"idle", "completed", "failed", "interrupted"}):
+                self.awaiting_start = None
+
+    @staticmethod
+    def valid_recovery_payload(payload):
+        if (not isinstance(payload.get("text"), str)
+                or not isinstance(payload.get("draft_text", payload["text"]), str)):
+            return False
+        attachments = payload.get("attachments", [])
+        if (not isinstance(attachments, list) or len(attachments) > 8
+                or any(not isinstance(item, dict) or item.get("status") != "ready"
+                       or any(not isinstance(item.get(key), str) or not item[key]
+                              for key in ("attachment_id", "name", "path")) for item in attachments)):
+            return False
+        selection = payload.get("selection_reference")
+        return selection is None or (isinstance(selection, dict) and isinstance(selection.get("scene_epoch"), str)
+            and isinstance(selection.get("nodes"), list)
+            and all(isinstance(path, str) for path in selection["nodes"]))
+
     def reconcile_failed(self, message):
+        self.reconcile_request = None
         self.reconciling = False
         self.revision += 1
         self.show_notice(message)

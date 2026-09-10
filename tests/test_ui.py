@@ -46,6 +46,7 @@ class PanelTest(unittest.TestCase):
 
     def idle(self):
         self.api.state["codex"]["state"] = "idle"
+        self.api.state["turn_id"] = None
         self.api.state["runtime"].update(main_thread_busy=False, active_operation_id=None, queue_depth=0)
         self.panel.apply_state(copy.deepcopy(self.api.state))
 
@@ -72,7 +73,9 @@ class PanelTest(unittest.TestCase):
         self.panel.apply_state(copy.deepcopy(self.api.state))
         self.assertIn("等待主线程", self.panel.runtime_label.text())
         self.assertFalse(self.panel.send_button.isEnabled())
-        self.assertIs(self.panel.action_slot.currentWidget(), self.panel.stop_button)
+        self.assertTrue(self.panel.send_button.isVisible())
+        self.assertTrue(self.panel.stop_button.isVisible())
+        self.assertTrue(self.panel.stop_button.isEnabled())
 
     def test_decision_save_preserves_later_draft_and_failure(self):
         editor = self.panel.decision_input
@@ -200,9 +203,14 @@ class PanelTest(unittest.TestCase):
         self.api.errors["/turn"] = "response lost"
         self.panel.send()
         process_until(lambda: self.panel.uncertain_send)
-        self.assertEqual(self.panel.input.toPlainText(), "Change only roughness")
+        self.assertEqual(self.panel.input.toPlainText(), "")
+        self.assertEqual(self.panel.pending_submission["text"], "Change only roughness")
+        self.panel.toggle_pending_submission()
+        self.assertIn("Change only roughness", self.panel.pending_preview.toPlainText())
+        self.panel.input.setPlainText("Next editable draft")
         self.assertFalse(self.panel.send_button.isEnabled())
         self.panel.send()
+        self.assertEqual(self.panel.input.toPlainText(), "Next editable draft")
         self.assertEqual(sum(path == "/turn" for _, path, _ in self.api.calls), 1)
 
     def test_history_receives_live_events_without_buffering(self):
@@ -247,14 +255,18 @@ class PanelTest(unittest.TestCase):
     def test_definite_submission_rejection_preserves_editing_without_reconcile(self):
         self.idle()
         self.panel.input.setPlainText("Edit this input")
-        self.panel.submitting = True
+        self.api.hold["/turn"] = []
+        self.panel.send()
+        _, failed, _ = self.api.hold["/turn"].pop()
         failure = ApiFailure("Missing attachment", code="ATTACHMENT_NOT_FOUND", status=400,
                              submission_state="not_submitted", details={"attachment_id": "missing-image"})
-        self.panel.send_failed(failure)
-        self.assertIs(self.panel.error_details.failure, failure)
+        failed(failure)
+        self.assertEqual(self.panel.error_details.failure, {"message": str(failure),
+                         "code": failure.code, "details": failure.details})
         self.assertFalse(self.panel.uncertain_send)
         self.assertEqual(self.panel.input.toPlainText(), "Edit this input")
         self.assertTrue(self.panel.send_button.isEnabled())
+        self.assertFalse(any(path == "/reconcile" for _, path, _ in self.api.calls))
 
     def test_native_approval_and_question_require_explicit_action(self):
         approval = {"request_id": 7, "method": "item/commandExecution/requestApproval", "params": {
