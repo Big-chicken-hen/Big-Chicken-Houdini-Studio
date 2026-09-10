@@ -1,7 +1,14 @@
 # Rebuild contract
 
-The [Release Readiness approval](release-readiness-brief.md) is now the current
-stage entry. It permits PR #10's technical merge (completed at `890284b`) while
+The [final release approval](final-release-brief.md) is the current stage entry.
+It approves PANEL-STEER-1 for first release and fixes the order within PR #14:
+R4-NET-1 correction, pinned native steer, final package and standard-user installed
+acceptance, then merge/release the same accepted installer bytes. Earlier record-only
+or deferred-steer wording below is historical. Preserve the three explicit gates;
+Dynamic Artwork stays post-release and no other feature/benchmark gate is added.
+
+The [Release Readiness approval](release-readiness-brief.md) established the prior
+stages. It permitted PR #10's technical merge (completed at `890284b`) while
 retaining all frozen [model results](model-acceptance-results.md). R1 merged as PR
 #11 at `fe57c7a`; its native-message/history fixes passed the [real Panel gate](r1-validation.md).
 [R2](r2-validation.md), merged as PR #12 at `2b180da`, simplifies scene instructions,
