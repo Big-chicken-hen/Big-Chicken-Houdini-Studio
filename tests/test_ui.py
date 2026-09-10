@@ -313,10 +313,12 @@ class PanelTest(unittest.TestCase):
     def test_launcher_ready_remains_owned_and_busy_selection_cannot_relaunch(self):
         launcher, services = make_fixture_window(records=[])
         launcher.empty_button.click()
+        launcher.launch_button.click()
         process_until(lambda: len(services.launches) == 1 and not launcher._pending)
-        self.assertEqual(launcher.current_page, "launching")
+        self.assertEqual(launcher.current_page, "flow")
         self.assertFalse(launcher.empty_button.isEnabled())
         launcher.empty_button.click()
+        launcher.launch_button.click()
         request_id = services.launches[0][1]
         services.admissions[request_id].update(state="unknown")
         launcher.query_launch()
@@ -339,7 +341,7 @@ class PanelTest(unittest.TestCase):
         self.assertTrue(launcher.launch_back.isVisible())
         launcher.launch_back.click()
         process_until(lambda: not launcher._pending)
-        self.assertEqual(launcher.current_page, "home")
+        self.assertEqual(launcher.current_page, "flow")
         self.assertTrue(launcher.empty_button.isEnabled())
         self.assertEqual(len(services.launches), 1)
         launcher.close()

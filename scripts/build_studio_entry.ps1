@@ -7,5 +7,6 @@ if (-not (Test-Path -LiteralPath $studioCompiler -PathType Leaf)) {
     throw 'The Windows .NET Framework C# compiler is missing.'
 }
 $studioSource = Join-Path $studioRoot 'release\StudioLauncher.cs'
-& $studioCompiler /nologo /target:winexe /platform:x64 /optimize+ ('/out:' + $Output) $studioSource
+$studioIcon = Join-Path $studioRoot 'src\studio\ui\assets\launcher-artwork\studio.ico'
+& $studioCompiler /nologo /target:winexe /platform:x64 /optimize+ ('/win32icon:' + $studioIcon) ('/out:' + $Output) $studioSource
 if ($LASTEXITCODE -ne 0) { throw 'Studio.exe build failed.' }

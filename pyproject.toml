@@ -23,7 +23,8 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "studio.ui" = ["assets/lucide-0.468.0/*.svg", "assets/lucide-0.468.0/LICENSE",
-               "assets/lucide-0.468.0/LICENSE-Feather", "assets/lucide-0.468.0/README.md"]
+               "assets/lucide-0.468.0/LICENSE-Feather", "assets/lucide-0.468.0/README.md",
+               "assets/changa-one/*", "assets/launcher-artwork/*"]
 
 [tool.ruff]
 target-version = "py310"

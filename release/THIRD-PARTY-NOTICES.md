@@ -5,6 +5,12 @@ Houdini and account credentials are not distributed. Studio source is Apache-2.0
 its LICENSE is at the installation root. Only the 23 approved Lucide 0.468.0 SVG
 files are distributed, with their original Lucide/Feather licenses beside them.
 
+The Launcher hero uses the unmodified Changa One Italic face by Eduardo Tunni,
+under SIL Open Font License 1.1 (Reserved Font Name: Changa). Only the italic
+face is bundled; it is loaded locally by the Launcher, never installed as a
+system font. Its unchanged OFL.txt, official Google Fonts metadata and pinned
+revision/file hashes accompany it under src/studio/ui/assets/changa-one.
+
 CPython 3.13.15 is the official Windows x64 embeddable distribution, unmodified
 apart from its explicit module search path. Its license and bundled component
 notices are in PYTHON-LICENSE.txt. Source:

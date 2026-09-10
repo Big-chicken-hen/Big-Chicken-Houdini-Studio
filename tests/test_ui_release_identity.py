@@ -78,12 +78,14 @@ class ReleaseIdentityUiTests(unittest.TestCase):
         window._launch = confirmed_launch
         with patch('studio.ui.launcher.QtWidgets.QMessageBox.question', return_value=QtWidgets.QMessageBox.No):
             window.empty_button.click()
+            window.launch_button.click()
         self.assertIsNone(window._request_id)
-        self.assertEqual(window.current_page, 'home')
+        self.assertEqual(window.current_page, 'flow')
         self.assertEqual(confirmations, [])
         self.assertEqual(services.launches, [])
         with patch('studio.ui.launcher.QtWidgets.QMessageBox.question', return_value=QtWidgets.QMessageBox.Yes) as question:
             window.empty_button.click()
+            window.launch_button.click()
         request = window._request_id
         process_until(lambda: window._launch_phase is None)
         expected = {'request_id': request, 'path': 'C:/fixture/houdini.exe', 'version': '22.0.400'}
@@ -93,6 +95,7 @@ class ReleaseIdentityUiTests(unittest.TestCase):
         self.assertEqual(question.call_args.args[-1], QtWidgets.QMessageBox.No)
         self.assertEqual(window._snapshot['houdini']['compatibility']['status'], 'untested')
         window.empty_button.click()
+        window.launch_button.click()
         self.assertEqual(len(services.launches), 1)
 
     def test_failed_external_override_offers_explicit_bundled_recovery_without_automatic_probe(self):
@@ -119,6 +122,7 @@ class ReleaseIdentityUiTests(unittest.TestCase):
             with self.subTest(answer=answer, before_launch=before_launch):
                 window, services = self.window()
                 window.empty_button.click()
+                window.launch_button.click()
                 process_until(lambda: window._launch_phase is None)
                 record = {**window._launch_record, 'state': 'target_opened', 'target_opened': True,
                     'runtime_connected': True, 'houdini_confirmation': before_launch,
@@ -140,6 +144,7 @@ class ReleaseIdentityUiTests(unittest.TestCase):
                     self.assertFalse(window.minimize_timer.isActive())
                     self.assertEqual(services.remembered, [])
                 window.empty_button.click()
+                window.launch_button.click()
                 self.assertEqual(len(services.launches), 1)
 
     def test_panel_uses_registered_host_only_and_disconnect_removes_running_claim(self):

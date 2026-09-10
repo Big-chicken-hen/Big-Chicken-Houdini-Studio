@@ -1,5 +1,15 @@
 # Rebuild contract
 
+**Owner artwork correction (2026-09-10):** The owner explicitly requested the supplied Downloads illustration as the static Launcher background, a youthful white/blue palette, readable translucent nodes and the girl portrait as the Studio.exe icon. This overrides earlier Launcher pink/dark and no-brand-art restrictions. Use redesign-existing-projects only to improve this approved presentation. Keep the five-node topology, Changa hero, Lucide functional icons, native Qt, Panel presentation and execution architecture. Resources are bundled under src/studio/ui/assets/launcher-artwork; no runtime download.
+
+
+The [fixed node-flow Launcher approval](launcher-node-flow-brief.md) is the latest
+Launcher-only scope: Account -> three scene-source branches -> Launch. Selection
+is transient and cannot admit a workspace or start services; only the sink
+enters the existing request/prepare/launch/query lifecycle. This replaces the
+earlier staged Launcher UI, not its identity, uncertainty or process ownership
+contracts. Panel and runtime architecture remain frozen.
+
 The user's 2026-09-10 correction restores native Houdini user preferences for
 normal Studio launches, including an existing `HOUDINI_USER_PREF_DIR` override.
 Studio must not copy or rewrite preferences; project-local preferences remain
