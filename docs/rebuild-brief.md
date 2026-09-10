@@ -25,8 +25,10 @@ The integrated package reproduced [R4-NET-1](acceptance-issues.md), an
 intermittent native reply failure that prevented reliable history display.
 The local HTTP correction at `a5731cf` passed the [NET-1 gate](r4-net-validation.md)
 in two fresh actual-package Houdini processes. Earlier R1/R3 checks and the old
-failed package remain historical; native steer and final installed-user acceptance
-still have to pass.
+failed package remain historical. Native steer and the final-package regression
+now pass in [frozen candidate `991cbce`](r4-final-candidate.md); only the actual
+standard-user installed workflow remains untested. Preserve the candidate bytes
+and keep PR #14 Draft while that environment is unavailable.
 No new tool capability, second chat store or rendering expansion is approved.
 
 The independent [native conversation lifecycle approval](native-conversations-brief.md)
