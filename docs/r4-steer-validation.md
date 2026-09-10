@@ -2,14 +2,17 @@
 
 Recorded 2026-09-10 under the [final release approval](final-release-brief.md).
 The fixed Codex 0.153.4 protocol and focused transport/Bridge tests below passed.
-**Real Houdini model steering and the final Windows 11 standard-user installed
-workflow remain pending.** These controlled results do not close either gate.
+**Real Houdini model steering now passes in candidate `991cbce`; the final
+Windows 11 standard-user installed workflow remains pending.** The actual model,
+package and CI results are in the [frozen candidate record](r4-final-candidate.md).
+The controlled results below remain separately identified.
 
 This records the steering changes in `codex/windows-release-package`, PR #14,
 on the implementation worktree based on `58923ca3c2000424132cae8d2e6eb99451460062`.
-The native protocol/Bridge implementation is committed at `690362f`; the Panel
-integration is recorded in the following semantic commit. Final integrated CI and installer/build identity
-must be recorded after integration; no earlier package is the final steer candidate.
+The native protocol/Bridge implementation is committed at `690362f`, original-account
+recovery at `af5ee27` and Panel integration at `8292367`. Candidate `991cbce` includes
+these changes; all five CI jobs passed. Its source/builder commit and exact installer
+identity are recorded separately; no earlier package is the final steer candidate.
 The separate [NET-1 validation](r4-net-validation.md) preserves its completed
 package checks and original failure evidence.
 
@@ -135,12 +138,11 @@ query/history callback without changing later drafts.
 | Gate | Current status |
 | --- | --- |
 | Fixed-version native ordinary/special Turn behavior | Passed as controlled protocol evidence above. |
-| Focused Client, contract and Bridge faults | Passed at this implementation checkpoint; final integrated CI still pending. |
+| Focused Client, contract and Bridge faults | Passed locally; all candidate CI jobs passed at `991cbce`. |
 | Integrated Composer/Panel acceptance | Focused offscreen integration passed (tables above); real host/model checks remain separate. |
-| Real Houdini 22 model steering | **Pending.** Use the approved wall/window/reference-roof fixture and normal Composer. Record the two accepted additions in the original Turn, unchanged wall/window geometry, actual 0.25 m eaves and 35-degree symmetric pitch, and unchanged prior HOM/staged receipts. A Turn-ended refusal is race evidence, not a successful steer. |
-| Final steer-enabled package | **Pending.** Record final source/builder commits, build ID, dependency lock, installer SHA-256 and matching CI after integration. |
+| Real Houdini 22 model steering | **Passed.** Two additions accepted through normal Composer in the original Turn; three native inputs once each; all original wall/window/reference objects unchanged; 0.25 m eaves and symmetric 35-degree pitch. See the actual model/receipt/Panel evidence in the candidate record. |
+| Final steer-enabled package | **Built and frozen.** `0.1.0-rc.1-991cbce9c90e`; source/builder/lock/SHA-256, package integrity and matching CI are recorded. |
 | Windows 11 standard-user installed workflow | **Pending.** Use that same final package for official login, authoring with working-time steer, images, Save As/reopen/resume, diagnostics, upgrade, uninstall and retained data. No development-account substitute or copied authentication. |
 
-PR #14 remains Draft until the required real interaction, final candidate CI and
-standard-user gates pass. This document does not authorize release or mark the
-unavailable standard-user environment as tested.
+PR #14 remains Draft until the standard-user gate passes. This document does not
+authorize release or mark the unavailable standard-user environment as tested.

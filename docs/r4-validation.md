@@ -2,8 +2,9 @@
 
 Current scope is the [final release approval](final-release-brief.md). The
 NET-only package `a5731cf` passed its two fresh Houdini checks; see the separate
-[NET-1 validation](r4-net-validation.md). Native steer and the final standard-user
-installed workflow remain pending. The original packaging and failed integrated
+[NET-1 validation](r4-net-validation.md). Native steer passed in the
+[frozen final candidate](r4-final-candidate.md); the standard-user installed
+workflow remains pending. The original packaging and failed integrated
 candidate evidence below is preserved, not rewritten as a pass.
 
 Scope: [Release Readiness](release-readiness-brief.md), section G. Branch

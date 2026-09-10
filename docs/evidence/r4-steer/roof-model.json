@@ -1,0 +1,136 @@
+{
+  "source_commit": "991cbce9c90ef7e18dc9a2349ffc95082c5cb0b6",
+  "build_id": "0.1.0-rc.1-991cbce9c90e",
+  "thread_id": "01a08a61-068e-7450-a572-4b6bce305db4",
+  "turn_id": "01a08a61-0844-7da0-b4d4-deb70090b1cc",
+  "model": "gpt-6-astra",
+  "effort": "native default (no override)",
+  "duration_seconds": 105.113,
+  "same_turn_and_durable_result_passed": true,
+  "checks": {
+    "one_native_turn": true,
+    "one_turn_started": true,
+    "three_native_inputs_once_and_ordered": true,
+    "two_guidance_inputs_in_original_turn": true,
+    "all_model_receipts_durable_and_finished": true,
+    "original_tool_inputs_unchanged": true,
+    "seven_original_objects_unchanged": true,
+    "no_node_errors": true,
+    "seven_full_panel_messages_match_native": true,
+    "no_panel_script_errors": true
+  },
+  "inputs": [
+    {
+      "index": 0,
+      "intent": "start",
+      "client_user_message_id": "8eb3827ad4d84514b59445db428e5405.a25a7b87a48946c1b72d068481ab69a7",
+      "expected_turn_id": null,
+      "turn_id": "01a08a61-0844-7da0-b4d4-deb70090b1cc",
+      "state": "accepted",
+      "confirmation_source": "native_item",
+      "native_item_id": "01a08a61-21cd-7711-9b9d-61b69d74047e",
+      "clicked_at": 0.717,
+      "accepted_at": 0.828
+    },
+    {
+      "index": 1,
+      "intent": "steer",
+      "client_user_message_id": "8eb3827ad4d84514b59445db428e5405.d6566c04edbe4aeab8df527d88f27b21",
+      "expected_turn_id": "01a08a61-0844-7da0-b4d4-deb70090b1cc",
+      "turn_id": "01a08a61-0844-7da0-b4d4-deb70090b1cc",
+      "state": "accepted",
+      "confirmation_source": "native_item",
+      "native_item_id": "01a08a61-3d2c-7140-86b8-e3fd0e0941b5",
+      "clicked_at": 0.83,
+      "accepted_at": 0.941
+    },
+    {
+      "index": 2,
+      "intent": "steer",
+      "client_user_message_id": "8eb3827ad4d84514b59445db428e5405.dbeee56922b645a4a7ea3334902cded6",
+      "expected_turn_id": "01a08a61-0844-7da0-b4d4-deb70090b1cc",
+      "turn_id": "01a08a61-0844-7da0-b4d4-deb70090b1cc",
+      "state": "accepted",
+      "confirmation_source": "native_item",
+      "native_item_id": "01a08a61-3d37-70e1-af38-8f124d617e8b",
+      "clicked_at": 0.943,
+      "accepted_at": 1.041
+    }
+  ],
+  "receipts": [
+    {
+      "tool": "hia_context",
+      "operation_id": "b8e7c2504dd1428294c794f02dc1c4ea",
+      "state": "finished",
+      "scene_epoch": null,
+      "payload_hash": "f02bf2392964f3ff946032ebae41a7d88979c53d4a5719fe8b6116b2d8de891a",
+      "error": null,
+      "automatic_retry_safe": false,
+      "durable_equals_native": true
+    },
+    {
+      "tool": "hia_execute_hom",
+      "operation_id": "b8fad49d3fbe4c0ab6b542561ab78c51",
+      "state": "finished",
+      "scene_epoch": "160347e6fd7d456288acdef83fa0c04f",
+      "payload_hash": "f6cf90b2b1be07686cd56cdfaf404432513fece454684b751a7a36a67a9320ee",
+      "error": null,
+      "automatic_retry_safe": false,
+      "durable_equals_native": true
+    },
+    {
+      "tool": "hia_execute_hom",
+      "operation_id": "27d1ab9a2c8c4ef0a62ec53b7eecd090",
+      "state": "finished",
+      "scene_epoch": "160347e6fd7d456288acdef83fa0c04f",
+      "payload_hash": "93feed49752cca8625469d7a20347bee930af8f82cdc313a81a9b9b60917f99d",
+      "error": null,
+      "automatic_retry_safe": false,
+      "durable_equals_native": true
+    },
+    {
+      "tool": "hia_execute_hom",
+      "operation_id": "a977eff6ec0641abad8b74031b0321df",
+      "state": "finished",
+      "scene_epoch": "160347e6fd7d456288acdef83fa0c04f",
+      "payload_hash": "938a636aac23e81de23cafb03a455c5caedbb83e2d411fc8aefb2b7e1e353c4c",
+      "error": null,
+      "automatic_retry_safe": false,
+      "durable_equals_native": true
+    },
+    {
+      "tool": "hia_capture",
+      "operation_id": "6976006b0bc5463cbf7443208a4af53d",
+      "state": "finished",
+      "scene_epoch": "160347e6fd7d456288acdef83fa0c04f",
+      "payload_hash": "3151a3b1279c0346394aeb65e02fafa4144151074e753c5ff9a42755be79440e",
+      "error": null,
+      "automatic_retry_safe": false,
+      "durable_equals_native": true
+    },
+    {
+      "tool": "hia_execute_hom",
+      "operation_id": "4e52842ac20f4bb2890a1b24988b769f",
+      "state": "finished",
+      "scene_epoch": "160347e6fd7d456288acdef83fa0c04f",
+      "payload_hash": "772fd4c29d6fb81bcf367e158ad8c28aa8ff990ee5c84ee2965510e3d6a65761",
+      "error": null,
+      "automatic_retry_safe": false,
+      "durable_equals_native": true
+    }
+  ],
+  "observed_unchanged_tool_inputs": 4,
+  "scene_result": {
+    "object": "/obj/editable_roof",
+    "controls": {
+      "slope_deg": 35,
+      "eave_width": 0.25,
+      "roof_thickness": 0.2
+    }
+  },
+  "notes": [
+    "Guidance was accepted early in the same Turn, before the four HOM calls.",
+    "This real task used ordinary HOM; staged/Stop fault coverage remains separately controlled.",
+    "Final Windows standard-user installation is not covered by this development-account run."
+  ]
+}

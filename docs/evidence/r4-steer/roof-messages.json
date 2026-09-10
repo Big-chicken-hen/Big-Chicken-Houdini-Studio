@@ -1,0 +1,64 @@
+{
+  "saved_hip": "C:\\Users\\Administrator\\.codex\\worktrees\\c0c5\\Big-Chicken-Houdini-Studio\\.runtime\\reviews\\r4-final\\gui\\1a1837ae02d44a34a006a749d2572b02\\roof-accepted.hip",
+  "native_messages_matched": true,
+  "comparisons": [
+    {
+      "turn_id": "01a08a61-0844-7da0-b4d4-deb70090b1cc",
+      "item_id": "01a08a61-21cd-7711-9b9d-61b69d74047e",
+      "characters": 48,
+      "canonical": true,
+      "copy": true,
+      "render": true
+    },
+    {
+      "turn_id": "01a08a61-0844-7da0-b4d4-deb70090b1cc",
+      "item_id": "msg_0182ae2a7ddbb2f8016aa266bb375487d19886d08836e7e7f9",
+      "characters": 50,
+      "canonical": true,
+      "copy": true,
+      "render": true
+    },
+    {
+      "turn_id": "01a08a61-0844-7da0-b4d4-deb70090b1cc",
+      "item_id": "01a08a61-3d2c-7140-86b8-e3fd0e0941b5",
+      "characters": 19,
+      "canonical": true,
+      "copy": true,
+      "render": true
+    },
+    {
+      "turn_id": "01a08a61-0844-7da0-b4d4-deb70090b1cc",
+      "item_id": "01a08a61-3d37-70e1-af38-8f124d617e8b",
+      "characters": 23,
+      "canonical": true,
+      "copy": true,
+      "render": true
+    },
+    {
+      "turn_id": "01a08a61-0844-7da0-b4d4-deb70090b1cc",
+      "item_id": "msg_0182ae2a7ddbb2f8016aa266c2f16887d1ba4c769c6ade5a54",
+      "characters": 45,
+      "canonical": true,
+      "copy": true,
+      "render": true
+    },
+    {
+      "turn_id": "01a08a61-0844-7da0-b4d4-deb70090b1cc",
+      "item_id": "msg_0182ae2a7ddbb2f8016aa266e6d05087d1b1a495f8514bcb97",
+      "characters": 87,
+      "canonical": true,
+      "copy": true,
+      "render": true
+    },
+    {
+      "turn_id": "01a08a61-0844-7da0-b4d4-deb70090b1cc",
+      "item_id": "msg_0182ae2a7ddbb2f8016aa26715315887d1a74f7ddf9088daea",
+      "characters": 141,
+      "canonical": true,
+      "copy": true,
+      "render": true
+    }
+  ],
+  "new_thread_started": false,
+  "panel_errors": ""
+}
