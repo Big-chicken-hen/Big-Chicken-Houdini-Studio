@@ -5,7 +5,7 @@ from pathlib import Path
 import sys
 
 sys.dont_write_bytecode = True
-root = Path(__file__).resolve().parent
+root = Path(__file__).resolve().parents[1]
 os.environ['HIA_PROJECT_ROOT'] = str(root)
 os.environ['BCS_CODEX_PATH'] = str(root / 'tools/codex/bin/codex.exe')
 

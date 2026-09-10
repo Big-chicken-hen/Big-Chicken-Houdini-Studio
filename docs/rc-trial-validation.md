@@ -1,5 +1,23 @@
 # RC trial handover — 2026-09-10
 
+## Single EXE delivery follow-up
+
+The Owner requested one `Studio.exe` entry instead of VBS/Python alternatives,
+and delivery files under the selected development project rather than a new
+Owner installation. The Windows Framework shim launches the existing private
+Python runtime; the installed Start Menu shortcut targets the EXE. The bootstrap
+is internal to `runtime`. Source setup builds the same EXE; VBS entries are retired.
+There are no launcher/Panel layout, networking, consent or execution changes.
+
+Local validation: Ruff passed and seven focused release tests passed, including
+executing the compiled EXE in development and packaged layouts with Chinese and
+space-containing paths, a different working directory and a stale inherited root.
+The current development launcher opened with a visible native window and pinned
+Codex 0.153.4 available. This is not installed-package or standard-user acceptance.
+The original f0fce6e installer below stays preserved; the changed entry requires
+a separately identified build. External testing and optional polish are deferred
+by the Owner. Private path inventories and cleanup records remain local.
+
 The [Pro audit](rc-trial-review.md) and [direct user correction](rc-trial-scope.md)
 authorize daily Owner trials and distribution to named testers. **PR #14 remains
 Draft: independent standard-user acceptance and final Pro Go are still required.**

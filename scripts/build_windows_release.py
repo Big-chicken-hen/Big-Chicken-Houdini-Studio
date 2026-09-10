@@ -130,8 +130,9 @@ def build(args):
         dest.parent.mkdir(exist_ok=True)
         shutil.copyfile(inputs[filename], dest)
     shutil.copyfile(ROOT / 'release/THIRD-PARTY-NOTICES.md', notices / 'THIRD-PARTY-NOTICES.md')
-    shutil.copyfile(ROOT / 'release/start_release.pyw', package / 'start_release.pyw')
-    shutil.copyfile(ROOT / 'release/Start Studio.vbs', package / 'Start Studio.vbs')
+    shutil.copyfile(ROOT / 'release/start_release.pyw', runtime / 'start_release.pyw')
+    subprocess.run(['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+                    str(ROOT / 'scripts/build_studio_entry.ps1'), '-Output', str(package / 'Studio.exe')], check=True)
     shutil.copyfile(ROOT / 'release/windows-inputs.lock.json', package / 'build-inputs.json')
     manifest = {'format': 1, 'version': lock['studio_version'], 'build_id': build_id,
                 'source_commit': commit, 'builder_commit': git(ROOT, 'rev-parse', 'HEAD'),

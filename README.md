@@ -11,7 +11,7 @@
 1. 将整个项目放在可写目录。支持空格和中文路径；不要放进 Houdini 安装目录。
 2. 准备 Python 3.10+、带 PySide6 的 Houdini GUI 安装，以及本项目固定使用的 **Codex CLI 0.153.4 原生可执行文件**。Houdini Panel 使用 Houdini 自带的 PySide6，不向它安装 Qt。
 3. 双击 **`Setup Studio.cmd`**。这一步在本项目 `.runtime/venv` 安装产品和启动器的 PySide6；不会修改用户的 Houdini 或 Codex 配置，也不会启动 Houdini、登录或导入知识。
-4. 双击 **`Start Studio.vbs`**。启动器自动检查环境，只在需要时显示设置或官方 ChatGPT 登录页面；确认后自动进入最近场景首页。打开 HIP、空场景，或双击最近文件即可启动。程序路径设置位于右上角更多菜单中。若系统禁用了 Windows Script Host，可运行 `scripts/launch.ps1`。
+4. 双击 **`Studio.exe`**（setup 会生成）。安装版的开始菜单也指向同名 EXE；Python 是内部运行文件。启动器自动检查环境，只在需要时显示设置或官方 ChatGPT 登录页面；确认后自动进入最近场景首页。打开 HIP、空场景，或双击最近文件即可启动。程序路径设置位于右上角更多菜单中。
 5. 在 Houdini 面板标签旁点击 **＋ → New Pane Tab Type → Big-Chicken Studio**，直接打开 Studio。已有 Python Panel 也可在其界面选择栏中选择 **Big-Chicken Studio**。账户、模型和会话通过原生 Codex App Server 处理。
 
 日常启动不安装依赖、不构建索引、不恢复 Goal。关闭启动器不会关闭已经打开的 Houdini；关闭这个 Houdini 后，其 supervisor 清理自己启动的 Codex/Bridge。已有的用户 Houdini 进程不参与管理。
