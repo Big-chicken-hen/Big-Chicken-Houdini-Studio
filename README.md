@@ -2,9 +2,9 @@
 
 一个独立的 Houdini 创作工作室：原生 Qt 启动器与 Python Panel，Codex App Server 负责对话和推理，Houdini 主线程负责批量 HOM，runtime 保存场景身份与操作收据。它不依赖旧 HIA 安装目录。
 
-当前进入 **0.1.0-rc.1 内部发行候选准备**，尚未公开发行。R1–R3 已技术合并；R4 的 per-user Windows 安装器、私有运行包和诊断导出保持 Draft。实际包仍有 [R4-NET-1 历史显示故障](docs/acceptance-issues.md)，干净的非管理员新用户验收也尚未完成。构建与实际检查见 [R4 记录](docs/r4-validation.md)，[中文 RC 步骤](docs/rc-acceptance.md) 已备好。
+当前 **0.1.0-rc.1 已获准日常 RC 试用和定向测试**，尚未公开发行。R1–R3 已技术合并；R4 保持 Draft，等待独立标准用户验收和最终发布 Go。NET-1 与同一 Turn 内追加引导已经通过实际包验证；本轮只补版本政策及身份详情，范围见 [最新审批与用户修正](docs/rc-trial-scope.md)，外部验收见 [中文 RC 步骤](docs/rc-acceptance.md)。
 
-首发目标为 Windows 11 x64 / Houdini FX 22.0.368 / Codex 0.153.4；这是待验收目标，并非多平台认证。普通用户的发行入口为随包提供依赖的安装器和开始菜单，以下源码 setup 仅供开发。既有 [模型实验结论](docs/model-acceptance-results.md) 保持不变；技术合并不代表全部资产质量或模型效率通过。
+已验证组合为 Windows 11 x64 / Houdini FX 22.0.368 / Codex 0.153.4。其他满足接入条件的 Houdini 22 系列为 Untested，逐次确认后可试测；无法确认的现场事实保留 Unknown。普通用户只从安装器创建的开始菜单入口启动，使用随包 Codex。外部 Codex 服务需要用户自己的有效 Clash 配置，端口由用户环境决定；Studio 不修改系统代理。以下源码 setup 仅供开发。既有 [模型实验结论](docs/model-acceptance-results.md) 保持不变。
 
 ## 从源码在 Windows 开始（开发者）
 
@@ -16,7 +16,7 @@
 
 日常启动不安装依赖、不构建索引、不恢复 Goal。关闭启动器不会关闭已经打开的 Houdini；关闭这个 Houdini 后，其 supervisor 清理自己启动的 Codex/Bridge。已有的用户 Houdini 进程不参与管理。
 
-启动后显示独立进度页面；只有目标场景确认打开后，才默认最小化 Launcher。此偏好可在设置中关闭。Panel 将模型与 effort 放在 Composer 的常驻组合入口内，Send/Stop 使用同一位置；运行时仍可继续编辑下一段草稿。产品图标只使用固定版本的批准 Lucide SVG，品牌保留文字。
+启动后显示独立进度页面；只有目标场景确认打开且所需试测确认完成后，才默认最小化 Launcher。此偏好可在设置中关闭。Panel 将模型与 effort 放在 Composer 的常驻组合入口内，工作期间可继续发送引导，Send 和 Stop 同时可见。产品图标只使用固定版本的批准 Lucide SVG，品牌保留文字。
 
 新输出优先采用本次明确指定的位置，其次保留已有节点的输出设置。Studio 默认输出在已保存 HIP 同目录的 `BigChickenStudio/<场景名>/renders`、`exports` 或 `assets`；未保存场景使用用户缓存中的临时输出。默认位置在执行时解析，后续输出跟随成功的 Save As；历史文件不搬移。路径解析本身不代表已经完成渲染或导出。
 
@@ -46,7 +46,7 @@ python scripts/setup.py --backend-only --dev
 
 源码和安装依赖留在安装目录。正常启动将工作空间、收据、附件与原生 Codex home 放在平台用户持久数据目录，日志和临时输出放在独立缓存目录；Windows 使用系统解析的 LocalAppData 下 `BigChickenStudio/state` 与 `BigChickenStudio/cache`。旧 `.runtime` 数据原地保留，不自动迁移、删除或改写。开发测试使用本 checkout 的 `.runtime`，不使用真实用户状态。
 
-工作空间 ID 与安装根、启动 session、scene epoch、operation ID 分开。保存或 Save As 不搬移活跃工作空间与原生会话 cwd。Codex 原生 Thread/Turn 和自动压缩保留；本产品不另外生成聊天摘要或自动记忆。新版 Launcher 与 Panel 的真实登录、完整创作流程和跨屏 DPI 验收仍待完成，不能用离屏检查替代。
+工作空间 ID 与安装根、启动 session、scene epoch、operation ID 分开。保存或 Save As 不搬移活跃工作空间与原生会话 cwd。Codex 原生 Thread/Turn 和自动压缩保留；本产品不另外生成聊天摘要或自动记忆。已完成的真实创作验证不代替尚未完成的独立标准用户安装、升级与卸载链路，也不认证未测试的跨屏 DPI 组合。
 
 本地服务仅绑定 `127.0.0.1`。每次启动生成新的会话 token，只通过子进程环境传递。通用 HOM 是受信任的本机自动化，可能产生文件或进程副作用；Undo 不代表可以安全重放。丢失响应后查询原 operation ID，不自动重跑脚本。Codex Stop 与 Houdini 的执行状态分别展示。
 

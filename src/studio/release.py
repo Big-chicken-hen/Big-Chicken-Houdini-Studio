@@ -63,6 +63,60 @@ def version(value):
     return value if isinstance(value, str) and re.fullmatch(r'\d+\.\d+(?:\.\d+)?(?:-[a-zA-Z0-9.]+)?', value) else None
 
 
+def build_id(value):
+    return value if isinstance(value, str) and re.fullmatch(
+        r'\d+\.\d+\.\d+(?:-[a-zA-Z0-9.]+)?-[0-9a-f]{7,40}', value) else None
+
+
+def local_identity(paths):
+    """Read bounded installation metadata once per owner; never hash or probe."""
+    manifest = {}
+    try:
+        with (paths.root / 'release-manifest.json').open('rb') as stream:
+            raw = stream.read(2 * 1024 * 1024 + 1)
+        if len(raw) <= 2 * 1024 * 1024:
+            value = json.loads(raw)
+            if isinstance(value, dict):
+                manifest = value
+    except (OSError, ValueError):
+        pass
+    commit = manifest.get('source_commit')
+    return {'studio_version': version(manifest.get('version')) or __version__,
+            'build_id': build_id(manifest.get('build_id')),
+            'source_commit': commit if isinstance(commit, str) and re.fullmatch('[0-9a-f]{40}', commit) else None,
+            'installation_root': str(paths.root), 'state_root': str(paths.data_root), 'cache_root': str(paths.cache_root)}
+
+
+def identity_details(identity, *, selected=None, host=None, connected=False):
+    """Local, copyable facts only. These paths never enter the diagnostic ZIP."""
+    identity, selected = identity or {}, selected or {}
+    codex = identity.get('codex') or {}
+    source = {'bundled': 'Bundled', 'explicit_external': 'Explicit external',
+              'discovered': 'Discovered (development)'}.get(codex.get('source'), 'Unknown')
+    compatibility = {'validated': 'Validated', 'untested': 'Untested',
+                     'unsupported': 'Unsupported by this release', 'unknown': 'Unknown'}
+
+    def status(facts):
+        return compatibility.get((facts.get('compatibility') or {}).get('status'), 'Unknown')
+
+    lines = [f"Studio {identity.get('studio_version') or 'Unknown'}",
+             f"Build ID: {identity.get('build_id') or 'Unknown'}",
+             f"安装位置: {identity.get('installation_root') or 'Unknown'}",
+             f"Codex · {source} · 已确认版本: {codex.get('version') or 'Unknown'}",
+             f"Codex 路径: {codex.get('path') or 'Unknown'}",
+             f"Houdini · 已选择: {selected.get('version') or 'Unknown'} · {status(selected)}",
+             f"Houdini 路径: {selected.get('path') or 'Unknown'}"]
+    if connected and host:
+        lines.extend([f"Houdini · 正在运行: {host.get('version') or 'Unknown'} · {status(host)}",
+                      f"Application: {host.get('application_display_name') or host.get('application') or 'Unknown'} · License: {host.get('license_category') or 'Unknown'}",
+                      f"宿主 Python: {host.get('python_version') or 'Unknown'} · Qt: {host.get('qt_version') or 'Unknown'}"])
+    else:
+        lines.append('Houdini · 正在运行: Unknown（尚未连接）')
+    lines.extend([f"用户数据: {identity.get('state_root') or 'Unknown'}",
+                  f"临时缓存: {identity.get('cache_root') or 'Unknown'}"])
+    return '\n'.join(lines)
+
+
 def integrity(root):
     manifest_path = root / 'release-manifest.json'
     if not manifest_path.is_file():
@@ -98,6 +152,7 @@ def export_diagnostics(paths, target, snapshot, *, failure=None, phase=None):
     """No logs, chat, scripts, geometry, credentials, URL or directory scanning."""
     manifest, package = integrity(paths.root)
     account, codex, houdini = (snapshot.get(key) or {} for key in ('account', 'codex', 'houdini'))
+    host = snapshot.get('host') or {}
     code = failure.get('code') if isinstance(failure, dict) else getattr(failure, 'code', None)
     code = code if isinstance(code, str) and re.fullmatch('[A-Z][A-Z0-9_]{0,63}', code) else None
     commit = manifest.get('source_commit')
@@ -105,9 +160,19 @@ def export_diagnostics(paths, target, snapshot, *, failure=None, phase=None):
     allowed_phases = {'checking', 'setup', 'authentication', 'home', 'launching', 'attention',
                       'pending', 'starting', 'runtime_registered', 'target_opened', 'failed', 'unknown'}
     value = {'format': 1, 'studio_version': version(manifest.get('version')) or __version__,
+             'build_id': build_id(manifest.get('build_id')),
              'source_commit': commit, 'package_integrity': package, 'windows_version': platform.win32_ver()[1],
              'python_version': platform.python_version(), 'codex_version': version(codex.get('version')),
+             'codex_source': codex.get('source') if codex.get('source') in {'bundled', 'explicit_external', 'discovered'} else None,
              'houdini_version': version(houdini.get('version')),
+             'houdini_running_version': version(host.get('version')),
+             'houdini_compatibility': _compatibility_status(houdini),
+             'houdini_running_compatibility': _compatibility_status(host),
+             'houdini_application': host.get('application') if host.get('application') in {
+                 'houdini', 'houdinifx', 'houdinicore', 'hescape', 'Houdini', 'Houdini FX', 'Houdini Core',
+                 'Houdini Indie', 'Houdini Education', 'Houdini Apprentice'} else None,
+             'houdini_license_category': host.get('license_category') if host.get('license_category') in {
+                 'Commercial', 'Indie', 'Education', 'Apprentice', 'ApprenticeHD'} else None,
              'codex_verified': codex.get('state') == 'ready', 'houdini_found': houdini.get('state') == 'found',
              'account_confirmed': account.get('status') == 'signed_in' and account.get('action_unknown') is not True,
              'failure_code': code, 'phase': phase if phase in allowed_phases else None,
@@ -119,3 +184,8 @@ def export_diagnostics(paths, target, snapshot, *, failure=None, phase=None):
     with target.open('xb') as stream, zipfile.ZipFile(stream, 'w', zipfile.ZIP_DEFLATED) as archive:
         archive.writestr('diagnostics.json', json.dumps(value, ensure_ascii=False, indent=2))
     return str(target)
+
+
+def _compatibility_status(facts):
+    value = (facts.get('compatibility') or {}).get('status')
+    return value if value in {'validated', 'untested', 'unsupported', 'unknown'} else None

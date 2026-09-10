@@ -25,6 +25,7 @@ from .instructions import SCENE_INSTRUCTIONS
 from .launcher import codex_app_server_command, helper_environment
 from .workspace import WorkspaceData, Workspaces
 from .submissions import UserSubmissions
+from .release import local_identity
 
 
 class Bridge:
@@ -58,6 +59,20 @@ class Bridge:
         self.account = self.models = None
         self._runtime = None
         self.server = None
+        self.release_identity = local_identity(paths)
+        self.release_identity['codex'] = {'path': str(Path(codex_path).resolve()), 'version': None,
+            'source': 'bundled' if Path(codex_path).resolve() == paths.install('tools', 'codex', 'bin',
+                'codex.exe' if os.name == 'nt' else 'codex').resolve() else 'explicit_external'}
+        self.release_identity['houdini_selected'] = None
+        launch_file = paths.session(session_id) / 'launch.json'
+        try:
+            launch = read_json(launch_file) if launch_file.stat().st_size <= 2 * 1024 * 1024 else {}
+            if launch.get('launcher_session_id') == session_id and launch.get('workspace_id') == workspace_id:
+                selected = launch.get('houdini_selected')
+                if isinstance(selected, dict):
+                    self.release_identity['houdini_selected'] = copy.deepcopy(selected)
+        except (OSError, ValueError, TypeError, AttributeError):
+            pass  # A direct developer entrance has no confirmed selected-host record.
         env = helper_environment(paths)
         for path in (paths.codex_home, paths.cache("tmp")):
             path.mkdir(parents=True, exist_ok=True)
@@ -79,7 +94,11 @@ class Bridge:
                     {"url": "http://127.0.0.1:" + str(self.server.server_port),
                      "workspace_id": self.workspace_id, "launcher_session_id": self.session_id})
         self.client.start()
-        self.client.initialize()
+        initialized = self.client.initialize()
+        user_agent = initialized.get('userAgent') if isinstance(initialized, dict) else None
+        version = re.match(r'big_chicken_studio/(\d+\.\d+\.\d+)\b', user_agent) if isinstance(user_agent, str) else None
+        if version:
+            self.release_identity['codex']['version'] = version.group(1)
 
     def on_event(self, event):
         # A possible delegated approval checks only Runtime's cached health.
@@ -200,6 +219,7 @@ class Bridge:
                     "connection_generation": self.history.generation,
                     "codex": {"state": self.codex_state, "alive": self.client.is_running,
                               "stop_requested": self.stop_requested}, "runtime": runtime,
+                    "release_identity": copy.deepcopy(self.release_identity),
                     "scene_trust": self._scene_trust_state(runtime),
                     "scene_context": {"thread_id": self.thread_id, "scene_epoch": self.thread_scene_epoch,
                                       "current_scene_epoch": self.scene_epoch,

@@ -1,5 +1,13 @@
 # Rebuild contract
 
+Current bounded follow-up: [RC trial scope and direct user correction](rc-trial-scope.md),
+with the [full Pro audit](rc-trial-review.md). Shared Houdini trial policy and
+read-only identity details require a new RC; `991cbce` stays preserved. Clash is
+the external-network prerequisite with each user's own settings; no Clash-off
+test or global network change is authorized. Existing execution/UI architecture
+remains frozen; Owner trials and named-tester distribution can precede the still
+required external standard-user acceptance and final Pro Go.
+
 The [final release approval](final-release-brief.md) is the current stage entry.
 It approves PANEL-STEER-1 for first release and fixes the order within PR #14:
 R4-NET-1 correction, pinned native steer, final package and standard-user installed

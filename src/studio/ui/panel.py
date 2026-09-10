@@ -11,6 +11,7 @@ from urllib.parse import urlencode
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..common import AppPaths, StudioError, new_id, read_json
+from ..release import identity_details
 from .activity import running_operation_text
 from .conversation import ImageTile, Transcript
 from .conversations import ConversationManager
@@ -264,6 +265,12 @@ class StudioPanel(QtWidgets.QWidget):
             self.settings_layout.addWidget(value)
         self.scene_label = label("场景快照尚不可用", "muted", True)
         self.settings_layout.addWidget(self.scene_label)
+        self.identity_details = QtWidgets.QPlainTextEdit()
+        self.identity_details.setReadOnly(True)
+        self.identity_details.setAccessibleName("安装与实际宿主详情")
+        self.identity_details.setMinimumHeight(96)
+        self.identity_details.setMaximumHeight(160)
+        self.settings_layout.addWidget(self.identity_details)
         self.settings_layout.addWidget(label("长操作占用 Houdini 主线程时，停止按钮可能延迟响应；执行结果以收据为准。", "muted", True))
         self.settings_area.hide()
         self.error_details = ErrorDetails()
@@ -670,8 +677,16 @@ class StudioPanel(QtWidgets.QWidget):
         self.bridge_connected = False
         self.codex_label.setText("连接中断 · 状态未确认")
         self.runtime_label.setText("连接中断 · 执行结果未确认")
+        self.update_identity_details(connected=False)
         self.show_notice(message)
         self.update_controls()
+
+    def update_identity_details(self, *, connected):
+        identity = self.state.get('release_identity') or {}
+        text = identity_details(identity, selected=identity.get('houdini_selected'),
+                                host=(self.state.get('runtime') or {}).get('host'), connected=connected)
+        if self.identity_details.toPlainText() != text:
+            self.identity_details.setPlainText(text)
 
     def apply_state(self, value):
         if self.closed:
@@ -699,6 +714,7 @@ class StudioPanel(QtWidgets.QWidget):
         self.codex_label.setText(CODEX_STATES.get(native, native) if codex.get("alive") else "App Server 不可用 · 状态未确认")
         self.codex_label.setToolTip("原生状态：" + native + "\n停止请求：" + str(bool(codex.get("stop_requested"))))
         runtime = value.get("runtime", {})
+        self.update_identity_details(connected=runtime.get('connection') == 'connected')
         if runtime.get("connection") != "connected":
             self.runtime_label.setText("未连接 · 执行结果未确认")
         elif runtime.get("storage_fault"):

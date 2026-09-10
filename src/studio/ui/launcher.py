@@ -1,6 +1,7 @@
 """Staged scene Launcher. Pages project facts; explicit actions own side effects."""
 from __future__ import annotations
 
+import copy
 import json
 import os
 from pathlib import Path
@@ -10,6 +11,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..common import AppPaths, StudioError, atomic_json, new_id, read_json
 from ..codex.protocol import SUPPORTED_CODEX_VERSION
+from ..release import identity_details, local_identity
 from .launcher_pages import project_page
 from .launcher_visuals import LAUNCHER_STYLE, RecentRow
 from .shared import ApiFailure, ErrorDetails, Task, button, label
@@ -104,6 +106,7 @@ class StudioLauncher(QtWidgets.QWidget):
                  preference_reader=None, preference_writer=None, auto_probe=True):
         super().__init__()
         self.paths = paths if paths is not None else AppPaths.for_user()
+        self._release_identity = local_identity(self.paths)
         if onboarding_factory is None:
             from ..onboarding import Onboarding
             onboarding_factory = lambda bound=self.paths: Onboarding(bound)
@@ -133,6 +136,7 @@ class StudioLauncher(QtWidgets.QWidget):
         self._request_id = self._launch_target = self._launch_paths = None
         self._launch_record = self._launch_error = self._launch_phase = self._prepared = None
         self._launch_label = ""
+        self._host_trial_confirmation = None
         self._launch_version, self._remembered = 0, False
         self._failure = None
         self._secondary = self._secondary_return = None
@@ -258,7 +262,7 @@ class StudioLauncher(QtWidgets.QWidget):
         setup.addWidget(self.setup_message)
         self.install_guide = self.action_button("查看安装步骤", self.open_install_guide, "external-link", primary=True)
         self.setup_codex = self.action_button("选择已有安装", self.choose_codex)
-        self.setup_retry = self.action_button("重新检查", self.probe, "refresh-cw", primary=True)
+        self.setup_retry = self.action_button("重新检查", self.retry_setup, "refresh-cw", primary=True)
         self.setup_houdini = self.action_button("选择 Houdini", self.choose_houdini, primary=True)
         self.setup_details = self.action_button("查看详情", self.show_details)
         self.setup_actions = QtWidgets.QVBoxLayout()
@@ -344,7 +348,7 @@ class StudioLauncher(QtWidgets.QWidget):
 
         settings = self.secondary_page("settings", "设置")
         settings.addWidget(label("程序选择", "sectionTitle"))
-        settings.addWidget(label("Codex 路径覆盖 · 留空自动发现", "muted", True))
+        settings.addWidget(label("Codex 路径覆盖 · 留空并重新检查，恢复使用随包版本", "muted", True))
         row = QtWidgets.QHBoxLayout()
         self.codex = QtWidgets.QLineEdit()
         self.codex.setAccessibleName("Codex 路径覆盖")
@@ -444,7 +448,9 @@ class StudioLauncher(QtWidgets.QWidget):
             "不包含聊天、脚本、账号凭证、场景或图片；不会自动上传。\n\n位置：" + target)
         if answer != QtWidgets.QMessageBox.Yes:
             return
-        snapshot, failure, phase = dict(self._snapshot), self._failure, self.projection().name
+        snapshot, failure, phase = copy.deepcopy(self._snapshot), self._failure, self.projection().name
+        launch = self._launch_record or {}
+        snapshot['host'] = copy.deepcopy(launch.get('host')) if launch.get('runtime_connected') else None
         self._submit("diagnostic-export", lambda: export_diagnostics(self.paths, Path(target).resolve(), snapshot,
             failure=failure, phase=phase), lambda path: QtWidgets.QMessageBox.information(self, "诊断已导出", path))
 
@@ -456,6 +462,8 @@ class StudioLauncher(QtWidgets.QWidget):
             "CODEX_UNAVAILABLE": "无法启动 Codex，请重新检查；仍失败时可查看详情。",
             "CODEX_VERSION_UNTESTED": f"需要 Codex {SUPPORTED_CODEX_VERSION}，请选择兼容程序。",
             "HOUDINI_REQUIRED": "未找到 Houdini，请选择本机已有安装，再重新检测。",
+            "HOUDINI_UNSUPPORTED": "当前 Houdini 不满足本版本的集成要求，请选择受支持的安装并查看详情。",
+            "HOUDINI_CONFIRMATION_REQUIRED": "此 Houdini 组合尚未验证，请确认后再尝试启动。",
             "HIP_INVALID": "请选择已有的 Houdini 场景文件（.hip、.hiplc 或 .hipnc）。",
             "LAUNCH_FAILED": "Studio 启动进程未能启动。请查看详情；确认原因后可重新打开场景。",
             "RUNTIME_START_FAILED": "Houdini 已启动，但 Studio 未能连接。请查看详情并确认该 Houdini 会话的状态。",
@@ -491,6 +499,9 @@ class StudioLauncher(QtWidgets.QWidget):
         if self.checking_loader:
             self.checking_loader.set_busy(view.name == "checking" and self._checking_visible)
         if view.name == "setup":
+            external_failed = (self._snapshot.get('codex', {}).get('source') == 'explicit_external'
+                               and self._snapshot.get('codex', {}).get('state') != 'ready'
+                               and view.mode != 'houdini')
             modes = {
                 "codex_missing": ("需要 Codex", "安装 Codex 后即可继续。"),
                 "codex_incompatible": ("当前 Codex 版本不受支持", f"需要 Codex {SUPPORTED_CODEX_VERSION}，请选择兼容安装。"),
@@ -499,6 +510,8 @@ class StudioLauncher(QtWidgets.QWidget):
                 "houdini": ("需要 Houdini 安装", self._snapshot.get("houdini", {}).get("message") or "请选择本机已有的 Houdini 安装。"),
             }
             title, message = modes[view.mode]
+            if external_failed:
+                message = "显式选择的外部 Codex 未通过检查。可选择兼容程序，或恢复使用随包版本。"
             self.setup_title.setText(title)
             self.setup_message.setText(message)
             self.install_guide.setVisible(view.mode == "codex_missing")
@@ -508,7 +521,10 @@ class StudioLauncher(QtWidgets.QWidget):
             self.setup_codex.setVisible(view.mode != "houdini")
             self.setup_codex.setText("选择兼容安装" if view.mode == "codex_incompatible" else
                                     "选择其他安装" if view.mode == "codex_error" else "选择已有安装")
-            self.setup_retry.setVisible(view.mode in {"codex_error", "houdini"})
+            retry_text = "恢复使用随包版本" if external_failed else "重新检查"
+            if self.setup_retry.text() != retry_text:
+                set_button_icon(self.setup_retry, 'refresh-cw', text=retry_text)
+            self.setup_retry.setVisible(external_failed or view.mode in {"codex_error", "houdini"})
             self.setup_houdini.setVisible(view.mode == "houdini")
             self.set_action_role(self.install_guide, view.mode == "codex_missing")
             self.set_action_role(self.setup_codex, view.mode in {"codex_incompatible", "codex_unconfirmed"})
@@ -562,6 +578,11 @@ class StudioLauncher(QtWidgets.QWidget):
                     "opened": self._launch_label + "\n关闭此窗口不会关闭 Houdini。",
                     "failed": self.failure_message() or "已确认没有可能存活的启动进程，可以返回后重新打开。"}
         self.launch_message.setText(messages.get(mode, "正在确认启动状态"))
+        if (self._launch_active() and self._host_trial_confirmation
+                and self._host_trial_confirmation.get('accepted') is False):
+            self.launch_title.setText("本次试用未确认")
+            self.launch_message.setText("正在运行的 Houdini 组合属于 Untested。\n"
+                "你未确认继续试用；请通过 Houdini 正常关闭本次会话。Studio 不会强制关闭或重复启动它。")
         self.launch_query.setVisible(mode == "unknown")
         self.launch_query.setEnabled("status" not in self._pending)
         self.launch_back.setVisible(mode == "failed")
@@ -583,8 +604,13 @@ class StudioLauncher(QtWidgets.QWidget):
         self.error_details.set_failure(self._failure)
         details = {"requirements": {"codex_version": SUPPORTED_CODEX_VERSION},
                    "environment": self._snapshot, "launch": self._launch_record,
+                   "houdini_trial_confirmation": self._host_trial_confirmation,
                    "request_id": self._request_id, "icons": icon_diagnostics()}
-        rendered = json.dumps(details, ensure_ascii=False, indent=2, default=str)
+        launch = self._launch_record or {}
+        identity = {**self._release_identity, 'codex': self._snapshot.get('codex') or {}}
+        rendered = identity_details(identity, selected=self._snapshot.get('houdini'), host=launch.get('host'),
+                                    connected=launch.get('runtime_connected') is True)
+        rendered += "\n\n" + json.dumps(details, ensure_ascii=False, indent=2, default=str)
         if self.diagnostics_text.toPlainText() != rendered:
             self.diagnostics_text.setPlainText(rendered)
         page = self.pages[self.current_page]
@@ -671,6 +697,13 @@ class StudioLauncher(QtWidgets.QWidget):
                           "houdini": self._snapshot.get("houdini", {})}
         self._submit("probe", lambda: owner.probe(overrides), self.apply_snapshot, self.probe_failed)
         self.render()
+
+    def retry_setup(self):
+        codex = self._snapshot.get('codex') or {}
+        if codex.get('source') == 'explicit_external' and codex.get('state') != 'ready':
+            self.codex.clear()
+            self._overrides_dirty.add('codex')
+        self.probe()
 
     def probe_failed(self, failure):
         self._snapshot["codex"] = {**self._snapshot.get("codex", {}), "state": "error"}
@@ -784,6 +817,8 @@ class StudioLauncher(QtWidgets.QWidget):
     def schedule_minimize(self):
         if not self._preference_loaded or not self._request_id or self.projection().mode != "opened":
             return
+        if self._host_trial_confirmation and self._host_trial_confirmation.get('accepted') is not True:
+            return
         if self._minimize_attempted_id == self._request_id:
             return
         self._minimize_attempted_id = self._request_id
@@ -794,6 +829,7 @@ class StudioLauncher(QtWidgets.QWidget):
     def minimize_opened_request(self):
         if (not self._closed and self._minimize_scheduled_id == self._request_id and
                 self.projection().mode == "opened" and self._secondary is None and
+                (not self._host_trial_confirmation or self._host_trial_confirmation.get('accepted') is True) and
                 self._minimize_after_open and self.isVisible() and not self.isMinimized()):
             self.showMinimized()
 
@@ -927,6 +963,7 @@ class StudioLauncher(QtWidgets.QWidget):
         self._launch_target = target
         self._launch_label = Path(path).name if path else ("空场景" if target.kind == "empty" else Path(target.path).name)
         self._launch_record = self._launch_error = self._prepared = None
+        self._host_trial_confirmation = None
         self._launch_version += 1
         self._launch_phase = "validate" if path else "prepare"
         self._remembered = False
@@ -943,7 +980,21 @@ class StudioLauncher(QtWidgets.QWidget):
         self._target = self._launch_target = target
         self._launch_phase = "prepare"
         owner = self._onboarding
-        self._submit("prepare", lambda: owner.call("prepare_launch"), self.prepared, self.prepare_failed)
+        houdini = copy.deepcopy(self._snapshot.get('houdini') or {})
+        confirmation = None
+        if (houdini.get('compatibility') or {}).get('confirmation_required') is True:
+            message = (houdini.get('compatibility') or {}).get('message') or '此 Houdini 组合尚未验证。'
+            answer = QtWidgets.QMessageBox.question(self, '尝试未验证的 Houdini',
+                f"Untested · {houdini.get('version') or 'Unknown'}\n{message}\n\n"
+                "启动成功仍属于 Untested。此确认仅允许尝试启动，不改变场景或文件操作许可。\n\n继续启动？",
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No, QtWidgets.QMessageBox.No)
+            if answer != QtWidgets.QMessageBox.Yes:
+                self._request_id = self._launch_target = self._launch_paths = self._launch_phase = None
+                self.render()
+                return
+            confirmation = {'request_id': self._request_id, 'path': houdini.get('path'), 'version': houdini.get('version')}
+        self._submit("prepare", lambda: owner.call("prepare_launch", confirmation) if confirmation else
+                     owner.call("prepare_launch"), self.prepared, self.prepare_failed)
 
     def activation_failed(self, failure):
         # No launch submission has run. This is local preflight evidence.
@@ -963,8 +1014,11 @@ class StudioLauncher(QtWidgets.QWidget):
         self._prepared = choices
         request_id, target, paths = self._request_id, self._launch_target, self._launch_paths
         self._launch_phase = "submit"
+        options = {'request_id': request_id}
+        if choices.get('houdini_confirmation') is not None:
+            options['houdini_confirmation'] = copy.deepcopy(choices['houdini_confirmation'])
         self._submit("launch", lambda: self._launch(paths, target, choices["houdini_path"],
-                     choices["codex_path"], request_id=request_id), self.launched, self.launch_failed)
+                     choices["codex_path"], **options), self.launched, self.launch_failed)
 
     def prepare_failed(self, failure):
         self._needs_probe = True
@@ -1010,6 +1064,23 @@ class StudioLauncher(QtWidgets.QWidget):
             self.launch_failed(ApiFailure("无法关联启动状态，请查询原请求", code="LAUNCH_STATUS_UNCONFIRMED"))
             return
         self._launch_record = value
+        host = value.get('host') or {}
+        if value.get('houdini_confirmation') is True:
+            self._host_trial_confirmation = {'request_id': self._request_id, 'source': 'before_launch', 'accepted': True}
+        elif (value.get('runtime_connected') is True and (host.get('compatibility') or {}).get('status') == 'untested'
+              and self._host_trial_confirmation is None):
+            request_id = self._request_id
+            self._host_trial_confirmation = {'request_id': request_id, 'source': 'running_host', 'accepted': None}
+            self.minimize_timer.stop()
+            answer = QtWidgets.QMessageBox.question(self, '确认本次 Houdini 试用',
+                f"正在运行: {host.get('version') or 'Unknown'} · Untested\n"
+                f"{(host.get('compatibility') or {}).get('message') or '实际宿主组合尚未验证。'}\n\n"
+                "继续仅确认本次试用，不改变场景或文件操作许可。\n"
+                "若不继续，请通过 Houdini 正常关闭本次会话；Studio 不会强制关闭它。\n\n继续试用？",
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No, QtWidgets.QMessageBox.No)
+            if self._closed or self._request_id != request_id:
+                return
+            self._host_trial_confirmation['accepted'] = answer == QtWidgets.QMessageBox.Yes
         if value.get("error"):
             self._launch_error = value["error"]
             self.show_failure(value["error"])
@@ -1017,7 +1088,8 @@ class StudioLauncher(QtWidgets.QWidget):
             if self._failure is self._launch_error:
                 self._failure = None
             self._launch_error = None
-        if self.projection().mode == "opened":
+        if (self.projection().mode == "opened" and
+                (not self._host_trial_confirmation or self._host_trial_confirmation.get('accepted') is True)):
             if not self._remembered:
                 self._remembered = True
                 owner, path = self._onboarding, (self._prepared or {}).get("houdini_path")
@@ -1033,6 +1105,7 @@ class StudioLauncher(QtWidgets.QWidget):
         if self._request_id is None or self.projection().mode != "failed" or self._launch_active():
             return
         self._request_id = self._launch_record = self._launch_phase = None
+        self._host_trial_confirmation = None
         self._launch_version += 1
         self._failure = None
         if self._needs_probe:

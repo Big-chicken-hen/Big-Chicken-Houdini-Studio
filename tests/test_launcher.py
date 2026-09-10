@@ -77,12 +77,16 @@ class LauncherTests(unittest.TestCase):
                                  [str(self.codex), *flags, "app-server"])
 
     def test_version_check_uses_isolated_environment_and_rejects_unverified_codex(self):
-        with patch.object(launcher.subprocess, "run", return_value=Mock(stdout="codex-cli 0.153.4\n")) as run:
+        selected = {'path': str(self.houdini), 'version': '22.0.368',
+                    'compatibility': {'can_launch': True, 'confirmation_required': False}}
+        with patch.object(launcher, 'inspect_houdini', return_value=selected), \
+                patch.object(launcher.subprocess, "run", return_value=Mock(stdout="codex-cli 0.153.4\n")) as run:
             value = launcher.preflight(str(self.houdini), str(self.codex), self.paths)
         self.assertEqual(value["codex_version"], "0.153.4")
         self.assertEqual(run.call_args.kwargs["env"]["CODEX_HOME"], str(self.paths.local("codex-home")))
         self.assertEqual(run.call_args.args[0], [str(self.codex), "--version"])
-        with patch.object(launcher.subprocess, "run", return_value=Mock(stdout="codex-cli 9.9.9")):
+        with patch.object(launcher, 'inspect_houdini', return_value=selected), \
+                patch.object(launcher.subprocess, "run", return_value=Mock(stdout="codex-cli 9.9.9")):
             with self.assertRaisesRegex(StudioError, "requires Codex 0.153.4"):
                 launcher.preflight(str(self.houdini), str(self.codex), self.paths)
 

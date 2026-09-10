@@ -13,6 +13,7 @@ from pathlib import Path
 
 from .codex.protocol import SUPPORTED_CODEX_VERSION
 from .common import AppPaths, StudioError, atomic_json, identifier, new_id, read_json
+from .houdini_compatibility import inspect_houdini, require_houdini_launch
 from .ownership import WorkspaceLock, execution_lock
 from .targets import SceneCatalog, SceneTarget, path_key
 from .workspace import Workspaces
@@ -97,6 +98,9 @@ def discover_houdini():
 
 def codex_executable(paths):
     name = "codex.exe" if os.name == "nt" else "codex"
+    if (paths.root / "release-manifest.json").is_file():
+        # A missing bundle is an installation failure, never PATH discovery.
+        return str(Path(os.environ.get("BCS_CODEX_PATH") or paths.install("tools", "codex", "bin", name)).resolve())
     candidates = [os.environ.get("BCS_CODEX_PATH"), paths.install("tools", "codex", "bin", name),
                   paths.local("toolchains", "codex", name), shutil.which(name)]
     for value in candidates:
@@ -124,15 +128,11 @@ def check_codex(codex, paths=None):
     return str(Path(codex).resolve())
 
 
-def preflight(houdini, codex, paths=None):
-    if not Path(houdini).is_file() or Path(houdini).name.lower() not in {"houdini.exe", "houdini", "houdinifx.exe"}:
-        raise StudioError("HOUDINI_REQUIRED", "Select a Houdini GUI executable")
-    if paths is not None and (paths.root / "release-manifest.json").is_file():
-        from .release import installed_houdini_version
-        if installed_houdini_version(houdini) != "22.0.368":
-            raise StudioError("HOUDINI_VERSION_UNTESTED", "当前发行候选要求 Houdini FX 22.0.368，请选择兼容安装。")
+def preflight(houdini, codex, paths=None, *, houdini_confirmation=None, request_id=None):
+    selected = require_houdini_launch(inspect_houdini(houdini, paths), houdini_confirmation, request_id=request_id)
     return {"houdini": str(Path(houdini).resolve()), "codex": check_codex(codex, paths),
-            "codex_version": SUPPORTED_CODEX_VERSION}
+            "codex_version": SUPPORTED_CODEX_VERSION, "houdini_selected": selected,
+            "houdini_confirmation": houdini_confirmation is not None}
 
 
 def child_environment(paths, workspace_id, session_id, token):
@@ -192,7 +192,7 @@ def _spawn_session(paths, workspace_id, checked, hip, session_id, target=None):
             "render_output_directory": output}
 
 
-def launch_target(paths, target, houdini, codex, *, request_id):
+def launch_target(paths, target, houdini, codex, *, request_id, houdini_confirmation=None):
     """Claim the UI's stable request ID once; an ambiguous reply never respawns it."""
     session_id = identifier(request_id)
     value = target.to_dict() if isinstance(target, SceneTarget) else target
@@ -220,7 +220,7 @@ def launch_target(paths, target, houdini, codex, *, request_id):
     atomic_json(folder / "status.json", {"state": "accepted", "process_may_exist": True})
     try:
         target = SceneTarget.from_dict(value)  # Revalidate the file at admission.
-        checked = preflight(houdini, codex, paths)
+        checked = preflight(houdini, codex, paths, houdini_confirmation=houdini_confirmation, request_id=session_id)
         workspace = SceneCatalog(paths).admit(target)
     except (StudioError, OSError) as exc:
         error = exc.payload()["error"] if isinstance(exc, StudioError) else {
@@ -260,7 +260,8 @@ def launch_status(paths, request_id):
         return {**base, "message": "Launch state is not confirmed; query this launch again"}
     if config.get("launcher_session_id") != session_id:
         return {**base, "message": "Launch identity does not match its saved status"}
-    result = {**base, **status, "target": config.get("target"), "workspace_id": config.get("workspace_id")}
+    result = {**base, **status, "target": config.get("target"), "workspace_id": config.get("workspace_id"),
+              "houdini_confirmation": config.get("houdini_confirmation") is True}
     if result["state"] in {"closed", "rejected"}:
         result["process_may_exist"] = False
         return result
@@ -280,6 +281,8 @@ def launch_status(paths, request_id):
             not status.get("houdini_pid") or descriptor.get("houdini_pid") != status["houdini_pid"]):
         return result
     result.update(state="runtime_connected", runtime_connected=True, process_may_exist=True)
+    if isinstance(descriptor.get("host"), dict):
+        result["host"] = descriptor["host"]  # Actual registered facts, never the selection snapshot.
     scene, target = descriptor.get("scene", {}), config.get("target") or {}
     if target.get("kind") == "empty":
         opened = scene.get("is_new_file") is True and not scene.get("saved_hip_path")
