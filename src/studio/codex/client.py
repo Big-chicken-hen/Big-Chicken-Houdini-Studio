@@ -26,6 +26,9 @@ _LATE_RESPONSE_TOMBSTONE_METHODS = frozenset(
     {"initialize", "thread/resume", "turn/interrupt"}
 )
 _MAX_LATE_RESPONSE_TOMBSTONES = 16
+_MAX_TRACKED_REQUESTS = 16
+_TRACKED_RETENTION_SECONDS = 300.0
+_MAX_TRACKED_FRAME_BYTES = 1024 * 1024
 
 
 _SENSITIVE_ENVIRONMENT_MARKERS = (
@@ -94,6 +97,28 @@ class _PendingResponse:
     error: Any = None
 
 
+@dataclass(eq=False)
+class PreparedRequest:
+    """One frozen frame and bounded result correlation, never a retry token."""
+
+    request_id: int
+    method: str
+    _owner: object = field(repr=False)
+    _process: Any = field(repr=False)
+    _frame: str = field(repr=False)
+    _expires_at: float = field(repr=False)
+    _callback: Callable | None = field(default=None, repr=False)
+    event: threading.Event = field(default_factory=threading.Event, repr=False)
+    forward_attempted: bool = False
+    settled: bool = False
+    result: Any = field(default=None, repr=False)
+    error: BridgeError | None = field(default=None, repr=False)
+    _send_started: bool = field(default=False, repr=False)
+    _write_in_progress: bool = field(default=False, repr=False)
+    _callback_claimed: bool = field(default=False, repr=False)
+    _transport_notified: bool = field(default=False, repr=False)
+
+
 class CodexStdioClient:
     """A single-process Codex client with separated stdout and stderr readers."""
 
@@ -125,6 +150,8 @@ class CodexStdioClient:
         self._state_lock = threading.Lock()
         self._pending_lock = threading.Lock()
         self._pending: dict[RequestId, _PendingResponse] = {}
+        self._tracked: dict[int, PreparedRequest] = {}
+        self._tracked_owner = object()
         self._late_response_tombstones: deque[RequestId] = deque(
             maxlen=_MAX_LATE_RESPONSE_TOMBSTONES
         )
@@ -252,6 +279,187 @@ class CodexStdioClient:
             params,
             timeout_seconds=self._request_timeout,
         )
+
+    def prepare_tracked_request(self, method, params, callback=None):
+        """Freeze a start/steer frame without writing or changing native state.
+
+        Results invoke callback(ticket, result, error) outside client locks.
+        A possibly forwarded transport error is an unknown notification, not
+        final native rejection; a later native ACK can still settle that ticket.
+        Capacity exhaustion refuses admission before any forwarding. Expiry
+        only retires response correlation; the caller must preserve unknown
+        input and must never interpret retirement as permission to replay.
+        """
+        self._policy.require_client_request(method)
+        if method not in {"turn/start", "turn/steer"}:
+            raise BridgeError("REQUEST_NOT_TRACKABLE", "Only user sends use tracked correlation")
+        if not isinstance(params, Mapping) or callback is not None and not callable(callback):
+            raise BridgeError("INVALID_PARAMS", "Use object params and a callable result receiver")
+        self._expire_tracked()
+        with self._pending_lock:
+            if len(self._tracked) >= _MAX_TRACKED_REQUESTS:
+                raise BridgeError("CODEX_SEND_CAPACITY", "Original sends still await confirmation", 409)
+            request_id = self._next_request_id
+            frame = json.dumps({"id": request_id, "method": method, "params": dict(params)},
+                               ensure_ascii=False, separators=(",", ":")) + "\n"
+            if len(frame.encode("utf-8")) > _MAX_TRACKED_FRAME_BYTES:
+                raise BridgeError("INVALID_PARAMS", "User send frame exceeds the bounded transport size")
+            self._next_request_id += 1
+            ticket = PreparedRequest(request_id, method, self._tracked_owner, self._process,
+                                     frame, time.monotonic() + _TRACKED_RETENTION_SECONDS, callback)
+            self._tracked[request_id] = ticket
+        return ticket
+
+    def _require_ticket(self, ticket):
+        if not isinstance(ticket, PreparedRequest) or ticket._owner is not self._tracked_owner:
+            raise BridgeError("INVALID_REQUEST_TICKET", "The request belongs to a different client")
+
+    def send_prepared(self, ticket):
+        """Write exactly one frame; callers may hold their short admission lock.
+
+        No RPC wait occurs here. forward_attempted becomes true immediately
+        before stdin.write, so a partial write/flush failure remains unknown.
+        An old ticket cannot be sent through a replacement app-server process.
+        """
+        self._require_ticket(ticket)
+        self._expire_tracked()
+        failure, completions = None, []
+        with self._write_lock:
+            with self._pending_lock:
+                if ticket._send_started or ticket.settled:
+                    raise BridgeError("CODEX_SEND_ALREADY_ATTEMPTED", "Query the original send; never replay it", 409)
+                ticket._send_started = ticket._write_in_progress = True
+            process = self._process
+            try:
+                if process is not ticket._process or process is None or process.poll() is not None or process.stdin is None:
+                    raise BridgeError("CODEX_NOT_RUNNING", "Original Codex connection is no longer available", 503)
+                with self._pending_lock:
+                    if ticket.settled:
+                        raise ticket.error or BridgeError("CODEX_PROCESS_CLOSED", "Original request was retired", 503)
+                    ticket.forward_attempted = True
+                    frame = ticket._frame
+                process.stdin.write(frame)
+                process.stdin.flush()
+            except Exception as error:
+                failure = error if isinstance(error, BridgeError) else BridgeError(
+                    "CODEX_STDIN_FAILED", "Unable to write the original Codex request", 502)
+                with self._pending_lock:
+                    if ticket.forward_attempted:
+                        self._note_transport_error_locked(ticket, failure)
+                    else:
+                        self._finish_tracked_locked(ticket, error=failure)
+            finally:
+                ticket._frame = ""  # Retain identity/result, not another prompt copy.
+        with self._pending_lock:
+            ticket._write_in_progress = False
+            completion = self._claim_tracked_locked(ticket)
+            if completion:
+                completions.append(completion)
+        self._deliver_tracked(completions)
+        if failure is not None and ticket.error is not None:
+            raise ticket.error  # A native ACK observed during flush outranks a pipe error.
+
+    def wait_prepared(self, ticket, timeout_seconds=None):
+        """Wait for the original result; timeout does not remove its correlation."""
+        self._require_ticket(ticket)
+        timeout = self._request_timeout if timeout_seconds is None else timeout_seconds
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout <= 0:
+            raise ValueError("timeout_seconds must be a positive number")
+        if not ticket._send_started:
+            raise BridgeError("CODEX_SEND_NOT_ATTEMPTED", "Send the prepared frame before awaiting its result")
+        self._expire_tracked()
+        if not ticket.event.wait(float(timeout)):
+            self._expire_tracked()
+            if not ticket.event.is_set():
+                raise BridgeError("CODEX_REQUEST_TIMEOUT", f"Codex request timed out: {ticket.method}", 504,
+                                  {"method": ticket.method, "request_id": ticket.request_id})
+        if ticket.error is not None:
+            raise ticket.error
+        return ticket.result
+
+    def discard_prepared(self, ticket):
+        """Release a local admission that never attempted a write."""
+        self._require_ticket(ticket)
+        with self._pending_lock:
+            if ticket._send_started or ticket.forward_attempted:
+                raise BridgeError("CODEX_SEND_ALREADY_ATTEMPTED", "Cannot discard a possibly forwarded send", 409)
+            completion = self._finish_tracked_locked(ticket, error=BridgeError(
+                "CODEX_SEND_DISCARDED", "Local admission did not forward the prepared send", 409))
+        self._deliver_tracked([completion] if completion else [])
+
+    def retire_confirmed(self, ticket):
+        """Release RPC correlation after the caller confirms an exact native item.
+
+        The caller must first retain its own accepted submission fact. This is
+        not an RPC ACK: no result callback runs, and a waiting caller receives
+        CODEX_REQUEST_EXTERNALLY_CONFIRMED so it can return that existing fact.
+        Late ACKs cannot revive the retired request, and retirement never permits
+        another write of the ticket. Unconfirmed sends must keep their tracking.
+        """
+        self._require_ticket(ticket)
+        with self._pending_lock:
+            if not ticket.forward_attempted:
+                raise BridgeError("CODEX_SEND_NOT_ATTEMPTED", "Cannot confirm a frame never forwarded", 409)
+            if ticket.settled:
+                return False  # Preserve an original RPC result already observed.
+            ticket.settled, ticket.result = True, None
+            ticket.error = BridgeError(
+                "CODEX_REQUEST_EXTERNALLY_CONFIRMED", "Exact native item confirmed the original input", 409,
+                {"method": ticket.method, "request_id": ticket.request_id})
+            ticket._frame, ticket._callback, ticket._callback_claimed = "", None, True
+            self._tracked.pop(ticket.request_id, None)
+            self._late_response_tombstones.append(ticket.request_id)
+        ticket.event.set()
+        return True
+
+    def _finish_tracked_locked(self, ticket, *, result=None, error=None):
+        if ticket.settled:
+            return None
+        ticket.settled, ticket.result, ticket.error = True, result, error
+        ticket._frame = ""
+        self._tracked.pop(ticket.request_id, None)
+        return self._claim_tracked_locked(ticket)
+
+    def _claim_tracked_locked(self, ticket):
+        if ticket._write_in_progress:
+            return None
+        if ticket.settled and not ticket._callback_claimed:
+            ticket._callback_claimed = True
+            callback, ticket._callback = ticket._callback, None
+            return ticket, callback, ticket.result, ticket.error
+        if not ticket.settled and ticket.error is not None and not ticket._transport_notified:
+            ticket._transport_notified = True
+            return ticket, ticket._callback, None, ticket.error
+        return None
+
+    def _note_transport_error_locked(self, ticket, error):
+        if not ticket.settled:
+            ticket.error = ticket.error or error
+            ticket._frame = ""
+        return self._claim_tracked_locked(ticket)
+
+    def _deliver_tracked(self, completions):
+        for ticket, callback, result, error in completions:
+            try:
+                if callback is not None:
+                    callback(ticket, result, error)
+            except Exception:
+                self._emit("protocol_warning", code="TRACKED_RESULT_CALLBACK_FAILED",
+                           message="Original request result receiver failed", request_id=ticket.request_id)
+            finally:
+                ticket.event.set()
+
+    def _expire_tracked(self):
+        now, completions = time.monotonic(), []
+        with self._pending_lock:
+            for ticket in tuple(self._tracked.values()):
+                if ticket._expires_at <= now and not ticket._write_in_progress:
+                    completion = self._finish_tracked_locked(ticket, error=BridgeError(
+                        "CODEX_RESPONSE_TRACKING_EXPIRED", "Original response correlation expired; do not resend", 504,
+                        {"method": ticket.method, "request_id": ticket.request_id}))
+                    if completion:
+                        completions.append(completion)
+        self._deliver_tracked(completions)
 
     def request_with_timeout(
         self,
@@ -524,10 +732,22 @@ class CodexStdioClient:
         )
 
     def _handle_response(self, message: dict[str, Any]) -> None:
+        self._expire_tracked()
         request_id = message.get("id")
         with self._pending_lock:
             pending = self._pending.get(request_id)
+            tracked = self._tracked.get(request_id)
             is_late_response = request_id in self._late_response_tombstones
+        if tracked is not None:
+            # An unsolicited result cannot acknowledge a frame never attempted.
+            if not tracked.forward_attempted:
+                return
+            error = CodexRPCError(tracked.method, self._redact_value(message["error"])) if "error" in message else None
+            result = self._redact_value(message.get("result")) if error is None else None
+            with self._pending_lock:
+                completion = self._finish_tracked_locked(tracked, result=result, error=error)
+            self._deliver_tracked([completion] if completion else [])
+            return
         if pending is None:
             if is_late_response:
                 return
@@ -538,11 +758,12 @@ class CodexStdioClient:
                 request_id=request_id,
             )
             return
+        result, error = None, None
         if "error" in message:
-            pending.error = self._redact_value(message["error"])
+            error = self._redact_value(message["error"])
         else:
             raw = message.get("result")
-            pending.result = self._redact_value(raw)
+            result = self._redact_value(raw)
             # One official login response must reach its owning browser action
             # intact. Generic projections, errors and stderr stay redacted.
             if pending.method == "account/login/start" and isinstance(raw, dict) and raw.get("type") == "chatgpt":
@@ -554,8 +775,11 @@ class CodexStdioClient:
                     except ValueError:
                         valid_url = False
                     if valid_url:
-                        pending.result["authUrl"] = auth_url
-        pending.event.set()
+                        result["authUrl"] = auth_url
+        with self._pending_lock:
+            if not pending.event.is_set():
+                pending.result, pending.error = result, error
+                pending.event.set()
 
     def _handle_server_request(self, message: dict[str, Any]) -> None:
         method = message["method"]
@@ -622,12 +846,18 @@ class CodexStdioClient:
         )
 
     def _fail_pending(self, error: BridgeError) -> None:
+        completions = []
         with self._pending_lock:
-            pending_requests = list(self._pending.values())
-        for pending in pending_requests:
-            if not pending.event.is_set():
-                pending.error = error
-                pending.event.set()
+            for pending in self._pending.values():
+                if not pending.event.is_set():
+                    pending.error = error
+                    pending.event.set()
+            for ticket in tuple(self._tracked.values()):
+                completion = (self._note_transport_error_locked(ticket, error) if ticket.forward_attempted
+                              else self._finish_tracked_locked(ticket, error=error))
+                if completion:
+                    completions.append(completion)
+        self._deliver_tracked(completions)
 
     def _emit(self, event_type: str, **fields: Any) -> None:
         sink = self._event_sink

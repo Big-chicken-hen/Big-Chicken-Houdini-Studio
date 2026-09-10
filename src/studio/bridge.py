@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import collections
+import copy
 import os
 import re
 import sys
@@ -13,16 +14,17 @@ from pathlib import Path
 from .accounts import NativeAccount
 from .codex.client import CodexStdioClient
 from .codex.errors import BridgeError
-from .codex.protocol import ProtocolPolicy
+from .codex.protocol import ProtocolPolicy, steer_rejection_reason
 from .codex.settings import ModelCatalog, NativeSettings
 from .codex.trust import SessionTrust, STUDIO_TOOLS
-from .common import TERMINAL, StudioError, atomic_json, new_id, read_json
+from .common import TERMINAL, StudioError, atomic_json, new_id, read_json, payload_hash
 from .conversations import Conversations, NOTIFICATIONS
 from .http import Client, serve
 from .history import NativeHistory
 from .instructions import SCENE_INSTRUCTIONS
 from .launcher import codex_app_server_command, helper_environment
 from .workspace import WorkspaceData, Workspaces
+from .submissions import UserSubmissions
 
 
 class Bridge:
@@ -39,6 +41,7 @@ class Bridge:
         self.sequence = 0
         self.thread_id = None
         self.turn_id = None
+        self.start_submission_id = None
         self.codex_state = "idle"
         self.stop_requested = False
         self.owner_stopped = False
@@ -46,6 +49,8 @@ class Bridge:
         self.pending_requests = {}
         self.conversations = Conversations(self)
         self.history = NativeHistory(self)
+        self.submissions = UserSubmissions(paths.workspace(workspace_id) / "pending-user-input.json")
+        self.submission_tickets = {}
         self.scene_trust = SessionTrust()
         self.settings = NativeSettings()
         self.scene_epoch = self.scene_runtime_id = self.thread_scene_epoch = None
@@ -88,9 +93,14 @@ class Bridge:
         with self.lock:
             method, params = event.get("method"), event.get("params", {})
             if event.get("type") == "process_started":
+                self.start_submission_id = None
                 self.history.reset()
+                self.submissions.reset_generation(self.history.generation)
                 self.events.clear()  # Retire only the old connection's transient event ring.
             event_thread = params.get("threadId")
+            if method in {"item/started", "item/completed"}:
+                self._confirm_user_item(event_thread, params.get("turnId"), params.get("item"),
+                                        self.history.generation)
             if method in NOTIFICATIONS:
                 if self.conversations.observe(method, params):
                     self.sequence += 1
@@ -123,6 +133,7 @@ class Bridge:
                 if turn_id and not known and self.turn_id in {None, turn_id}:
                     self.codex_state = turn.get("status", "unknown")
                     self.turn_id = None
+                    self.start_submission_id = None
                     self.turn_revision += 1
                 if turn_id and turn.get("status") in {"completed", "interrupted", "failed"}:
                     # An authoritative terminal event closes this turn's native
@@ -185,6 +196,7 @@ class Bridge:
         with self.lock:
             self._observe_scene(runtime)
             return {"workspace": self.workspace, "thread_id": self.thread_id, "turn_id": self.turn_id,
+                    "turn_revision": self.turn_revision,
                     "connection_generation": self.history.generation,
                     "codex": {"state": self.codex_state, "alive": self.client.is_running,
                               "stop_requested": self.stop_requested}, "runtime": runtime,
@@ -195,6 +207,7 @@ class Bridge:
                                                       self.thread_scene_epoch != self.scene_epoch)},
                     **self.settings.snapshot(), "account_revision": self.account.revision,
                     "conversations": self.conversations.snapshot(),
+                    **self.submissions.snapshot(self.thread_id),
                     "pending_requests": list(self.pending_requests.values())}
 
     def _observe_scene(self, runtime):
@@ -320,6 +333,8 @@ class Bridge:
 
     def _select_thread(self, thread_id):
         with self.lock:
+            if self.submissions.unresolved() and thread_id != self.thread_id:
+                raise StudioError("INPUT_RESULT_UNKNOWN", "先核对原发送结果，再切换对话。", 409)
             if self.conversations.blocked(self.thread_id) or self.conversations.blocked(thread_id):
                 raise StudioError("THREAD_MUTATION_UNKNOWN", "先核对原生归档或删除结果，再切换对话。", 409)
             if self._has_unknown_response():
@@ -343,6 +358,7 @@ class Bridge:
         with self.lock:
             self.scene_trust.reset()
             self.thread_id, self.turn_id = result["thread"]["id"], None
+            self.start_submission_id = None
             self.settings.bind(self.thread_id, result)
             self.new_scene_thread = not thread_id
             self.thread_scene_epoch = self.scene_epoch if self.new_scene_thread else None
@@ -354,13 +370,288 @@ class Bridge:
         return {**result, "thread_settings": self.settings.snapshot()["thread_settings"]}
 
     def start_turn(self, body):
+        if "client_user_message_id" in body:
+            return self._submit_user_input(body, "start")
         try:
             with self.action():
+                with self.lock:
+                    if self.submissions.unresolved() or self.submissions.fault:
+                        raise StudioError("INPUT_RESULT_UNKNOWN", "先核对原发送结果，再开始下一轮。", 409)
                 return self._start_turn(body)
         except StudioError as exc:
             # These validation/owner-fence failures occur before turn/start.
             raise StudioError(exc.code, exc.message, exc.status,
                               **{**exc.details, "submission_state": "not_submitted"}) from exc
+
+    def _account_identity(self):
+        account = self.account.snapshot().get("account") or {}
+        return payload_hash({"type": account.get("type"), "email": account["email"]}) if account.get("email") else None
+
+    def _submission_response(self, record):
+        value = {"connection_generation": self.history.generation,
+                 "submission": self.submissions.public(record)}
+        if record.get("turn_id"):
+            value["turnId"] = record["turn_id"]
+            if record["intent"] == "start":
+                # Acceptance is separate from liveness. This envelope never
+                # turns a completed Turn back into an in-progress native fact.
+                value["turn"] = {"id": record["turn_id"]}
+                if (record["connection_generation"] == self.history.generation
+                        and record["thread_id"] == self.thread_id):
+                    value["turn_settings"] = self.settings.snapshot()["turn_settings"]
+        return value
+
+    def _check_user_admission(self, body, intent, record):
+        if body.get("connection_generation") != self.history.generation:
+            raise StudioError("INPUT_CONNECTION_CHANGED", "连接已变化，原内容已保留；请先核对原发送。", 409)
+        if not self.client.is_running or self.account.snapshot().get("status") != "signed_in":
+            raise StudioError("ACCOUNT_UNCONFIRMED", "请先确认当前 ChatGPT 连接。", 409)
+        if type(body.get("account_revision")) is not int or body["account_revision"] != self.account.revision:
+            raise StudioError("ACCOUNT_CHANGED", "账号已变化，原内容已保留。", 409)
+        if not self.thread_id or body.get("expected_thread_id") != self.thread_id:
+            raise StudioError("THREAD_SELECTION_STALE", "当前任务所属对话已变化，内容已保留。", 409)
+        if intent == "start" and (type(body.get("expected_turn_revision")) is not int or body["expected_turn_revision"] != self.turn_revision):
+            raise StudioError("TURN_STATE_CHANGED", "点击发送时的任务状态已变化，内容已保留；请重新确认。", 409)
+        if self.conversations.blocked(self.thread_id) or self.thread_id in self.conversations.deleted:
+            raise StudioError("THREAD_MUTATION_UNKNOWN", "先核对对话的归档或删除结果。", 409)
+        if self._has_unknown_response():
+            raise StudioError("APPROVAL_RESPONSE_UNKNOWN", "上次许可回应尚未确认，请先核对原请求。", 409)
+        if self.submissions.fault:
+            raise StudioError("INPUT_STORAGE_UNCONFIRMED", self.submissions.fault, 503)
+        if any(item is not record for item in self.submissions.unresolved()):
+            raise StudioError("INPUT_RESULT_UNKNOWN", "另一条发送的接纳结果尚未确认；这份内容已保留。", 409)
+        if intent == "steer":
+            if self.stop_requested:
+                raise StudioError("STOP_REQUESTED", "已请求停止，这条引导没有发送；内容已保留。", 409)
+            expected = body.get("expected_turn_id")
+            if not isinstance(expected, str) or not expected:
+                raise StudioError("TURN_ID_REQUIRED", "活动任务身份尚未确认，内容已保留。", 409)
+            if self.turn_id and expected != self.turn_id:
+                raise StudioError("STEER_TURN_CHANGED", "当前任务已变化，这条引导没有发送；请确认目标后再次发送。", 409)
+            if expected in self.completed_turns or not self.turn_id and self.codex_state in {"idle", "completed", "interrupted", "failed"}:
+                raise StudioError("STEER_TURN_ENDED", "原任务已结束，这条引导没有发送。内容已保留；再次发送将开始下一轮。", 409)
+            if self.codex_state != "running" or self.turn_id != expected:
+                raise StudioError("TURN_UNCONFIRMED", "原任务身份尚未确认，内容已保留；请先查询状态。", 409)
+        else:
+            self.settings.check_binding(body, self.thread_id)
+            if self.codex_state in {"starting", "running", "stopping", "unknown", "unavailable", "selecting"} or self.turn_id:
+                raise StudioError("TURN_ACTIVE", "任务状态已变化，这条新任务没有发送；请重新确认。", 409)
+
+    def _user_inputs(self, body, intent):
+        text, attachments = body.get("text"), body.get("attachments", [])
+        if not isinstance(text, str) or not text.strip() or len(text) > 64000:
+            raise StudioError("INVALID_INPUT", "Enter a message of 1 to 64000 characters")
+        if not isinstance(attachments, list) or len(attachments) > 8:
+            raise StudioError("INVALID_ATTACHMENTS", "Attach at most eight images")
+        inputs, images = [{"type": "text", "text": text}], []
+        folder = (self.paths.workspace(self.workspace_id) / "attachments").resolve()
+        for attachment in attachments:
+            if not isinstance(attachment, str) or not re.fullmatch(r"[0-9a-f]{32}\.(png|jpg|jpeg|webp)", attachment):
+                raise StudioError("INVALID_ATTACHMENT", "Use an attachment returned by the image picker")
+            path = (folder / attachment).resolve()
+            if path.parent != folder or not path.is_file():
+                raise StudioError("ATTACHMENT_NOT_FOUND", "Reattach the missing image")
+            inputs.append({"type": "localImage", "path": str(path)})
+            images.append({"attachment_id": attachment, "name": path.name, "path": str(path),
+                           "status": "ready", "local_key": attachment})
+        draft_text, version = body.get("draft_text", text), body.get("draft_version")
+        if (not isinstance(draft_text, str) or len(draft_text) > 64000
+                or version is not None and (type(version) not in {int, str} or len(str(version)) > 160)):
+            raise StudioError("INVALID_DRAFT", "Use a bounded immutable draft snapshot")
+        reference = body.get("selection_reference")
+        if reference is not None:
+            if (not isinstance(reference, dict) or not isinstance(reference.get("scene_epoch"), str)
+                    or not 0 < len(reference["scene_epoch"]) <= 128 or not isinstance(reference.get("nodes"), list)
+                    or not 0 < len(reference["nodes"]) <= 100
+                    or any(not isinstance(path, str) or not path.startswith("/") or len(path) > 2048 for path in reference["nodes"])):
+                raise StudioError("INVALID_SELECTION", "请重新确认选择引用。")
+            reference = {"scene_epoch": reference["scene_epoch"], "nodes": list(reference["nodes"])}
+        if intent == "steer" and any(key in body for key in (
+                "model", "effort", "cwd", "sandbox", "approvalPolicy", "developerInstructions", "settings_revision")):
+            raise StudioError("STEER_OVERRIDES_REJECTED", "引导只追加输入，不改变当前任务的模型或许可。")
+        for key in ("model", "effort"):
+            if body.get(key) is not None and (not isinstance(body[key], str) or len(body[key]) > 160):
+                raise StudioError("INVALID_INPUT", "Model and effort must be native advertised strings")
+        return inputs, {"text": text, "draft_text": draft_text, "draft_version": version,
+                        "attachments": images, "selection_reference": reference}
+
+    def _submission_error(self, record, error, *, forwarded=False):
+        state = "unknown" if forwarded else "not_submitted"
+        details = {"code": getattr(error, "code", "INPUT_UNCONFIRMED"),
+                   "message": getattr(error, "message", "原发送结果尚未确认；内容已保留。"),
+                   "details": getattr(error, "details", None)}
+        reason = steer_rejection_reason(error, record.get("expected_turn_id")) if record["intent"] == "steer" else None
+        if reason:
+            state = "not_submitted"
+            details["native_rejection_reason"] = reason
+            if reason == "turn_ended":
+                details["message"] = "原任务已结束，这条引导没有发送。内容已保留；再次发送将开始下一轮。"
+            elif reason == "turn_changed":
+                details["message"] = "当前任务已变化，这条引导没有发送；请确认目标后再次发送。"
+        self.submissions.settle(record, state, error=details)
+
+    def _settle_user_rpc(self, record, ticket, result, error):
+        interrupt = None
+        with self.lock:
+            if ticket.settled:
+                self.submission_tickets.pop(record["client_user_message_id"], None)
+            record["forward_attempted"] = bool(ticket.forward_attempted)
+            try:
+                if error:
+                    self._submission_error(record, error, forwarded=ticket.forward_attempted)
+                else:
+                    turn_id = ((result.get("turn") or {}).get("id") if record["intent"] == "start"
+                               else result.get("turnId")) if isinstance(result, dict) else None
+                    if not isinstance(turn_id, str) or not turn_id or (record["intent"] == "steer" and turn_id != record["expected_turn_id"]):
+                        raise BridgeError("INPUT_ACK_INVALID", "原生回应没有确认原发送目标。", 502)
+                    self.submissions.settle(record, "accepted", turn_id=turn_id)
+                    current = (record["connection_generation"] == self.history.generation
+                               and record["thread_id"] == self.thread_id
+                               and record["account_revision"] == self.account.revision)
+                    if (record["intent"] == "start" and current and self.start_submission_id == record["client_user_message_id"]
+                            and turn_id not in self.completed_turns and self.turn_id in {None, turn_id}):
+                        # Only start owns start-state binding. A steer ACK never
+                        # touches Turn state, model settings, Stop or Runtime owner.
+                        status = (result.get("turn") or {}).get("status", "inProgress")
+                        self.settings.admitted(turn_id)
+                        if status in {"completed", "interrupted", "failed"}:
+                            self.completed_turns.append(turn_id)
+                            self.turn_id, self.codex_state = None, status
+                            self.start_submission_id = None
+                        else:
+                            self.turn_id = turn_id
+                            self.codex_state = "stopping" if self.stop_requested else "running"
+                            if self.stop_requested and not record.get("stop_interrupt_sent"):
+                                record["stop_interrupt_sent"] = True
+                                interrupt = (record["thread_id"], turn_id, record["connection_generation"])
+                        self.turn_revision += 1
+            except (BridgeError, StudioError) as failure:
+                if not self.submissions.fault:
+                    self._submission_error(record, failure, forwarded=ticket.forward_attempted)
+            if (record["intent"] == "start" and record["state"] == "unknown" and self.codex_state == "starting"
+                    and record["connection_generation"] == self.history.generation and not self.turn_id):
+                self.codex_state = "unknown"
+        if interrupt:
+            # Do not wait for another RPC from the stdout reader callback.
+            threading.Thread(target=self._interrupt_confirmed_start, args=interrupt, daemon=True).start()
+
+    def _interrupt_confirmed_start(self, thread_id, turn_id, generation):
+        with self.lock:
+            current = (generation == self.history.generation and thread_id == self.thread_id
+                       and turn_id == self.turn_id and self.stop_requested)
+        if current:
+            try:
+                self.client.request("turn/interrupt", {"threadId": thread_id, "turnId": turn_id})
+            except BridgeError:
+                pass  # Existing Stop state/query remains authoritative, no resend.
+
+    def _submit_user_input(self, body, intent):
+        body = copy.deepcopy(body)
+        with self.lock:
+            if body.get("connection_generation") != self.history.generation:
+                raise StudioError("INPUT_CONNECTION_CHANGED", "连接已变化；请查询原发送，不会自动重发。", 409,
+                                  submission_state="not_submitted")
+            record, fresh = self.submissions.remember(body, intent, self._account_identity())
+            if not fresh:
+                return self._submission_response(record)
+            if self.submissions.unresolved() or self.action_lock.locked():
+                self._submission_error(record, StudioError("INPUT_RESULT_UNKNOWN",
+                    "另一条请求尚未确认；这份内容已保留，不会排队发送。", 409))
+                return self._submission_response(record)
+            record["state"] = "pending"
+        ticket = None
+        try:
+            with self.action():
+                with self.lock:
+                    self._check_user_admission(body, intent, record)
+                    model = (self.settings.turn or {}).get("model") if intent == "steer" else body.get("model") or self.settings.thread["model"]
+                inputs, snapshot = self._user_inputs(body, intent)
+                if intent == "start" and (body.get("model") or body.get("effort")) or body.get("attachments"):
+                    if not model:
+                        raise StudioError("MODEL_UNCONFIRMED", "当前任务的模型尚未确认；内容已保留。", 409)
+                    self.models.validate(model, body.get("effort") if intent == "start" else None, bool(body.get("attachments")))
+                health = None
+                if snapshot["selection_reference"] or intent == "start":
+                    try:
+                        health = self.runtime().call("GET", "/health")
+                    except StudioError:
+                        if snapshot["selection_reference"]:
+                            raise StudioError("SELECTION_UNCONFIRMED", "无法确认选择引用的场景身份；请保留输入。", 409) from None
+                params = {"threadId": record["thread_id"], "clientUserMessageId": record["client_user_message_id"], "input": inputs}
+                if intent == "steer":
+                    params["expectedTurnId"] = record["expected_turn_id"]
+                else:
+                    params.update({key: body[key] for key in ("model", "effort") if body.get(key)})
+                ticket = self.client.prepare_tracked_request("turn/" + intent, params,
+                            lambda ticket, result, error: self._settle_user_rpc(record, ticket, result, error))
+                with self.lock:
+                    self.submission_tickets[record["client_user_message_id"]] = ticket
+                    self._check_user_admission(body, intent, record)
+                    if intent == "steer" and body.get("attachments") and model != (self.settings.turn or {}).get("model"):
+                        raise StudioError("MODEL_CHANGED", "正在工作的模型已变化；请重新确认图片能力。", 409)
+                    if health and snapshot["selection_reference"] and (
+                            snapshot["selection_reference"]["scene_epoch"] != health.get("scene", {}).get("scene_epoch")
+                            or self.scene_epoch is not None and snapshot["selection_reference"]["scene_epoch"] != self.scene_epoch):
+                        raise StudioError("SELECTION_STALE", "选择引用来自先前场景，内容已保留；请重新引用或移除。", 409)
+                    if intent == "start":
+                        if health and (health.get("main_thread_busy") or health.get("active_operation_id") or health.get("queue_depth") or health.get("storage_fault")):
+                            raise StudioError("RUNTIME_WORK_PENDING", "Houdini 原操作尚未收口，内容已保留。", 409)
+                        if self.owner_stopped:
+                            self.runtime().call("POST", "/owner/resume", {"owner_id": self.owner_id})
+                            self.owner_stopped = False
+                    self.submissions.reserve(record, snapshot)
+                    if intent == "start":
+                        self.start_submission_id = record["client_user_message_id"]
+                        self.codex_state, self.stop_requested = "starting", False
+                        self.settings.requested(self.thread_id, body)
+                    # Stop uses this same short lock. RPC waiting is below,
+                    # outside both the state and conversation action locks.
+                    self.client.send_prepared(ticket)
+                    record["forward_attempted"] = bool(ticket.forward_attempted)
+            self.client.wait_prepared(ticket)
+        except Exception as error:
+            with self.lock:
+                forwarded = bool(ticket and ticket.forward_attempted)
+                record["forward_attempted"] = forwarded
+                if ticket and not forwarded and not ticket.settled:
+                    self.client.discard_prepared(ticket)
+                if record["state"] != "accepted":
+                    try:
+                        self._submission_error(record, error, forwarded=forwarded)
+                    except StudioError:
+                        pass  # Keep the original durable snapshot, block new sends.
+                if intent == "start" and self.codex_state == "starting" and not self.turn_id:
+                    self.codex_state = "unknown" if forwarded else "idle"
+                    if not forwarded:
+                        self.start_submission_id = None
+        with self.lock:
+            return self._submission_response(record)
+
+    def _confirm_user_item(self, thread_id, turn_id, item, generation, *, recovering=False):
+        if not isinstance(item, dict) or item.get("type") != "userMessage" or not item.get("id"):
+            return
+        record = self.submissions.records.get(item.get("clientId"))
+        if (not record or record["thread_id"] != thread_id or not turn_id
+                or record.get("turn_id") not in {None, turn_id}
+                or record["intent"] == "steer" and record["expected_turn_id"] != turn_id):
+            return
+        if recovering:
+            if not record.get("account_identity") or record["account_identity"] != self._account_identity():
+                return
+        elif record["connection_generation"] != generation or record["account_revision"] != self.account.revision:
+            return
+        try:
+            record["forward_attempted"] = True
+            self.submissions.settle(record, "accepted", turn_id=turn_id, native_item_id=item["id"])
+            ticket = self.submission_tickets.get(record["client_user_message_id"])
+            if ticket is not None:
+                # Exact native acceptance releases capacity and the original
+                # waiter. It is not a fabricated RPC ACK or a retransmission.
+                self.client.retire_confirmed(ticket)
+                if ticket.settled:
+                    self.submission_tickets.pop(record["client_user_message_id"], None)
+        except StudioError:
+            pass
 
     def _start_turn(self, body):
         text = body.get("text", "")
@@ -390,6 +681,7 @@ class Bridge:
                 raise StudioError("TURN_ACTIVE", "Wait for native turn confirmation or reconcile the conversation", 409)
             if not self.thread_id:
                 raise StudioError("THREAD_REQUIRED", "Create or select a conversation first", 409)
+            admission_revision = self.turn_revision
         account_revision = self.account.revision
         if body.get("model") or body.get("effort"):
             model = body.get("model") or self.settings.thread["model"]
@@ -398,6 +690,8 @@ class Bridge:
             self.models.validate(model, body.get("effort"), bool(attachments))
         with self.lock:
             self.settings.check_binding(body, self.thread_id)
+            if admission_revision != self.turn_revision:
+                raise StudioError("TURN_STATE_CHANGED", "发送校验期间任务或停止状态已变化；内容已保留。", 409)
             if self._has_unknown_response() or self.codex_state in {"starting", "running", "stopping", "unknown", "unavailable", "selecting"}:
                 raise StudioError("TURN_ACTIVE", "原生状态已变化，请先查询当前对话。", 409)
             if account_revision != self.account.revision:
@@ -433,22 +727,41 @@ class Bridge:
             self.client.request("turn/interrupt", {"threadId": self.thread_id, "turnId": turn_id})
         return {**result, "turn_settings": self.settings.snapshot()["turn_settings"]}
 
-    def reconcile(self):
+    def reconcile(self, body=None):
         """Read native Codex state; this never infers a Houdini mutation outcome."""
         with self.action():
             with self.lock:
-                thread_id, revision = self.thread_id, self.turn_revision
+                message_id = (body or {}).get("client_user_message_id")
+                record = self.submissions.records.get(message_id) if message_id else None
+                if message_id and not record:
+                    raise StudioError("INPUT_RECORD_UNAVAILABLE", "原发送身份记录不可用；不会重新发送。", 409)
+                if record and (self.account.snapshot().get("status") != "signed_in"
+                        or not record.get("account_identity") or record["account_identity"] != self._account_identity()):
+                    raise StudioError("INPUT_ACCOUNT_CHANGED", "请使用原账号核对原发送；保留的内容不会发送到其他账号。", 409)
+                thread_id = record["thread_id"] if record else self.thread_id
+                revision, generation, account_revision = self.turn_revision, self.history.generation, self.account.revision
             if not thread_id:
                 return {"reconciled": False, "message": "Select a native conversation first"}
+            if record and thread_id != self.thread_id:
+                self.conversations.read(thread_id)  # Explicit original-thread cwd check; no resume or rebinding.
             value = self.read_thread(thread_id)
             with self.lock:
-                fresh = revision == self.turn_revision
+                source_current = generation == self.history.generation and account_revision == self.account.revision
+                fresh = source_current and revision == self.turn_revision and thread_id == self.thread_id
+                if source_current and value.get("history_available") is not False:
+                    thread = value.get("thread") or {}
+                    if thread.get("id") == thread_id:
+                        for turn in thread.get("turns", []):
+                            for item in turn.get("items", []):
+                                self._confirm_user_item(thread_id, turn.get("id"), item, generation, recovering=True)
                 if fresh:
                     self._apply_native_state(value["thread"])
-                turn_id = self.turn_id if self.stop_requested else None
+                turn_id = self.turn_id if fresh and self.stop_requested else None
+                submission = self.submissions.public(record) if record else self.submissions.snapshot(self.thread_id)["user_submission"]
             if turn_id:
                 self.client.request("turn/interrupt", {"threadId": thread_id, "turnId": turn_id})
-            return {**value, "reconciled": fresh, "codex_state": self.codex_state}
+            return {**value, "reconciled": fresh, "codex_state": self.codex_state,
+                    "connection_generation": generation, "submission": submission}
 
     def read_thread(self, thread_id):
         try:
@@ -474,6 +787,7 @@ class Bridge:
             self.codex_state, self.turn_id = "unknown", None
         elif status in {"completed", "interrupted", "failed"}:
             self.codex_state, self.turn_id = status, None
+            self.start_submission_id = None
             self.completed_turns.append(latest.get("id"))
         elif not turns and live == "idle":
             self.codex_state, self.turn_id = "idle", None
@@ -482,6 +796,7 @@ class Bridge:
 
     def stop(self):
         with self.lock:
+            self.turn_revision += 1
             self.stop_requested = True
             self.owner_stopped = True
             if self.codex_state in {"running", "starting"}:
@@ -589,6 +904,9 @@ class Bridge:
             if method == "GET" and path == "/threads":
                 return self.conversations.listing(query)
             if method == "POST" and path == "/threads/manage":
+                with self.lock:
+                    if self.submissions.unresolved(body.get("thread_id")):
+                        raise StudioError("INPUT_RESULT_UNKNOWN", "先核对原发送结果，再修改对话状态。", 409)
                 return self.conversations.mutate(body)
             if method == "POST" and path == "/threads/reconcile":
                 return self.conversations.reconcile(body)
@@ -603,11 +921,13 @@ class Bridge:
                 return self.history.page(thread_id, cursor=query.get("cursor", [None])[0],
                                          turn_id=query.get("turn_id", [None])[0])
             if method == "POST" and path == "/reconcile":
-                return self.reconcile()
+                return self.reconcile(body)
             if method == "POST" and path == "/selection":
                 return self.selection()
             if method == "POST" and path == "/turn":
                 return self.start_turn(body)
+            if method == "POST" and path == "/turn/steer":
+                return self._submit_user_input(body, "steer")
             if method == "POST" and path == "/stop":
                 return self.stop()
             if method == "POST" and path == "/attachments":
@@ -634,7 +954,7 @@ class Bridge:
             if method == "POST" and path == "/requests/respond":
                 return self._respond_request(str(body["request_id"]), body["result"])
         except BridgeError as exc:
-            raise StudioError(exc.code, exc.message, exc.http_status) from exc
+            raise StudioError(exc.code, exc.message, exc.http_status, **(exc.details or {})) from exc
         raise StudioError("ROUTE_NOT_FOUND", "Unknown bridge route", 404)
 
     def close(self):
