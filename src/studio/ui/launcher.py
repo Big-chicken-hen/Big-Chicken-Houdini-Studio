@@ -15,6 +15,7 @@ from ..release import identity_details, local_identity
 from .launcher_pages import project_page
 from .launcher_visuals import ElidedLabel, RecentRow
 from .launcher_flow import FLOW_STYLE, FlowPage, font_diagnostics
+from .launcher_surface import LauncherSurface
 from .shared import ApiFailure, ErrorDetails, Task, button, label
 from .launcher_palette import ACCENT, ARTWORK, INK, style_launcher_popup
 from .icons import LoadingIcon, icon_diagnostics, set_button_icon
@@ -101,7 +102,7 @@ class _TaskReply(QtCore.QObject):
         self.owner._completed(self, value, True)
 
 
-class StudioLauncher(QtWidgets.QWidget):
+class StudioLauncher(LauncherSurface):
     def __init__(self, paths=None, *, onboarding_factory=None, catalog=None, target_factory=None,
                  launch_function=None, status_function=None, browser_open=None, reveal_path=None,
                  preference_reader=None, preference_writer=None, auto_probe=True):
@@ -207,10 +208,23 @@ class StudioLauncher(QtWidgets.QWidget):
         scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         body = QtWidgets.QWidget()
         body.setObjectName("secondaryBody")
-        content = QtWidgets.QVBoxLayout(body)
-        content.setContentsMargins(0, 0, 4, 0)
+        body_layout = QtWidgets.QVBoxLayout(body)
+        body_layout.setContentsMargins(0, 0, 4, 0)
+        card = QtWidgets.QFrame()
+        card.setObjectName("secondaryCard")
+        card.setMaximumWidth(620 if name == "account" else 860 if name == "settings" else 1080)
+        content = QtWidgets.QVBoxLayout(card)
+        content.setContentsMargins(22, 20, 22, 20)
         content.setSpacing(12)
+        if name == "diagnostics":
+            body_layout.addWidget(card, 1)
+        else:
+            body_layout.addWidget(card, 0)
+            body_layout.addStretch(1)
+        self.secondary_cards[name] = card
         scroll.setWidget(body)
+        scroll.viewport().setAutoFillBackground(False)
+        body.setAutoFillBackground(False)
         outer.addWidget(scroll, 1)
         self.pages[name] = page
         self.stack.addWidget(page)
@@ -233,6 +247,7 @@ class StudioLauncher(QtWidgets.QWidget):
         root.addWidget(toolbar)
         self.stack = QtWidgets.QStackedWidget()
         self.pages = {}
+        self.secondary_cards = {}
         root.addWidget(self.stack, 1)
         self.flow_scroll = QtWidgets.QScrollArea()
         self.flow_scroll.setObjectName("flowScroll")
@@ -242,6 +257,8 @@ class StudioLauncher(QtWidgets.QWidget):
         self.flow_page = FlowPage()
         self.flow = self.flow_page.flow
         self.flow_scroll.setWidget(self.flow_page)
+        self.flow_scroll.viewport().setAutoFillBackground(False)
+        self.flow_page.setAutoFillBackground(False)
         self.pages["flow"] = self.flow_scroll
         self.stack.addWidget(self.flow_scroll)
 

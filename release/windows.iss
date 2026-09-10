@@ -42,7 +42,7 @@ InfoAfterFile={#Payload}\licenses\THIRD-PARTY-NOTICES.md
 Source: "{#Payload}\*"; DestDir: "{app}\versions\{#BuildId}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
-Name: "{group}\Big-Chicken Houdini Studio"; Filename: "{app}\versions\{#BuildId}\Studio.exe"; WorkingDir: "{app}\versions\{#BuildId}"
+Name: "{group}\Big-Chicken Houdini Studio"; Filename: "{app}\versions\{#BuildId}\Studio.exe"; WorkingDir: "{app}\versions\{#BuildId}"; AppUserModelID: "BigChicken.HoudiniStudio"
 Name: "{group}\Uninstall Studio"; Filename: "{uninstallexe}"
 
 ; No [UninstallDelete], state/cache scan, process termination, PATH change,

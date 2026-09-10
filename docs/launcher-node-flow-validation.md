@@ -1,5 +1,50 @@
 # Fixed node-flow Launcher candidate
 
+## Owner-requested secondary-page follow-up
+
+After the external-test approval for `042c66b9be95` / `README-1`, the owner
+explicitly requested a persistent Launcher background, a white native title
+bar, the girl icon on the running taskbar entry, and light card styling for
+Account, Settings and Diagnostics. These bounded presentation changes are now
+available through the development `E:\Big-Chicken-Houdini-Studio\Studio.exe`.
+This source follow-up is not yet packaged and does not inherit the earlier
+candidate's approval. The existing five-file ZIP and installer bytes remain
+unchanged.
+
+The window now owns one decoded background and one scaled cache, reused across
+page changes and refreshed only for viewport size or device pixel ratio changes.
+Secondary pages use translucent cards with the existing controls and complete
+diagnostic text. Windows caption styling and Shell relaunch identity belong to
+the Launcher HWND; no process-wide AppID, taskbar pin, registry or system theme
+is changed. The installer shortcut declares the same AppUserModelID. Panel,
+Houdini preferences, consent and execution behavior remain unchanged.
+
+Validation on Windows 11 build 22631 / Qt 6.8.3:
+
+- All 27 focused Launcher, flow and UI identity tests passed; Ruff passed for
+  the four affected Python modules.
+- Native Windows fixtures and Qt offscreen 150% fixtures cover the three pages
+  at 1120x760 and 600x480. No horizontal overflow or clipped wrapped labels was
+  observed; the diagnostics export button is reachable. Repeated navigation
+  reuses the same image cache and does not probe, log in, launch or write settings.
+- The actual composed window screenshot confirms the white native caption and
+  existing girl window icon. Shell property readback confirms the Studio AppID,
+  girl icon resource and quoted Studio.exe relaunch path. Both native icon sizes
+  are present; an unrelated fixture window has no assigned identity. All four
+  owned Shell properties are cleared on normal close.
+- Evidence is in `.runtime/previews/launcher/secondary-cards-100` and
+  `secondary-cards-check/{native,compact}`. `native-composed-title.png` records
+  the real composed frame. `native-title.png` is only the WM_PRINT fallback;
+  it is not evidence of DWM caption appearance. Caption attributes support Set,
+  not Get; the initial unsupported getter assertion was a fixture error.
+
+These checks use in-memory fixture services and isolated E: state. They do not
+claim new official login, Houdini, installed-package or Explorer pinned-shortcut
+acceptance. A future release containing these changes needs its own source
+identity, CI, installer and five-file ZIP; do not relabel the approved old ZIP.
+
+## Previously approved candidate: 042c66b9be95 / README-1
+
 This implements [the Pro-approved topology](launcher-node-flow-brief.md) and the
 owner's subsequent supplied-artwork, white/blue palette and portrait EXE icon
 correction. The local native Qt Launcher is the only presentation being changed.

@@ -6,7 +6,7 @@ from pathlib import Path
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from .shared import label
-from .launcher_palette import ARTWORK, BACKGROUND, launcher_stylesheet
+from .launcher_palette import launcher_stylesheet
 
 _FONT = None
 
@@ -34,7 +34,13 @@ def font_diagnostics():
 FLOW_STYLE = launcher_stylesheet('studioLauncher') + '''
 QWidget#studioLauncher { background: #EEF6FC; color: #203B5D; }
 QWidget#studioLauncher QWidget#secondaryViewport, QWidget#studioLauncher QWidget#secondaryBody {
-    background: #EEF6FC;
+    background: transparent;
+}
+QWidget#studioLauncher QFrame#secondaryCard {
+    background: rgba(248, 252, 255, 232); border: 1px solid #C5D8E8; border-radius: 10px;
+}
+QWidget#studioLauncher QFrame#secondaryCard QPlainTextEdit {
+    background: transparent; border: none; padding: 2px;
 }
 QWidget#studioLauncher QWidget#flowPage, QWidget#studioLauncher QWidget#flowCanvas,
 QWidget#studioLauncher QScrollArea#flowScroll, QWidget#studioLauncher QWidget#flowViewport {
@@ -296,9 +302,6 @@ class FlowPage(QtWidgets.QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName('flowPage')
-        self._background = QtGui.QPixmap(str(ARTWORK / 'background.png'))
-        self._background_scaled = QtGui.QPixmap()
-        self._background_size = QtCore.QSize()
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -327,28 +330,3 @@ class FlowPage(QtWidgets.QWidget):
             self.hero.style().unpolish(self.hero)
             self.hero.style().polish(self.hero)
         self.flow.setFixedWidth(min(1000, self.width()))
-
-    def paintEvent(self, event):
-        painter = QtGui.QPainter(self)
-        painter.fillRect(self.rect(), QtGui.QColor(BACKGROUND))
-        if self._background.isNull():
-            return
-        # Decode once and rescale only with the viewport; polling never reloads art.
-        height = min(self.height(), max(680, self.window().height() - 64))
-        size = QtCore.QSize(self.width(), height)
-        if size != self._background_size:
-            self._background_scaled = self._background.scaled(
-                size, QtCore.Qt.KeepAspectRatioByExpanding, QtCore.Qt.SmoothTransformation)
-            self._background_size = size
-        painter.setOpacity(0.58)
-        painter.drawPixmap((self.width() - self._background_scaled.width()) // 2,
-                           (height - self._background_scaled.height()) // 2, self._background_scaled)
-        painter.setOpacity(1)
-        heading_veil = QtGui.QLinearGradient(0, 0, 0, 190)
-        heading_veil.setColorAt(0, QtGui.QColor(238, 246, 252, 165))
-        heading_veil.setColorAt(1, QtGui.QColor(238, 246, 252, 0))
-        painter.fillRect(QtCore.QRect(0, 0, self.width(), 190), heading_veil)
-        fade = QtGui.QLinearGradient(0, height * 0.60, 0, height)
-        fade.setColorAt(0, QtGui.QColor(238, 246, 252, 0))
-        fade.setColorAt(1, QtGui.QColor(BACKGROUND))
-        painter.fillRect(self.rect(), fade)
