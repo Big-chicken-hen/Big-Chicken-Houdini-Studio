@@ -1,4 +1,4 @@
-# R4-HELP-1 — evidence preparation, not a fix
+# R4-HELP-1 — environment-key candidate, GUI recovery pending
 
 ## Decision and current status
 
@@ -7,14 +7,77 @@ The owner authorized the full [Pro review](r4-help-review.md) on 2026-09-11.
 blocks automatic Ready/merge/Public RC for PR #14. Development startup has an
 owner-reproduced failure; native startup of the same Houdini installation is
 owner-reported normal. Matching real GUI snapshots now support the host/pane
-comparison below. Root cause, introducing commit and payload GUI impact
-remain unknown. No production fix or new package has been made.
+comparison below. The candidate below addresses a verified Python/Chromium
+environment-key compatibility conflict. Whether it resolves this host's GUI
+failure, the introducing commit and actual payload impact remain unconfirmed.
+The existing installer and ZIP have not been rebuilt.
 
 Latest result: actual Studio browser-child stop events now report
 `0xC0000135` (`STATUS_DLL_NOT_FOUND`). This identifies the failure category,
 not the missing module or the responsible inherited environment field. The
-follow-up logging run still failed; the next single-PATH comparison is prepared
-but unrun while the owner rests. All temporary launcher hunks are removed.
+follow-up logging run still failed. The latest Pro review replaces the proposed
+private Qt PATH-removal comparison with the three-key spelling correction below.
+All temporary logging/autostart/PATH-removal hunks are removed.
+
+## Latest review: final Windows host environment key spelling
+
+The [latest Pro review](r4-help-environment-case-review.md) is preserved verbatim.
+Its scope is implemented in `houdini_host_environment()` and the final
+`supervise()` call to `Popen`: copy `os.environ` to an ordinary dict, rename the
+three uppercase keys to `Path`, `SystemRoot`, `SystemDrive` on Windows, then
+pass that dict directly to the host. Absent keys stay absent; non-Windows
+environments are unchanged. Nothing is written back to `os.environ`.
+All values, PATH entries/order/empty segments, six Houdini search variables,
+native preferences, Runtime startup, cwd/history, tokens and proxy settings
+retain their existing behavior. No Qt/DLL or sandbox settings are changed.
+
+Independent source verification follows the actual
+[Qt WebEngine v6.8.3 submodule](https://github.com/qt/qtwebengine/tree/v6.8.3/src),
+`55749ed0af5869215b88007df0cba430746583ae`:
+
+- [Renderer launch](https://github.com/qt/qtwebengine-chromium/blob/55749ed0af5869215b88007df0cba430746583ae/chromium/content/browser/renderer_host/renderer_sandboxed_process_launcher_delegate.cc#L126)
+  enables environment filtering.
+- [Target creation and filter](https://github.com/qt/qtwebengine-chromium/blob/55749ed0af5869215b88007df0cba430746583ae/chromium/sandbox/win/src/target_process.cc#L141)
+  use a fixed allowlist with the three mixed-case names and exact-case matching
+  in `FilterEnvironment()` (lines 408–427).
+- [Python's Windows environment mapping](https://docs.python.org/3.13/library/os.html#os.environ)
+  uppercases keys; [CPython 3.13.15 serialization](https://github.com/python/cpython/blob/v3.13.15/Modules/_winapi.c#L1051)
+  preserves the spelling in an ordinary mapping passed to process creation.
+
+The diagnostic now reads only those three original key/value entries from this
+process's [GetEnvironmentStringsW](https://learn.microsoft.com/en-us/windows/win32/api/processenv/nf-processenv-getenvironmentstringsw)
+block, scans at most 1,048,576 WCHARs, and releases the block in `finally`.
+This creates no Qt object or process and reads no other process memory. The
+existing `os.environ` snapshot remains for continuity, but it cannot establish
+raw Windows key spelling. No earlier snapshot is relabelled as raw evidence.
+
+Local checks on 2026-09-11:
+
+- Before the correction, the new final-spawn regression failed because `Path`
+  was absent; the other 12 launcher checks passed.
+- After correction, 30 checks across `test_launcher.py`,
+  `test_houdini_environment.py`, `test_windows_environment.py` and
+  `test_help_inspection.py` passed. Ruff passed once on `src`, `scripts`, `tests`.
+- The actual Windows child test launches two tiny Python processes without
+  Qt/Houdini. Raw Win32 blocks keep uppercase names for the old mapping and
+  mixed-case names for the correction, while `os.environ` shows uppercase in
+  both. Every selected value is identical. Applying the pinned source's
+  case-sensitive allowlist model discards all three old keys and retains all
+  three corrected keys. Updating the existing PATH value through Python in
+  the child preserves its original Win32 key spelling as well.
+- Both development and installed Python bootstrap tests traverse the
+  supervisor environment normalization before the final correction; custom
+  search paths, native preferences, fresh test token and proxy survive.
+- The diagnostic tests verify original spelling, a three-key allowlist,
+  secret exclusion and a hard scan limit alongside the existing Qt safety gates.
+
+These are implementation/serialization checks, not a real Chromium renderer
+or Houdini GUI pass. No SideFX binary patch provenance or exact missing DLL is
+claimed. The owner paused for class after these checks, then resumed. The next
+owner action is one fresh E: `Studio.exe` Launch of the same HIP and opening
+help. If recovery is observed, correlate the session and raw key spellings,
+then finish the bounded real navigation/cold-start/Panel and payload gates below.
+Do not apply the superseded private-Qt-PATH patch or request more generic logs.
 
 Reviewed code: `e686e548352da2de3b742f393c52568df09551d2`.
 Existing candidate: `0.1.0-rc.1-8af563981e73`. Its previous checks do not prove
@@ -285,7 +348,10 @@ no matching additional event for this window. No audit policy was changed.
 The owner is tired and further GUI requests are paused. There is no production
 fix, no new installer/ZIP, and no release approval from these results.
 
-## Next exact comparison — prepared, unapplied
+## Superseded private Qt PATH comparison — never applied
+
+This historical experiment was replaced by the latest environment-key review
+above. Keep the patch as evidence of the prior proposal; do not apply it.
 
 The [reviewable diagnostic patch](evidence/r4-help/private-qt-path-comparison.patch)
 retains the logging run's settings and normal Runtime autostart. Its only
@@ -302,13 +368,9 @@ and empty entries retained; cwd/command/stdio unchanged; a missing target entry
 rejects the comparison. `git apply --check` passed. The patch has **not** been
 applied and no GUI result exists for it.
 
-When the owner is available, correlate a fresh E: Studio session before
-removing this temporary hunk. Verify the actual GUI PATH and loaded Runtime,
-same help entry and same scene. If help recovers, restore the entry in another
-fresh launch to reproduce the failure, then remove it again to recover. If it
-does not recover, stop treating that entry as the primary cause and follow the
-captured loader errors. Do not ask the owner to repeat earlier completed
-snapshots, broaden the environment filter, or invent a new generic test matrix.
+The earlier plan was to correlate a fresh Studio session and compare removal,
+restoration and removal again. None of those runs occurred. The source-backed
+key-spelling candidate now takes priority, with all PATH contents preserved.
 
 ## Repeating the GUI comparison
 

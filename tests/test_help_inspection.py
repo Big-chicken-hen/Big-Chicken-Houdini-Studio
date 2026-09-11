@@ -14,6 +14,24 @@ probe = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'scripts/inspec
 
 
 class HelpInspectionTests(unittest.TestCase):
+    def test_raw_environment_keeps_original_spelling_and_only_three_allowed_keys(self):
+        block = ('=C:=private-directory\0Path=Qt;插件;;\0SYSTEMROOT=C:\\Windows\0'
+                 'SystemDrive=C:\0BCS_SESSION_TOKEN=private-fixture\0'
+                 'HTTP_PROXY=http://private-fixture\0\0')
+        result = probe['selected_raw_environment'](block)
+        self.assertEqual(result['entries'], [{'name': 'Path', 'value': 'Qt;插件;;'},
+                         {'name': 'SYSTEMROOT', 'value': 'C:\\Windows'},
+                         {'name': 'SystemDrive', 'value': 'C:'}])
+        self.assertTrue(result['available'])
+        self.assertNotIn('private', str(result))
+        self.assertEqual(probe['selected_raw_environment']('\0\0')['entries'], [])
+
+    def test_raw_environment_scan_stops_at_its_bound(self):
+        result = probe['selected_raw_environment']('Path=ok\0unrelated-long-value', limit=12)
+        self.assertFalse(result['available'])
+        self.assertTrue(result['truncated'])
+        self.assertEqual(result['entries'], [{'name': 'Path', 'value': 'ok'}])
+
     def test_log_read_never_creates_a_sink_or_reads_unrelated_messages(self):
         logging = Mock(spec=['defaultSink'])
         logging.defaultSink.return_value = None

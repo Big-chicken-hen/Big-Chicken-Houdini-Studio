@@ -150,6 +150,30 @@ class LauncherTests(unittest.TestCase):
             self.assertEqual(launcher.supervise(self.paths, session_id), 0)
         self.assertEqual([call.args[1]["state"] for call in write.call_args_list], ["starting", "ready", "closed"])
 
+    @unittest.skipUnless(os.name == "nt", "Windows renderer environment contract")
+    def test_final_houdini_spawn_preserves_values_with_native_windows_key_spelling(self):
+        session_id, folder = self.session()
+        atomic_json(folder / "runtime.json", {"launcher_session_id": session_id,
+                    "workspace_id": self.workspace, "houdini_pid": 88})
+        os.environ.update({"PATH": str(self.root / "Qt 插件") + ";;C:\\Windows\\System32;",
+                           "SYSTEMROOT": "C:\\Windows", "SYSTEMDRIVE": "C:"})
+        before = dict(os.environ)
+        process = Mock(pid=88, returncode=0)
+        process.poll.return_value = None
+        with patch("studio.bridge.Bridge"), \
+                patch.object(launcher.subprocess, "Popen", return_value=process) as spawn:
+            self.assertEqual(launcher.supervise(self.paths, session_id), 0)
+        environment = spawn.call_args.kwargs["env"]
+        for native in ("Path", "SystemRoot", "SystemDrive"):
+            self.assertIn(native, tuple(environment))
+            self.assertNotIn(native.upper(), tuple(environment))
+            self.assertEqual(environment[native], before[native.upper()])
+        self.assertTrue({key.upper(): value for key, value in environment.items()} == before,
+                        "Final spawn changed an environment value")
+        self.assertTrue(dict(os.environ) == before, "Final spawn mutated the supervisor environment")
+        self.assertEqual(spawn.call_args.args[0], [str(self.houdini)])
+        self.assertEqual(spawn.call_args.kwargs["cwd"], self.paths.workspace(self.workspace) / "work")
+
     def test_supervisor_failure_leaves_live_houdini_alone_and_redacts_error(self):
         session_id, folder = self.session()
         process = Mock(pid=88, returncode=None)

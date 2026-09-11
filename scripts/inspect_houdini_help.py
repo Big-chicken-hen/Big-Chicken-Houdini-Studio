@@ -31,6 +31,7 @@ ENVIRONMENT_FIELDS = (
 )
 QT_PATHS = ('PrefixPath', 'LibraryExecutablesPath', 'DataPath', 'PluginsPath',
             'QmlImportsPath', 'TranslationsPath')
+RAW_ENVIRONMENT_KEYS = frozenset({'PATH', 'SYSTEMROOT', 'SYSTEMDRIVE'})
 
 
 def unavailable(reason):
@@ -57,6 +58,44 @@ def read(call):
         return call()
     except Exception as error:
         return unavailable(type(error).__name__)
+
+
+def selected_raw_environment(block, limit=1048576):
+    """Select three keys from a Win32 WCHAR block without normalizing spelling."""
+    entries, line = [], []
+    for index in range(limit):
+        char = block[index]
+        if char != '\0':
+            line.append(char)
+            continue
+        if not line:
+            return {'available': True, 'entries': entries, 'truncated': False}
+        name, separator, value = ''.join(line).partition('=')
+        if separator and name.upper() in RAW_ENVIRONMENT_KEYS:
+            entries.append({'name': name, 'value': safe_text(value, limit=None)})
+        line.clear()
+    return {'available': False, 'entries': entries, 'truncated': True,
+            'reason': 'Raw environment exceeds the bounded scan'}
+
+
+def raw_windows_environment():
+    """Read this process's own OS environment, never another process or Qt pointer."""
+    if os.name != 'nt':
+        return unavailable('Win32 environment is only available on Windows')
+    import ctypes
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.GetEnvironmentStringsW.argtypes = []
+    kernel.GetEnvironmentStringsW.restype = ctypes.c_void_p
+    kernel.FreeEnvironmentStringsW.argtypes = [ctypes.c_void_p]
+    kernel.FreeEnvironmentStringsW.restype = ctypes.c_int
+    pointer = kernel.GetEnvironmentStringsW()
+    if not pointer:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        result = selected_raw_environment(ctypes.cast(pointer, ctypes.POINTER(ctypes.c_wchar)))
+        return {'source': 'GetEnvironmentStringsW', **result}
+    finally:
+        kernel.FreeEnvironmentStringsW(pointer)
 
 
 def existing_log_facts(hou):
@@ -166,6 +205,7 @@ def collect(hou, qtcore, qtwidgets, modules, *, case, pane_name=None):
                                                     'studio.runtime_server', 'studio.ui.panel')}}
     result['environment'] = {name: safe_text(os.environ[name], limit=None) for name in ENVIRONMENT_FIELDS
                              if name in os.environ}
+    result['raw_windows_environment'] = read(raw_windows_environment)
     result['qt'] = {'version': qtcore.qVersion(), 'library_paths': app.libraryPaths(),
                     'paths': {name: qtcore.QLibraryInfo.path(getattr(qtcore.QLibraryInfo, name))
                               for name in QT_PATHS}}

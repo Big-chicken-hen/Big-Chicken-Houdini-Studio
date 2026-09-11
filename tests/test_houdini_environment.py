@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from studio.common import AppPaths
-from studio.launcher import child_environment, helper_environment
+from studio.launcher import child_environment, helper_environment, houdini_host_environment
 
 
 class HoudiniEnvironmentTests(unittest.TestCase):
@@ -32,7 +32,20 @@ class HoudiniEnvironmentTests(unittest.TestCase):
                         'PYTHONPATH': 'old source', 'QT_PLUGIN_PATH': 'old Qt',
                         'PYSIDE_DESIGNER_PLUGINS': 'old Qt', 'HIA_OLD_CONFIG': 'old project',
                         'FXHOUDINIMCP_URL': 'old service', 'BCS_SESSION_TOKEN': 'stale-fixture-only',
-                        'HOUDINI_PACKAGE_SKIP': '1', 'HTTP_PROXY': 'http://127.0.0.1:54321'}
+                        'HOUDINI_PACKAGE_SKIP': '1', 'HTTP_PROXY': 'http://127.0.0.1:54321',
+                        'PATH': str(self.root / 'Qt 插件') + os.pathsep + os.pathsep + 'native Qt' + os.pathsep,
+                        'SYSTEMROOT': 'C:\\Windows', 'SYSTEMDRIVE': 'C:'}
+
+    def final_host(self):
+        child = child_environment(AppPaths(), 'workspace', 'session', 'fresh-fixture-only')
+        # The supervisor is another Python hop: an earlier re-spelling would
+        # be lost here. Both bootstraps must reach the final host correction.
+        with patch.dict(os.environ, child, clear=True):
+            result = houdini_host_environment()
+        for native in ('Path', 'SystemRoot', 'SystemDrive'):
+            key = native if os.name == 'nt' else native.upper()
+            self.assertEqual(result[key], self.ambient[native.upper()])
+        return result
 
     def assert_host(self, environment):
         for name, value in self.search.items():
@@ -66,7 +79,7 @@ class HoudiniEnvironmentTests(unittest.TestCase):
         observed = []
         def launcher_main(args):
             observed.append((args, os.environ['BCS_CODEX_PATH'],
-                             child_environment(AppPaths(), 'workspace', 'session', 'fresh-fixture-only')))
+                             self.final_host()))
             return 0
 
         with patch.dict(os.environ, {**self.ambient, 'BCS_DATA_ROOT': str(self.paths.data_root),
@@ -82,7 +95,7 @@ class HoudiniEnvironmentTests(unittest.TestCase):
     def test_development_bootstrap_preserves_search_paths_until_host_creation(self):
         observed = []
         def launcher_main(args):
-            observed.append((args, child_environment(AppPaths(), 'workspace', 'session', 'fresh-fixture-only')))
+            observed.append((args, self.final_host()))
             return 0
 
         with patch.dict(os.environ, {**self.ambient, 'HIA_PROJECT_ROOT': str(self.root),

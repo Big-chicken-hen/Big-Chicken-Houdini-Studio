@@ -177,6 +177,20 @@ def child_environment(paths, workspace_id, session_id, token):
     return env
 
 
+def houdini_host_environment():
+    """Re-spell Windows keys only at the final host spawn; preserve all values."""
+    env = dict(os.environ)
+    if os.name == "nt":
+        # Python uppercases environ keys. Qt 6.8.3's Chromium renderer filter
+        # expects these exact spellings. Pass this dict directly to Popen:
+        # writing it back into os.environ would uppercase the keys again.
+        for native_name in ("Path", "SystemRoot", "SystemDrive"):
+            upper_name = native_name.upper()
+            if upper_name in env:
+                env[native_name] = env.pop(upper_name)
+    return env
+
+
 def launch(paths, workspace_id, houdini, codex, hip=None):
     """Explicit legacy workspace entrance; normal UI uses launch_target."""
     Workspaces(paths).get(workspace_id)
@@ -352,7 +366,7 @@ def supervise(paths, session_id):
         logs = paths.cache("logs", session_id)
         logs.mkdir(parents=True, exist_ok=True)
         with (logs / "houdini.log").open("ab") as log:
-            process = subprocess.Popen(command, env=dict(os.environ),
+            process = subprocess.Popen(command, env=houdini_host_environment(),
                                        cwd=paths.workspace(config["workspace_id"]) / "work",
                                        stdin=subprocess.DEVNULL, stdout=log, stderr=log)
             status["houdini_pid"] = process.pid
