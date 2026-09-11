@@ -11,10 +11,10 @@ os.environ['BCS_CODEX_PATH'] = str(root / 'tools/codex/bin/codex.exe')
 
 try:
     from studio.common import AppPaths
-    from studio.launcher import helper_environment
+    from studio.launcher import launcher_environment
     from studio.__main__ import main
     paths = AppPaths.for_user(root)
-    environment = helper_environment(paths)
+    environment = launcher_environment(paths)
     environment['BCS_CODEX_PATH'] = str(root / 'tools/codex/bin/codex.exe')
     os.environ.clear()
     os.environ.update(environment)

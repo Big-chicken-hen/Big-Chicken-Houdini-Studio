@@ -19,6 +19,12 @@ from .targets import SceneCatalog, SceneTarget, path_key
 from .workspace import Workspaces
 
 
+HOUDINI_SEARCH_VARIABLES = (
+    "HOUDINI_PATH", "HOUDINI_PACKAGE_DIR", "HOUDINI_OTLSCAN_PATH",
+    "HOUDINI_OTL_PATH", "HOUDINI_OPLIBRARIES_PATH", "HOUDINI_DSO_PATH",
+)
+
+
 def hidden_flags():
     return subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
@@ -74,6 +80,16 @@ def helper_environment(paths):
     output_override = render_output_directory(paths)
     if output_override is not None:
         env["HIA_RENDER_OUTPUT_DIR"] = str(output_override)
+    return env
+
+
+def launcher_environment(paths):
+    """Carry native search paths to the host; ordinary helpers stay sanitized."""
+    env = helper_environment(paths)
+    if paths.user_houdini_preferences:
+        # Keep values literal (including &, variables and path order). Do not
+        # restore a foreign Python/Qt/HFS installation or arbitrary HOUDINI_*.
+        env.update({name: os.environ[name] for name in HOUDINI_SEARCH_VARIABLES if name in os.environ})
     return env
 
 
@@ -144,10 +160,14 @@ def child_environment(paths, workspace_id, session_id, token):
     folder = paths.session(session_id)
     for path in (folder, paths.cache("tmp")):
         path.mkdir(parents=True, exist_ok=True)
-    env = helper_environment(paths)
+    env = launcher_environment(paths)
+    package = str(paths.root / "houdini" / "packages")
+    packages = env.get("HOUDINI_PACKAGE_DIR", "")
+    if package not in packages.split(os.pathsep):
+        packages += (os.pathsep if packages and not packages.endswith(os.pathsep) else "") + package
     env.update({"HIA_PROJECT_ROOT": str(paths.root), "BCS_WORKSPACE_ID": workspace_id,
                 "BCS_SESSION_ID": session_id, "BCS_SESSION_TOKEN": token, "BCS_AUTOSTART": "1",
-                "PYTHONPATH": str(paths.root / "src"), "HOUDINI_PACKAGE_DIR": str(paths.root / "houdini" / "packages"),
+                "PYTHONPATH": str(paths.root / "src"), "HOUDINI_PACKAGE_DIR": packages,
                 "HOUDINI_TEMP_DIR": str(paths.cache("tmp")), "TEMP": str(paths.cache("tmp")),
                 "TMP": str(paths.cache("tmp")), "PYTHONDONTWRITEBYTECODE": "1",
                 "BCS_PYTHON_EXECUTABLE": console_python()})
