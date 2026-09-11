@@ -1,7 +1,7 @@
 """R4-HELP-1: inspect an existing Houdini help pane without initializing Qt UI.
 
 Run from the real Houdini Python Shell, after the owner opens the help pane:
-    import runpy; runpy.run_path(r'E:\\Big-Chicken-Houdini-Studio\\scripts\\inspect_houdini_help.py')['capture']('studio')
+    import runpy; runpy.run_path(r'E:\\Big-Chicken-Houdini-Studio\\scripts\\inspect_houdini_help.py').get('capture')('studio')
 Use 'native' for the same help operation in a directly started Houdini.
 This script is a development diagnostic; it is not loaded by Studio.
 """
@@ -24,7 +24,7 @@ ENVIRONMENT_FIELDS = (
     'XDG_DATA_HOME', 'PYTHONPATH', 'PYTHONHOME', 'PYTHONNOUSERSITE', 'QT_PLUGIN_PATH',
     'QML_IMPORT_PATH', 'QML2_IMPORT_PATH', 'QTWEBENGINEPROCESS_PATH',
     'QTWEBENGINE_RESOURCES_PATH', 'QTWEBENGINE_LOCALES_PATH',
-    'QML_IMPORT_TRACE', 'QT_DEBUG_PLUGINS', 'QT_LOGGING_RULES',
+    'QML_IMPORT_TRACE', 'QT_DEBUG_PLUGINS', 'QT_LOGGING_RULES', 'QT_FORCE_STDERR_LOGGING',
 )
 QT_PATHS = ('PrefixPath', 'LibraryExecutablesPath', 'DataPath', 'PluginsPath',
             'QmlImportsPath', 'TranslationsPath')
@@ -164,7 +164,17 @@ def capture(case='unlabelled', pane_name=None):
     names = ('hou', 'PySide6.QtCore', 'PySide6.QtWidgets')
     if any(modules.get(name) is None for name in names):
         raise RuntimeError('Run inside the real Houdini GUI; this script never imports/initializes a host or Qt')
-    result = collect(*(modules[name] for name in names), modules, case=case, pane_name=pane_name)
+    def snapshot():
+        return collect(*(modules[name] for name in names), modules, case=case, pane_name=pane_name)
+
+    app = modules['PySide6.QtWidgets'].QApplication.instance()
+    if app is None or modules['PySide6.QtCore'].QThread.currentThread() == app.thread():
+        result = snapshot()  # Never block the GUI thread waiting for its own event loop.
+    else:
+        # Python Shell runs on a worker. Dispatch this one bounded read through
+        # Houdini; collect still checks the actual callback's thread.
+        import hdefereval
+        result = hdefereval.executeInMainThreadWithResult(snapshot)
     directory = ROOT / '.runtime/maintenance/help-browser-20260911'
     directory.resolve().relative_to((ROOT / '.runtime').resolve())
     directory.mkdir(parents=True, exist_ok=True)

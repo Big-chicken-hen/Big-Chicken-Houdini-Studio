@@ -1,15 +1,47 @@
 """Diagnostic safety gates only; no Qt application or Houdini host is created."""
 from pathlib import Path
+from contextlib import redirect_stdout
+import io
 import runpy
+import sys
+import tempfile
 import types
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 
 probe = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'scripts/inspect_houdini_help.py'))
 
 
 class HelpInspectionTests(unittest.TestCase):
+    def test_shell_dispatches_once_and_gui_caller_never_waits_on_itself(self):
+        current = ['worker']
+        app = Mock()
+        app.thread.return_value = 'gui'
+        core = types.SimpleNamespace(QThread=types.SimpleNamespace(currentThread=lambda: current[0]))
+        widgets = types.SimpleNamespace(QApplication=types.SimpleNamespace(instance=lambda: app))
+        hou = Mock()
+        hou.isUIAvailable.return_value = False
+
+        def dispatch(callback):
+            current[0] = 'gui'
+            return callback()
+
+        deferred = types.SimpleNamespace(executeInMainThreadWithResult=Mock(side_effect=dispatch))
+        fixtures = Path(__file__).resolve().parents[1] / '.runtime/tests'
+        fixtures.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=fixtures) as temporary, \
+                patch.dict(probe['capture'].__globals__, ROOT=Path(temporary)), \
+                patch.dict(sys.modules, {'hou': hou, 'PySide6.QtCore': core,
+                                         'PySide6.QtWidgets': widgets, 'hdefereval': deferred}), \
+                redirect_stdout(io.StringIO()):
+            first = probe['capture']('native')
+            second = probe['capture']('native')
+            self.assertNotEqual(first, second)
+            self.assertTrue(Path(first).is_file() and Path(second).is_file())
+        deferred.executeInMainThreadWithResult.assert_called_once()
+        self.assertEqual(hou.isUIAvailable.call_count, 2)
+
     def test_wrong_thread_does_not_touch_hom_or_create_an_application(self):
         hou = Mock()
         app = Mock()

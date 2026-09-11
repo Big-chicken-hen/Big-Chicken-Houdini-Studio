@@ -6,12 +6,14 @@
 
 - 2026-09-11 [Pro 审批](r4-help-review.md) 将其列为发布前 correctness blocker；用户已授权按该审批推进。仅处理此问题，PR #14 的自动 Ready／merge／Public RC 放行暂停。
 - 审阅代码：`e686e548352da2de3b742f393c52568df09551d2`；当前交付候选：`0.1.0-rc.1-8af563981e73`。
-- **开发入口：用户重复复现。** 同机同一 Houdini 22.0.368，直接启动报告正常，经 Studio 启动后内置帮助空白；重新启动仍空白。未将用户报告写成独立 GUI 对照已完成。
+- **开发入口：用户重复复现，并已取得同安装真实 GUI 快照。** 2026-09-11，用户先打开原生 Houdini，再正常关闭并通过 E 盘 `Studio.exe` 启动；原生帮助正常，Studio 帮助仍空白。两份主线程快照确认同一个 22.0.368 EXE、原生偏好目录和 Qt 库路径；不是完整导航验收。
 - **发布 payload GUI：尚未确认；引入提交：未知；根因：未知；修复：未实施；发布自动放行：暂停。** 不与 R4-NET-1 合并归因，不以 CI、HTTP 200 或 DLL 加载成功关闭。
 - 本机帮助服务返回过完整首页和 Box 文档；检查到的宿主 Qt DLL 来源正确。它们没有验证实际窗口的 QML、资源、辅助进程和渲染链。
 - Codex 隔离 WebEngine 测试曾触发缺失 DLL 弹窗；独立 offscreen/hython 原生基线也曾退出 139。两组测试不适合作为当前产品回归对照，失败记录保留。用户随后确认正式启动仍空白，但没有 DLL 弹窗。
 - 本机原始调查：[STATUS.md](../.runtime/maintenance/help-browser-20260911/STATUS.md)，完整路径 `E:\Big-Chicken-Houdini-Studio\.runtime\maintenance\help-browser-20260911\STATUS.md`。本机证据未随 Git 发布，Pro 不可直接访问；重要结论已在此记录。
-- 下一步：审核并收窄只读脚本；用户方便时，对相同帮助入口取得原生正常窗口和 Studio 空白窗口的实际 GUI 数据，再按证据选择单变量对照。流程及脚本边界见 [R4-HELP-1 验证准备](r4-help-validation.md)。
+- 原生快照的当前 URL 为本机帮助首页；Studio 快照的当前 URL 为空，首页配置相同。Studio Runtime 已加载，Panel 模块尚未加载；因此这次故障已存在于 Panel 代码加载之前，但不能据此排除 Runtime 或启动环境的影响。
+- Studio 的有界进程观察记录 6 次浏览器子进程启动，进程均在详细信息查询前消失；实际路径、角色和退出码未捕获。原生观察到一个仍存活的 Houdini 自带 renderer。不能把缺失信息补写为 DLL、QML 或其他已证实原因。
+- 下一步：用户休息后继续保留阻塞。备妥下一次真实 GUI 启动的有限日志补丁，尚未应用；待用户方便时，经同一 `Studio.exe` 复现并核对诊断变量实际到达宿主。两边都是内嵌 HelpBrowser，未扩大扫描去强取 QML 对象；现有日志为空也不代表没有初始化错误。详见 [R4-HELP-1 验证记录](r4-help-validation.md)。
 
 ## 2026-09-10 RC 试用新增观察（待 Pro 判断）
 
