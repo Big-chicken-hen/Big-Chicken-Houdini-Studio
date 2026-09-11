@@ -1,6 +1,10 @@
 # Houdini user search-path compatibility correction
 
-## Current delivery: 0.1.0-rc.1-8af563981e73
+Current delivery is now the [R4-HELP-1 verified correction](r4-help-validation.md),
+`0.1.0-rc.1-e6beb5af2de4`. The following search-path correction and its package
+record remain historical evidence; their original hashes are preserved.
+
+## Previous delivery: 0.1.0-rc.1-8af563981e73
 
 Source and builder: `8af563981e73995825f0e35bd6e1d11dd74f7c64`.
 This includes environment fix `3d956f7`, output guidance `8af5639` and the

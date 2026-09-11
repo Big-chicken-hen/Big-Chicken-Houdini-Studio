@@ -1,23 +1,21 @@
-# R4-HELP-1 — environment-key candidate, GUI recovery pending
+# R4-HELP-1 — verified correction and refreshed RC delivery
 
 ## Decision and current status
 
 The owner authorized the full [Pro review](r4-help-review.md) on 2026-09-11.
 [R4-HELP-1](acceptance-issues.md#r4-help-1studio-启动后的-houdini-内置帮助失效)
-blocks automatic Ready/merge/Public RC for PR #14. Development startup has an
-owner-reproduced failure; native startup of the same Houdini installation is
-owner-reported normal. Matching real GUI snapshots now support the host/pane
-comparison below. The candidate below addresses a verified Python/Chromium
-environment-key compatibility conflict. Whether it resolves this host's GUI
-failure, the introducing commit and actual payload impact remain unconfirmed.
-The existing installer and ZIP have not been rebuilt.
+was a correctness blocker for PR #14. The Python/Chromium environment-key
+correction now passes the real same-installation development GUI causal
+comparison, multiple cold starts, navigation and Panel coexistence, followed by
+actual packaged GUI login/Empty/help/navigation and normal exits. This issue is
+closed within that verified scope. PR #14 remains Draft for separate standard-user
+installed acceptance and the final release decision. The introducing commit and
+specific missing DLL were not established; neither is invented from the exit code.
 
-Latest result: actual Studio browser-child stop events now report
-`0xC0000135` (`STATUS_DLL_NOT_FOUND`). This identifies the failure category,
-not the missing module or the responsible inherited environment field. The
-follow-up logging run still failed. The latest Pro review replaces the proposed
-private Qt PATH-removal comparison with the three-key spelling correction below.
-All temporary logging/autostart/PATH-removal hunks are removed.
+The real reversal reproduced `0xC0000135` (`STATUS_DLL_NOT_FOUND`) by restoring
+only the old environment-key spelling; reapplying the correction recovered.
+The latest Pro review replaced the private Qt PATH-removal proposal. All
+temporary logging/autostart/PATH-removal/reversal hunks are removed.
 
 ## Latest review: final Windows host environment key spelling
 
@@ -73,15 +71,149 @@ Local checks on 2026-09-11:
 
 These are implementation/serialization checks, not a real Chromium renderer
 or Houdini GUI pass. No SideFX binary patch provenance or exact missing DLL is
-claimed. The owner paused for class after these checks, then resumed. The next
-owner action is one fresh E: `Studio.exe` Launch of the same HIP and opening
-help. If recovery is observed, correlate the session and raw key spellings,
-then finish the bounded real navigation/cold-start/Panel and payload gates below.
+claimed. After the pause, the owner performed the fresh E: `Studio.exe` Launch,
+raw-key inspection and bounded navigation/cold-start/Panel and payload checks
+recorded below.
 Do not apply the superseded private-Qt-PATH patch or request more generic logs.
 
-Reviewed code: `e686e548352da2de3b742f393c52568df09551d2`.
-Existing candidate: `0.1.0-rc.1-8af563981e73`. Its previous checks do not prove
-embedded help works. Local evidence remains in
+## First real recovery and package preparation
+
+Source candidate `e6beb5af2de46ec27b9bc50de068277db38bfe41` is committed/pushed.
+All five [CI jobs](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio/actions/runs/34578045760)
+passed (Windows/Linux Python 3.10/3.13 and native Qt UI).
+
+The owner opened the same HIP through E: `Studio.exe`, session
+`bfd8897fcaec4719970e9c52f736d840`, supervisor 1904, Houdini 30148 (started
+08:10:48 UTC). They reported help recovered, then confirmed node help, page
+links, forward/back navigation and closing/reopening help all normal.
+`studio-30148-da8e02d7cb.json` at 08:19:32 UTC confirms the same 22.0.368 EXE,
+the configured homepage as the current URL, and both Runtime and Panel modules
+loaded. The three raw Win32 names are `Path`, `SystemRoot`, `SystemDrive`.
+**PATH content, cwd and native preference path match the previous failed
+PID 9924 snapshot exactly.** This supports the key-spelling correction without
+removing a PATH directory. The owner did not separately confirm a Panel scene
+mutation. [Selected public facts](evidence/r4-help/studio-key-spelling-first-recovery.json)
+omit raw environment values and user scene data.
+
+A 55-second observation ending 08:14:23 UTC saw no children and is not a success
+trace. A later inventory observed genuine HFS `QtWebEngineProcess.exe` renderer
+children 29700, 22860 and 8424, created after that observation ended. Their live
+presence supports the owner observation; it does not establish all future exits.
+
+The Pro-required reversal was armed at 08:21:47 UTC by temporarily replacing
+only the final `Popen` mapping with the old `dict(os.environ)`. No new Studio
+host appeared within the 120-second bound. The guard restored the exact source
+at 08:23:47 UTC. **This attempt has no GUI result and is not a reproduced failure.**
+The next E: launch uses the correction. No diagnostic mutation is left active.
+
+The owner subsequently reported help still normal. Session
+`9f83c3a50649431195c31ed3fc5bbf93` was created at 08:24:34 UTC, after restoration;
+it launched a second fresh Houdini process, 30308 (supervisor 8456). Both this
+process and the first corrected host 30148 subsequently closed with return code
+0 through owner-driven operation. This is a second corrected cold-start result,
+not a reverse-test result. The next reverse comparison waits until the owner has
+the Launcher target selected before arming; the source stays corrected meanwhile.
+
+After the owner confirmed the HIP was selected without clicking Launch, the
+second reversal guard was armed at 08:27:42 UTC. It observed session
+`083642488dfc4f2cb14b0ccc22671d93`, Houdini 30056 (supervisor 30468), then restored
+source at 08:28:23 UTC. The owner confirmed help became blank again.
+`studio-30056-8b7117f524.json` confirms raw uppercase `PATH`, `SYSTEMROOT`,
+`SYSTEMDRIVE`, an empty help URL, Runtime loaded and Panel not yet loaded.
+PATH content, cwd and preferences exactly match the earlier corrected host.
+The bounded [child trace](evidence/r4-help/studio-key-spelling-reversal-child-events.jsonl)
+records eight matching starts/stops, all `0xC0000135`; the too-fast helper image
+and role remain unavailable. [Selected reversal facts](evidence/r4-help/studio-key-spelling-reversal.json)
+preserve the causal comparison without exporting raw environment values.
+
+The owner then closed the reversed host normally (return code 0) and relaunched
+the corrected source: session `727d8d120e8341fead4a83207dc43baf`, host 7880,
+supervisor 2116, started 08:30:33 UTC. They confirmed both restored help and a
+small Panel scene modification followed by working help. A live renderer 1772
+from the Houdini installation was observed. This completes the development
+restore-failure/reapply-recovery comparison, with three fresh corrected hosts
+reported normal. The precise missing DLL is still not claimed.
+
+New assembly (not yet the delivered Tester ZIP):
+
+- Build/source/builder: `0.1.0-rc.1-e6beb5af2de4` /
+  `e6beb5af2de46ec27b9bc50de068277db38bfe41` for both source and builder.
+- Built offline from the pinned inputs, using a clean source worktree and E:
+  output directories. Existing cached inputs/compiler were read in place; no
+  Owner installation or global configuration change occurred.
+- All 244 payload manifest files matched; no unexpected files were present.
+  Compared with `8af5639`, only `src/studio/launcher.py` and the rebuilt
+  `Studio.exe` differ; no payload files were removed.
+- The actual bundled Python 3.13.15 imported the packaged launcher and passed
+  the two Windows environment tests, including real child serialization.
+- Installer: 216139729 bytes, SHA-256
+  `4412ad51fd79e042a835d6c6f49374467376cffaa4df06e6db078759430036cf`.
+  The checksum agrees with the builder's checksum file. `signed=false` and
+  `release_acceptance=pending` remain accurate.
+- The locally available archive tool did not recognize the Inno installer;
+  no installer was executed and no extracted-installer equivalence is claimed.
+  The assembled payload is ready for independent GUI verification using its
+  own runtime. At this preparation point the delivered ZIP was still `8af5639`;
+  the completed gate and replacement archive are recorded below.
+
+Private build and check reports remain in the E: investigation directory.
+No standard-user installer/upgrade/uninstall acceptance is claimed.
+
+For the remaining payload GUI gate, its actual `Studio.exe` opened its own
+bundled `runtime/pythonw.exe` (launcher PID 17044). Studio state and cache are
+explicitly isolated below the E: investigation directory's `payload-validation`;
+no existing authentication or history was copied. The owner was asked to use
+official login, Empty/Launch, and the same native help/navigation operation.
+Normal Houdini user preferences are retained for this owner-driven GUI check.
+No system installer is executed; no test root is created in C:.
+
+The owner completed that check and reported the new payload's help and
+navigation normal. Session `75a43316d14f4ab181fc7b7f7a4c2c40` launched host 16832
+through packaged supervisor 20956; its cached registration confirms packaged
+Studio, Panel and Codex, with Houdini's own SideFX Qt/PySide6 bindings. The owner
+closed Houdini normally with code 0. The now-unused, task-owned Launcher was
+closed via `CloseMainWindow` and also exited 0. No Houdini window was controlled
+by the agent. [Selected package GUI evidence](evidence/r4-help/packaged-key-spelling-gui.json)
+records the exact build and scope. This uses the complete assembly supplied to
+Inno; it is not an independently extracted-installer check or standard-user
+system installation. Packaged runtime verification uses its own Python rather
+than importing production code from the development venv.
+
+## Final delivery and cleanup
+
+Current ZIP: `发布包/Big-Chicken-Studio-0.1.0-rc.1-e6beb5af2de4-Tester.zip`.
+Source/builder remain `e6beb5af2de46ec27b9bc50de068277db38bfe41`; later evidence
+and handoff-document commits do not rebuild the accepted executable bytes.
+
+| Item | Verified result |
+| --- | --- |
+| Installer | 216139729 bytes |
+| Installer SHA-256 | `4412ad51fd79e042a835d6c6f49374467376cffaa4df06e6db078759430036cf` |
+| ZIP | 215691126 bytes |
+| ZIP SHA-256 | `12abfc60b640e5a6fabbba09d846c3ac6a6f85766ee017e006ecccf4414bf25a` |
+| ZIP contents | Exactly Installer.exe, README.md, 验收指南.md, 问题反馈.md, SHA256.txt |
+| Full ZIP readback | Installer hash and all four document bytes match |
+| Relative handoff links | 17 pass |
+| Documentation | README-3, with one native-help acceptance row |
+
+Only this ZIP and its checksum remain in the E: 发布包 directory. After confirming
+the new archive, no live process used the temporary payload, and the source
+worktree was clean, the task-owned build/source directories and old ZIP/checksum
+were removed. Source was removed through Git. The manifest, build/test reports,
+all earlier failure traces, the E: acceptance state/authentication/workspaces,
+and the unrelated `docs/authoring-results.md` edit are preserved. Old report paths
+describe the verified run and need not point to live duplicate runtimes.
+
+Unsigned status and `release_acceptance=pending` remain unchanged. This does
+not claim standard-user installer, upgrade, uninstall/reinstall or a rerun of
+all historical authoring benchmarks. The bounded help defect and package update
+are complete; no new feature or UI work is authorized by this closure.
+
+## Historical investigation and preserved failures
+
+Original reviewed code: `e686e548352da2de3b742f393c52568df09551d2`.
+The previous candidate `0.1.0-rc.1-8af563981e73` is superseded by
+`0.1.0-rc.1-e6beb5af2de4`. Local evidence remains in
 `E:\Big-Chicken-Houdini-Studio\.runtime\maintenance\help-browser-20260911`.
 The original missing-DLL test error, unsuitable standalone Qt probes and native
 offscreen/hython exit 139 remain invalid as production regression evidence.

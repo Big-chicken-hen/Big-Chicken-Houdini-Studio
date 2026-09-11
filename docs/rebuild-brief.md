@@ -1,21 +1,25 @@
 # Rebuild contract
 
-Current release blocker: [R4-HELP-1 approval](r4-help-review.md). The owner has
-authorized investigation of blank native Houdini help after Studio launch.
-Keep PR #14 Draft; pause automatic Ready/merge/Public RC. Start with an audited
-read-only inspection of the actual GUI help object and a same-installation
-native/Studio comparison, with the owner's availability. Preserve the previous
-invalid probes and all user environment/data boundaries. No speculative
-environment rewrite, Qt replacement or unrelated feature work. The current
-status and bounded evidence procedure are in [R4-HELP-1 validation](r4-help-validation.md).
+The owner-authorized [R4-HELP-1 correction](r4-help-validation.md) now passes
+development GUI causality and actual payload GUI help/navigation verification.
+Keep PR #14 Draft for the separate standard-user installed workflow/final release
+decision. Preserve previous invalid probes and all user environment/data
+boundaries; no additional environment rewrite, Qt replacement or unrelated work.
 The latest [environment-key review](r4-help-environment-case-review.md) supersedes
 the private Qt PATH-removal experiment. The bounded candidate re-spells only
 `Path`, `SystemRoot`, `SystemDrive` in the ordinary dict passed directly to the
 final Houdini `Popen`; no value or directory changes. Thirty focused checks pass,
 including real Windows serialization, both bootstraps and the final spawn.
 The diagnostic reads those raw names with the read-only own-process Win32 API.
-Real help recovery and actual payload GUI verification remain pending; the
-observed `0xC0000135` does not identify a particular missing DLL.
+Development GUI recovery, navigation, multiple cold starts, Panel coexistence,
+restore-failure/reapply-recovery and the actual packaged GUI check now pass.
+The reversal returns uppercase names and eight `0xC0000135` exits with identical
+PATH/cwd/prefs; the precise DLL is not identified. Current delivery is
+`0.1.0-rc.1-e6beb5af2de4`, source/builder `e6beb5af2de46ec27b9bc50de068277db38bfe41`,
+with README-3. Both packaged Houdini and Launcher closed normally with code 0.
+Only the latest ZIP/checksum remain in 发布包; preserve the private acceptance
+state, authentication and diagnostic evidence. Standard-user installed
+acceptance remains a separate pending release gate.
 
 **Owner artwork correction (2026-09-10):** The owner explicitly requested the supplied Downloads illustration as the static Launcher background, a youthful white/blue palette, readable translucent nodes and the girl portrait as the Studio.exe icon. This overrides earlier Launcher pink/dark and no-brand-art restrictions. Use redesign-existing-projects only to improve this approved presentation. Keep the five-node topology, Changa hero, Lucide functional icons, native Qt, Panel presentation and execution architecture. Resources are bundled under src/studio/ui/assets/launcher-artwork; no runtime download.
 

@@ -66,11 +66,11 @@
 
 | 项目 | 当前版本 |
 | --- | --- |
-| Build | `0.1.0-rc.1-8af563981e73` |
-| 源提交 | [`8af5639`](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio/commit/8af563981e73995825f0e35bd6e1d11dd74f7c64) |
-| 文档修订 | `README-2` · 2026-09-11 |
+| Build | `0.1.0-rc.1-e6beb5af2de4` |
+| 源提交 | [`e6beb5a`](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio/commit/e6beb5af2de46ec27b9bc50de068277db38bfe41) |
+| 文档修订 | `README-3` · 2026-09-11 |
 | 交付状态 | RC 候选；独立标准用户完整验收仍待完成 |
 
-本次候选包含自定义 Houdini 搜索路径修复、场景产物目录规则及启动器界面修正。验收记录只填写实际结果，未测试的项目不视为通过。
+本次候选修正通过 Studio 启动后内置帮助空白的问题，并保留自定义 Houdini 搜索路径、场景产物目录规则及既有启动器界面。验收记录只填写实际结果，未测试的项目不视为通过。
 
 [项目主页](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio) · [验收指南](验收指南.md) · [问题反馈](问题反馈.md)

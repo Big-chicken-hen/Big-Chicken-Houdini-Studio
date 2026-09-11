@@ -7,7 +7,7 @@
 - 2026-09-11 [Pro 审批](r4-help-review.md) 将其列为发布前 correctness blocker；用户已授权按该审批推进。仅处理此问题，PR #14 的自动 Ready／merge／Public RC 放行暂停。
 - 审阅代码：`e686e548352da2de3b742f393c52568df09551d2`；当前交付候选：`0.1.0-rc.1-8af563981e73`。
 - **开发入口：用户重复复现，并已取得同安装真实 GUI 快照。** 2026-09-11，用户先打开原生 Houdini，再正常关闭并通过 E 盘 `Studio.exe` 启动；原生帮助正常，Studio 帮助仍空白。两份主线程快照确认同一个 22.0.368 EXE、原生偏好目录和 Qt 库路径；不是完整导航验收。
-- **发布 payload GUI：尚未确认；引入提交：未知；候选修正：已实施环境键名拼写修正，真实 GUI 恢复待确认；发布自动放行：暂停。** 不与 R4-NET-1 合并归因，不以 CI、HTTP 200 或 DLL 加载成功关闭。
+- **R4-HELP-1 在本轮验证范围内关闭。** `e6beb5a` 已通过真实开发入口的恢复、撤回失败、再恢复、多次冷启动和 Panel 共存；实际新 payload 的官方登录、Empty/Launch、帮助及导航也由用户确认正常，Houdini 和 Launcher 均退出 0。引入提交和具体缺失 DLL 仍未查明，不影响已验证的修正边界。PR #14 继续 Draft，独立标准用户安装验收另行保持 pending。
 - 本机帮助服务返回过完整首页和 Box 文档；检查到的宿主 Qt DLL 来源正确。它们没有验证实际窗口的 QML、资源、辅助进程和渲染链。
 - Codex 隔离 WebEngine 测试曾触发缺失 DLL 弹窗；独立 offscreen/hython 原生基线也曾退出 139。两组测试不适合作为当前产品回归对照，失败记录保留。用户随后确认正式启动仍空白，但没有 DLL 弹窗。
 - 本机原始调查：[STATUS.md](../.runtime/maintenance/help-browser-20260911/STATUS.md)，完整路径 `E:\Big-Chicken-Houdini-Studio\.runtime\maintenance\help-browser-20260911\STATUS.md`。本机证据未随 Git 发布，Pro 不可直接访问；重要结论已在此记录。
@@ -15,6 +15,10 @@
 - 最初的 Studio 观察只记录了 6 次启动，未抓到退出码。后续真实 Studio 会话已订阅 stop 事件：PID 29188 的 4 个相关子进程、PID 9924 的 6 个相关子进程都报告 `3221225781`／`0xC0000135`（`STATUS_DLL_NOT_FOUND`）。这是具体的启动失败状态；缺哪个 DLL、辅助程序实际路径及角色仍未确定，不能据此直接认定私有 Qt 混用。
 - 增强日志会话 PID 9924 已确认 Runtime 正常加载、Panel 未加载，WebEngine libraryinfo 日志开关实际到达宿主，帮助仍空白；标准错误和已有会话日志仍未提供所需 Qt 路径/错误。之前用户报告的一次恢复已澄清为直接打开 HIP／Houdini，保留为原生正常观察，不能计作关闭 Runtime 后恢复。
 - 最新 [Pro 环境键名分析](r4-help-environment-case-review.md) 替代之前的 PATH 目录移除实验：先仅在最终 Houdini `Popen` 的普通字典中恢复 `Path`、`SystemRoot`、`SystemDrive` 的拼写，不改任何值或目录。已核对 Qt 6.8.3 固定 Chromium 源码的大小写敏感过滤规则，并在本机 Windows 子进程复现旧键名丢失、修正键名保留。30 项针对性检查及 Ruff 通过，开发和安装版入口均覆盖；这不是 Houdini GUI 验收。诊断增加原始 Win32 键名读取，旧的 `os.environ` 快照不能证明原始大小写。旧 PATH 移除补丁保留但未应用；现有 ZIP 未更新。待用户方便时仅复测此候选。失败 trace 和准确边界见 [R4-HELP-1 验证记录](r4-help-validation.md)。
+- 用户随后确认“这次有了”“都正常”：本次真实会话 PID 30148 的快照确认三个 Win32 原始键名已恢复、帮助 URL 正常，Runtime/Panel 均加载；PATH 内容、cwd、原生偏好路径与上次失败会话逐字相同。节点文档、链接、前后导航、关闭重开由用户确认正常；Panel 场景写入尚未单独确认。一次限时旧写法对照未等到新进程，已自动恢复源码，不算已复现。新安装器 `0.1.0-rc.1-e6beb5af2de4` 已构建，244 个载荷文件及包内 Python 的两项环境检查通过；真实 payload GUI 尚待完成，旧 ZIP 尚未替换。
+- 第二次协调好时机后完成了真正的撤回对照：PID 30056 的原始键名回到全大写，PATH/cwd/偏好仍相同，帮助再次空白，8 个子进程均退出 `0xC0000135`；源码已即时恢复。用户随后通过修正版启动 PID 7880，确认帮助正常、Panel 小型场景修改后帮助也正常。加上 PID 30308 的第二次修正版启动，已有三次全新修正版宿主正常；反向宿主正常退出 0。开发入口因果对照已成立，新包真实 GUI 正在等待用户完成。保留前一次超时无结果的记录，不能混算。
+
+- 包内会话 `75a43316d14f4ab181fc7b7f7a4c2c40`、Houdini PID 16832 通过。缓存宿主身份确认 Studio/Panel/Codex 来自新 payload，Qt/PySide 来自 SideFX；独立 Studio 验收数据留在 E 盘，没有复制认证/历史或执行系统安装器。新五文件 ZIP 为 `0.1.0-rc.1-e6beb5af2de4`、README-3，完整回读及 17 个相对链接通过；旧 ZIP/校验文件和本轮临时构建目录已清理，认证、工作区和证据保留。详见 [完整验证记录](r4-help-validation.md) 与 [包内 GUI 证据](evidence/r4-help/packaged-key-spelling-gui.json)。
 
 ## 2026-09-10 RC 试用新增观察（待 Pro 判断）
 

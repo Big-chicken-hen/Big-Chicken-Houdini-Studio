@@ -1,0 +1,36 @@
+{
+  "issue": "R4-HELP-1",
+  "build_id": "0.1.0-rc.1-e6beb5af2de4",
+  "source_commit": "e6beb5af2de46ec27b9bc50de068277db38bfe41",
+  "builder_commit": "e6beb5af2de46ec27b9bc50de068277db38bfe41",
+  "installer_sha256": "4412ad51fd79e042a835d6c6f49374467376cffaa4df06e6db078759430036cf",
+  "entry": "Actual assembled release payload Studio.exe; no system installation",
+  "launcher_pid": 17044,
+  "session_id": "75a43316d14f4ab181fc7b7f7a4c2c40",
+  "host_pid": 16832,
+  "supervisor_pid": 20956,
+  "target_kind": "empty",
+  "houdini_version": "22.0.368",
+  "houdini_python": "3.13.10",
+  "houdini_qt": "6.8.3",
+  "bundled_python": "3.13.15",
+  "actual_studio_and_panel_from_payload": true,
+  "actual_codex_from_payload": true,
+  "houdini_qt_bindings_from_sidefx": true,
+  "integration_ready": {
+    "hdefereval": true,
+    "panel": true,
+    "pyside6": true
+  },
+  "owner_report": {
+    "official_login_and_launch": "completed",
+    "help_content": "normal",
+    "node_help_and_navigation": "normal"
+  },
+  "normal_host_exit_code": 0,
+  "state_and_cache": "Independent E review roots",
+  "copied_authentication": false,
+  "system_installer_executed": false,
+  "installer_extraction": "not performed; tested the actual complete assembly supplied to Inno",
+  "release_acceptance": "pending_standard_user_installed_workflow"
+}
