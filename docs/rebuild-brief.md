@@ -1,5 +1,14 @@
 # Rebuild contract
 
+Current release blocker: [R4-HELP-1 approval](r4-help-review.md). The owner has
+authorized investigation of blank native Houdini help after Studio launch.
+Keep PR #14 Draft; pause automatic Ready/merge/Public RC. Start with an audited
+read-only inspection of the actual GUI help object and a same-installation
+native/Studio comparison, with the owner's availability. Preserve the previous
+invalid probes and all user environment/data boundaries. No speculative
+environment rewrite, Qt replacement or unrelated feature work. The current
+status and bounded evidence procedure are in [R4-HELP-1 validation](r4-help-validation.md).
+
 **Owner artwork correction (2026-09-10):** The owner explicitly requested the supplied Downloads illustration as the static Launcher background, a youthful white/blue palette, readable translucent nodes and the girl portrait as the Studio.exe icon. This overrides earlier Launcher pink/dark and no-brand-art restrictions. Use redesign-existing-projects only to improve this approved presentation. Keep the five-node topology, Changa hero, Lucide functional icons, native Qt, Panel presentation and execution architecture. Resources are bundled under src/studio/ui/assets/launcher-artwork; no runtime download.
 
 
