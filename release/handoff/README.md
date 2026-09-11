@@ -37,6 +37,8 @@
 
 - **场景续作**：通过 Open 或 Recent 选择 HIP，再点击 Launch。用 Save As 将作品保存到自己选择的位置。
 - **熟悉的 Houdini 配置**：正式启动沿用原有布局、配色和快捷键，Studio 不复制或改写偏好文件。
+- **自定义插件路径**：正常启动保留支持的 Houdini 插件搜索路径，并加入 Studio 的 package 目录；测试环境继续隔离。
+- **场景产物**：从已保存 HIP 工作时，默认将生成的 VEX 源码、HDA、导出和渲染文件放在 `$HIP/BigChickenStudio/<场景名>/` 下对应目录；明确指定位置和已有节点输出优先。
 - **执行期间补充要求**：在 Panel 中继续输入引导；以界面实际接纳状态为准。
 - **停止任务**：使用 Panel 的 Stop。长时间执行的 HOM 操作可能需要等待执行边界，停止不代表撤销已完成修改。
 - **程序设置**：启动器右上角“设置”可查看或调整程序路径。
@@ -64,11 +66,11 @@
 
 | 项目 | 当前版本 |
 | --- | --- |
-| Build | `0.1.0-rc.1-042c66b9be95` |
-| 源提交 | [`042c66b`](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio/commit/042c66b9be95d6fdeb48fb1367734f93e6b66295) |
-| 文档修订 | `README-1` · 2026-09-10 |
+| Build | `0.1.0-rc.1-8af563981e73` |
+| 源提交 | [`8af5639`](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio/commit/8af563981e73995825f0e35bd6e1d11dd74f7c64) |
+| 文档修订 | `README-2` · 2026-09-11 |
 | 交付状态 | RC 候选；独立标准用户完整验收仍待完成 |
 
-本次修订更新压缩包内的说明文档，安装器与程序版本保持原样。验收记录只填写实际结果，未测试的项目不视为通过。
+本次候选包含自定义 Houdini 搜索路径修复、场景产物目录规则及启动器界面修正。验收记录只填写实际结果，未测试的项目不视为通过。
 
 [项目主页](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio) · [验收指南](验收指南.md) · [问题反馈](问题反馈.md)

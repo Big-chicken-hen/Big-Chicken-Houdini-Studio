@@ -1,5 +1,43 @@
 # Houdini user search-path compatibility correction
 
+## Current delivery: 0.1.0-rc.1-8af563981e73
+
+Source and builder: `8af563981e73995825f0e35bd6e1d11dd74f7c64`.
+This includes environment fix `3d956f7`, output guidance `8af5639` and the
+previously committed persistent artwork/cards/native caption/taskbar correction
+`df008b1`. All five [source-candidate CI jobs](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio/actions/runs/34554361151)
+passed. The environment-only commit's five CI jobs also passed.
+
+The assembled payload's **244/244** manifest entries matched. Its bundled Python
+3.13.15 repeated the real H22 three-HDA comparison successfully. The actual
+packaged `Studio.exe` opened a responding Launcher with isolated state, initialized
+bundled Codex, accepted normal close and exited with code 0. Its entry shim also
+exited with code 0. This smoke did not install the product, log in or launch a
+real Houdini GUI. The intermediate environment-only smoke closed normally but
+its first fixture did not retain a process handle, so its exit code is unavailable;
+that limited observation remains recorded separately.
+
+The current five-file ZIP is in the owner's E: `发布包` directory. Handoff revision
+is `README-2`. Every ZIP member matched its source, including the installer and
+four versioned documents, and all 17 relative handoff links passed. Installer:
+216139477 bytes, SHA-256
+`429a1a7d7958bea8a071b8269c4a8670bda5f3e678730fe4570308d847a18b3e`.
+ZIP: 215690746 bytes, SHA-256
+`b74b3736a284309b13944a25da6639906c437e60cce2defaa52ab622bc0f8bc7`.
+Package
+`release_acceptance` remains `pending`; real standard-user installed acceptance
+and fresh model compliance with the corrected output instructions remain untested.
+
+After full ZIP readback, the previous delivery ZIP/checksum and this task's two
+unpacked builds/duplicate installers were removed. Both clean temporary source
+worktrees were removed through Git. Only the current ZIP and checksum remain in
+`发布包`. Manifests, checksums, fixture assets and reports remain in the bounded E:
+review directory; those reports' old build paths do not imply live binaries.
+Authentication, native workspaces/history, user output files and the pre-existing
+`docs/authoring-results.md` change were preserved. No Owner installation occurred.
+
+## Environment correction
+
 The owner's independent review reproduced dropped search paths in installed
 candidate `042c66b9be95`. The owner authorized a bounded fix, commit and new ZIP
 on 2026-09-11. This replaces that candidate for delivery only after the new build
@@ -70,3 +108,4 @@ move, existing-file migration or output-resolver change is introduced. Existing
 misplaced files stay available to old conversation references. This corrects the
 model's instructions; it is not a claim that arbitrary Python writes are sandboxed
 or that a fresh real model conversation has already demonstrated compliance.
+All four existing saved-HIP/Save As/explicit-output resolver tests passed unchanged.

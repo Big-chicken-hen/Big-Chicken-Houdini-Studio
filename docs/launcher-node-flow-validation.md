@@ -7,9 +7,11 @@ explicitly requested a persistent Launcher background, a white native title
 bar, the girl icon on the running taskbar entry, and light card styling for
 Account, Settings and Diagnostics. These bounded presentation changes are now
 available through the development `E:\Big-Chicken-Houdini-Studio\Studio.exe`.
-This source follow-up is not yet packaged and does not inherit the earlier
-candidate's approval. The existing five-file ZIP and installer bytes remain
-unchanged.
+This follow-up is now included in candidate `0.1.0-rc.1-8af563981e73`, together
+with the owner's Houdini environment and output-location corrections. See
+[the current candidate evidence](houdini-environment-validation.md). It does
+not inherit the earlier candidate's approval; the earlier hashes below are
+historical.
 
 The window now owns one decoded background and one scaled cache, reused across
 page changes and refreshed only for viewport size or device pixel ratio changes.
@@ -40,8 +42,8 @@ Validation on Windows 11 build 22631 / Qt 6.8.3:
 
 These checks use in-memory fixture services and isolated E: state. They do not
 claim new official login, Houdini, installed-package or Explorer pinned-shortcut
-acceptance. A future release containing these changes needs its own source
-identity, CI, installer and five-file ZIP; do not relabel the approved old ZIP.
+acceptance. The new candidate has its own source identity, CI, installer and
+five-file ZIP; the approved old ZIP was not relabeled.
 
 ## Previously approved candidate: 042c66b9be95 / README-1
 
