@@ -7,6 +7,7 @@ This script is a development diagnostic; it is not loaded by Studio.
 """
 from collections import deque
 from datetime import datetime, timezone
+from itertools import islice
 import json
 import os
 from pathlib import Path
@@ -25,6 +26,8 @@ ENVIRONMENT_FIELDS = (
     'QML_IMPORT_PATH', 'QML2_IMPORT_PATH', 'QTWEBENGINEPROCESS_PATH',
     'QTWEBENGINE_RESOURCES_PATH', 'QTWEBENGINE_LOCALES_PATH',
     'QML_IMPORT_TRACE', 'QT_DEBUG_PLUGINS', 'QT_LOGGING_RULES', 'QT_FORCE_STDERR_LOGGING',
+    'BCS_AUTOSTART',  # Non-secret control of the approved startup-only comparison.
+    'HOUDINI_DEFAULT_LOG_FILE', 'HOUDINI_DEFAULT_LOG_FILE_SOURCES',
 )
 QT_PATHS = ('PrefixPath', 'LibraryExecutablesPath', 'DataPath', 'PluginsPath',
             'QmlImportsPath', 'TranslationsPath')
@@ -54,6 +57,37 @@ def read(call):
         return call()
     except Exception as error:
         return unavailable(type(error).__name__)
+
+
+def existing_log_facts(hou):
+    """Read existing host logs only; never create a sink or change its sources."""
+    sink = hou.logging.defaultSink(False)
+    if sink is None:
+        return unavailable('No existing default memory log sink; none created')
+    result = {'available': True, 'sources': list(sink.connectedSources()),
+              'scanned': 0, 'scan_limit': 2048, 'matching_entries': 0,
+              'entries': [], 'truncated': False}
+    retained = deque(maxlen=64)
+    for entry in islice(sink.logEntries(), result['scan_limit']):
+        result['scanned'] += 1
+        source = entry.source()
+        if source not in {'Generic Logging', 'Standard Error', 'Standard Output'}:
+            continue
+        message = safe_text(entry.message())
+        if not re.search(r'Qt\s*WebEngine|QQml|QQuick|Qt6|\bQML\b|qt\.(?:qml|webengine|core\.plugin)',
+                         message, re.IGNORECASE):
+            continue
+        # A launch command is not an error excerpt; never export full commands.
+        if '--type=' in message or re.search(r'command\s*line|\bBearer\s|authorization|api[_-]?key|\btoken\s*[:=]',
+                                           message, re.IGNORECASE):
+            continue
+        result['matching_entries'] += 1
+        retained.append({'source': source, 'utc_seconds': entry.time(),
+                         'severity': str(entry.severity()), 'message': message})
+    result['entries'] = list(retained)
+    result['truncated'] = (result['scanned'] == result['scan_limit'] or
+                           result['matching_entries'] > len(retained))
+    return result
 
 
 def quick_facts(widget, qml):
@@ -135,6 +169,7 @@ def collect(hou, qtcore, qtwidgets, modules, *, case, pane_name=None):
     result['qt'] = {'version': qtcore.qVersion(), 'library_paths': app.libraryPaths(),
                     'paths': {name: qtcore.QLibraryInfo.path(getattr(qtcore.QLibraryInfo, name))
                               for name in QT_PATHS}}
+    result['existing_host_logs'] = read(lambda: existing_log_facts(hou))
     # HOM pane enumeration is limited to HelpBrowser; no QApplication.allWidgets(),
     # topLevelWidgets(), unknown getters, pointer wrapping or global QObject scans.
     panes = []

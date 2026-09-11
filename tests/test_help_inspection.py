@@ -14,6 +14,57 @@ probe = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'scripts/inspec
 
 
 class HelpInspectionTests(unittest.TestCase):
+    def test_log_read_never_creates_a_sink_or_reads_unrelated_messages(self):
+        logging = Mock(spec=['defaultSink'])
+        logging.defaultSink.return_value = None
+        self.assertFalse(probe['existing_log_facts'](types.SimpleNamespace(logging=logging))['available'])
+        logging.defaultSink.assert_called_once_with(False)
+        unrelated = Mock(spec=['source', 'message'])
+        unrelated.source.return_value = 'Licensing'
+        qt = Mock(spec=['source', 'message', 'time', 'severity'])
+        qt.source.return_value = 'Standard Error'
+        qt.message.return_value = 'QQml: failed https://user:secret@localhost/help?token=hidden'
+        qt.time.return_value = 1.0
+        qt.severity.return_value = 'Warning'
+        library = Mock(spec=['source', 'message', 'time', 'severity'])
+        library.source.return_value = 'Generic Logging'
+        library.message.return_value = 'Qt WebEngine process path: C:/Houdini/qt/bin/QtWebEngineProcess.exe'
+        library.time.return_value = 2.0
+        library.severity.return_value = 'Message'
+        command = Mock(spec=['source', 'message'])
+        command.source.return_value = 'Standard Error'
+        command.message.return_value = 'QtWebEngineProcess.exe --type=renderer --private=value'
+        sink = Mock(spec=['connectedSources', 'logEntries'])
+        sink.connectedSources.return_value = ['Standard Error', 'Licensing']
+        sink.logEntries.return_value = iter([unrelated, qt, command, library])
+        logging.defaultSink.return_value = sink
+        result = probe['existing_log_facts'](types.SimpleNamespace(logging=logging))
+        unrelated.message.assert_not_called()
+        self.assertEqual(result['scanned'], 4)
+        self.assertEqual(len(result['entries']), 2)
+        self.assertEqual(result['entries'][0]['message'], 'QQml: failed https://localhost/help')
+        self.assertIn('Qt WebEngine process path:', result['entries'][1]['message'])
+        self.assertFalse(result['truncated'])
+
+    def test_log_read_has_a_hard_bound_and_never_drains_the_sink(self):
+        entry = Mock(spec=['source'])
+        entry.source.return_value = 'Node Errors'
+
+        def entries():
+            for _ in range(2048):
+                yield entry
+            self.fail('The bounded diagnostic advanced past 2048 entries')
+
+        sink = Mock(spec=['connectedSources', 'logEntries'])
+        sink.connectedSources.return_value = ['Node Errors']
+        sink.logEntries.return_value = entries()
+        logging = Mock(spec=['defaultSink'])
+        logging.defaultSink.return_value = sink
+        result = probe['existing_log_facts'](types.SimpleNamespace(logging=logging))
+        self.assertEqual(result['scanned'], 2048)
+        self.assertTrue(result['truncated'])
+        self.assertEqual(result['entries'], [])
+
     def test_shell_dispatches_once_and_gui_caller_never_waits_on_itself(self):
         current = ['worker']
         app = Mock()

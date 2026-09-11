@@ -10,6 +10,12 @@ owner-reported normal. Matching real GUI snapshots now support the host/pane
 comparison below. Root cause, introducing commit and payload GUI impact
 remain unknown. No production fix or new package has been made.
 
+Latest result: actual Studio browser-child stop events now report
+`0xC0000135` (`STATUS_DLL_NOT_FOUND`). This identifies the failure category,
+not the missing module or the responsible inherited environment field. The
+follow-up logging run still failed; the next single-PATH comparison is prepared
+but unrun while the owner rests. All temporary launcher hunks are removed.
+
 Reviewed code: `e686e548352da2de3b742f393c52568df09551d2`.
 Existing candidate: `0.1.0-rc.1-8af563981e73`. Its previous checks do not prove
 embedded help works. Local evidence remains in
@@ -157,10 +163,152 @@ this empty log nor missing exit information proves that no Qt error occurred.
 No missing-DLL dialog was reported in this comparison. The old diagnostic
 probe's DLL popup remains separate evidence.
 
-The owner is now resting. The next step is one real startup with finite logging
-enabled, not another headless browser probe. No new GUI is launched or active
-GUI closed while waiting; the logging patch remains unapplied. Root cause and
+The owner initially paused for rest, then returned for the logging run below.
+No GUI was launched or closed by the diagnostic while waiting. Root cause and
 release-payload impact remain unknown, and R4-HELP-1 remains open.
+
+## Logging-enabled Studio GUI run — settings arrived, no Qt errors captured
+
+The owner launched the same E: `Studio.exe` and selected
+`Procedural_lake_village.hip`. The new session `7109cd7dbd0e4d9db4bf5b7db42bedda`
+started Houdini PID 20812 at 04:53:32 UTC. The temporary logging hunk was removed
+as soon as the intended child was observed; no diagnostic default remained in
+production source. The owner's normal close later returned exit code 0.
+
+- `studio-20812-27b317f02a.json` confirms all four diagnostic fields arrived in
+  the actual GUI environment. Houdini retained the WebEngine debug rule and
+  appended its existing SVG-warning suppression. That first snapshot had no
+  HelpBrowser present; it remains an incomplete pane observation.
+- After the owner kept both windows open, `studio-20812-ec9d0d776f.json`
+  captured the same embedded `panetab10` with an empty current URL. The owner
+  reports the help remains blank. Host/cwd/preferences/Qt paths match the prior
+  Studio run, Runtime is loaded and Panel is still absent.
+- The session's `houdini.log` remained empty. The 55-second child observation
+  began at 04:53:56 UTC, after the owner had opened help, and saw no child. It
+  missed the earlier initialization window; this cannot establish that no
+  helper was started.
+- A further read, `studio-20812-300e314678.json`, found an existing Houdini
+  memory-log sink with two entries and no matching Qt excerpts. Its connected
+  sources included Standard Error/Output, but not Generic Logging. This proves
+  neither an absence of Qt errors nor that a particular sink received them.
+
+The script's additional log read calls
+[`hou.logging.defaultSink(False)`](https://www.sidefx.com/docs/houdini/hom/hou/logging/defaultSink.html)
+and reads at most 2048 existing entries through
+[`logEntries()`](https://www.sidefx.com/docs/houdini/hom/hou/logging/MemorySink.html).
+It never creates, drains, connects or changes a sink. Only bounded Qt-related
+text from Generic Logging and Standard Error/Output is retained; unrelated
+source messages, full command lines and credential-bearing messages are omitted,
+and URL query/user-info is removed. Two additional focused tests cover absent
+sink behavior, filtering and the hard bound; all eight safety tests and Ruff
+passed. These are diagnostic checks, not evidence that help is fixed.
+
+Because these logging routes did not expose an initialization error, the next
+approved comparison is a fresh Studio launch with only `BCS_AUTOSTART=0`
+changed from the logging-enabled environment. The prepared local
+`autostart-off.patch` keeps all command/cwd/stdio arguments unchanged and is
+never committed as a product mode. Confirm its actual host environment and
+Runtime/Panel module absence before attributing any visible improvement.
+
+An initial attempt observed a fresh Houdini PID 29632 and the owner reported
+normal help. The E: Studio session directory had no new session, and no GUI
+environment snapshot was collected before that process closed. The owner then
+confirmed it was opened directly through HIP/Houdini. **Record this as another
+owner-reported normal native launch, not an autostart-off result.** Its process
+trace saw a renderer from Houdini's own `qt/bin/QtWebEngineProcess.exe`,
+subsequently exiting with status 0. The trace filename retains its original
+intended-test label; it does not prove Studio launched that process. No Runtime
+fix or successful causal comparison is claimed from this attempt. The next
+attempt correlates a newly created E: Studio session to the actual host PID
+before removing the temporary hunk.
+
+## Captured real child exit status
+
+The next attempt did correlate the E: Studio session
+`d067398edcc140f5a806b8441a3179da` with Houdini PID 29188, parent supervisor
+28908. The temporary [autostart-off patch](evidence/r4-help/autostart-off.patch)
+was reversed after the host started. The owner reports help remained blank.
+Before the owner supplied the next Pro analysis and closed this GUI, no snapshot
+was taken to verify the actual `BCS_AUTOSTART` value and Runtime-module absence.
+Therefore do not treat this as a completed Runtime-exclusion result.
+
+The [process trace](evidence/r4-help/studio-autostart-comparison-child-events.jsonl)
+did cover four child starts and four stop events between 05:11:34 and 05:12:29
+UTC. All four exit statuses are `3221225781`, hexadecimal `0xC0000135`.
+Microsoft defines this as
+[`STATUS_DLL_NOT_FOUND`](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-erref/596a1078-e883-4972-9bbc-49e60bebca55).
+The attempted helper image and role were still unavailable before lookup.
+This is real host-child evidence, unlike the preserved invalid standalone
+browser tests; it does not identify which DLL failed to resolve.
+
+The owner then supplied the [follow-up Pro investigation](r4-help-followup-review.md).
+Its two changes to the next step are exact WebEngine libraryinfo logging and,
+if still needed, one diagnostic removal of the observed Launcher-owned PySide6
+PATH entry. It does not authorize a permanent blanket PATH filter or Qt/DLL
+replacement.
+
+## WebEngine libraryinfo logging run — failure persists
+
+The next real Studio session `8453e650bdf641bd91583b5dfc493870` started Houdini
+PID 9924 under supervisor 19232 at 05:20:40 UTC. Runtime autostart returned to
+the unchanged product default. The [temporary logging patch](evidence/r4-help/libraryinfo-logging.patch)
+added `qt.webengine.libraryinfo.debug=true` while retaining earlier diagnostic
+rules and the existing settings. Because stderr had provided no Qt records,
+the child also requested Houdini's own `HOUDINI_DEFAULT_LOG_FILE` in that
+session's E: log directory, with only Generic Logging and Standard Error
+sources. These are native [Houdini logging settings](https://www.sidefx.com/docs/houdini/ref/env),
+not a new message handler or product setting. The patch was removed immediately
+after the session-correlated host started.
+
+The launch record and `studio-9924-4802039ada.json` at 05:21:13 UTC confirm:
+
+- The same saved-HIP launch target, workspace cwd, Houdini EXE and native
+  preferences; the same actual GUI Qt library metadata.
+- `BCS_AUTOSTART=1`, Runtime module loaded, Panel module absent.
+- The WebEngine libraryinfo rule, stderr routing flag and native log-file/source
+  variables all present in the actual GUI environment.
+- The existing embedded help pane still has an empty current URL and the same
+  loopback homepage. The owner reports it is still blank.
+- The existing memory sink has two entries and no matching Qt text. The ordinary
+  stderr file remains empty and no requested native log file was produced at
+  inspection. Thus the helper/resource/locales paths are still **unavailable**;
+  enabling a logging category was not equivalent to capturing its output.
+
+The [new 55-second process trace](evidence/r4-help/studio-libraryinfo-child-events.jsonl)
+captured six starts under PID 9924 and six stop events, all again reporting
+`0xC0000135`. The helper image and role were unavailable at lookup. Timestamps
+are observer receipt times and can appear out of order between start/detail
+queries and stop-event delivery; do not infer exact lifetimes from them.
+The selected System/Application and existing Security 4688 records provided
+no matching additional event for this window. No audit policy was changed.
+
+The owner is tired and further GUI requests are paused. There is no production
+fix, no new installer/ZIP, and no release approval from these results.
+
+## Next exact comparison — prepared, unapplied
+
+The [reviewable diagnostic patch](evidence/r4-help/private-qt-path-comparison.patch)
+retains the logging run's settings and normal Runtime autostart. Its only
+functional difference is removal of this exact known directory from the final
+Houdini child's copied PATH:
+
+```text
+E:\Big-Chicken-Houdini-Studio\.runtime\venv\Lib\site-packages\PySide6
+```
+
+Syntax and focused dictionary checks passed: parent environment unchanged;
+native Houdini's PySide6 path, other user paths, similarly named paths, ordering
+and empty entries retained; cwd/command/stdio unchanged; a missing target entry
+rejects the comparison. `git apply --check` passed. The patch has **not** been
+applied and no GUI result exists for it.
+
+When the owner is available, correlate a fresh E: Studio session before
+removing this temporary hunk. Verify the actual GUI PATH and loaded Runtime,
+same help entry and same scene. If help recovers, restore the entry in another
+fresh launch to reproduce the failure, then remove it again to recover. If it
+does not recover, stop treating that entry as the primary cause and follow the
+captured loader errors. Do not ask the owner to repeat earlier completed
+snapshots, broaden the environment filter, or invent a new generic test matrix.
 
 ## Repeating the GUI comparison
 
@@ -191,7 +339,7 @@ Do not take execution ownership of another active Studio workspace.
    If multiple panes are reported, supply `pane_name='exact name'`; do not
    automatically close panes or choose an unrelated window.
 
-## Prepared one-launch logging procedure — not enabled
+## Temporary logging procedure — source hunks currently removed
 
 The A/B comparison did not safely expose the existing QML carrier, and the
 ordinary log did not retain the initialization error. Prepare one subsequent
@@ -201,7 +349,7 @@ into the final Houdini child environment, after helper cleanup, before Qt
 initialization; the GUI snapshot must confirm their arrival. Do not simply set
 QT flags outside Studio and assume they survive the existing cleanup.
 
-The local evidence directory holds an unapplied `one-launch-logging.patch`
+The local evidence directory retains the original `one-launch-logging.patch`
 against `supervise()`'s final `Popen` call. It uses an environment copy, leaves
 the command/cwd/log destination unchanged and adds only logging fields. It is
 not a product option, startup configuration or packaged file. After the owner
@@ -217,9 +365,10 @@ four diagnostic fields differ, and the existing logging rule is retained.
 `git apply --check` passed without applying the patch. These checks do not
 verify that Houdini emits or captures the required initialization errors.
 
-`QT_FORCE_STDERR_LOGGING=1` in that same temporary child environment routes Qt
-messages to the already captured stderr instead of requiring a new global
-message handler or debugger. Qt 6.8.3 implements this flag in
+`QT_FORCE_STDERR_LOGGING=1` in that same temporary child environment requests
+stderr routing in Qt's standard handler, without installing a new global
+message handler or debugger. It did not produce the needed output in the real
+Houdini runs above. Qt 6.8.3 implements this flag in
 [`shouldLogToStderr()`](https://github.com/qt/qtbase/blob/v6.8.3/src/corelib/global/qlogging.cpp).
 It changes the logging destination, not WebEngine resource paths or Chromium
 behavior. Verify it and the three approved diagnostic settings in the actual
@@ -229,8 +378,8 @@ Open only the agreed help page for this diagnostic session, observe the bounded
 child-process window, collect relevant initialization errors and the snapshot,
 then let the owner normally close the test GUI. Raw diagnostic logs stay in the
 private E: evidence/cache directories; publish only reviewed excerpts without
-authentication values, complete command lines or unrelated user data. No process
-has yet run with this patch.
+authentication values, complete command lines or unrelated user data. The
+completed logging runs and their output gaps are recorded above; none is a fix.
 
 For the timed child-process trace, observe from before the agreed help action
 through failure: time, host/parent/PID, actual helper EXE, allowlisted process

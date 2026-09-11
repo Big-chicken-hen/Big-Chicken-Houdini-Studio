@@ -12,8 +12,9 @@
 - Codex 隔离 WebEngine 测试曾触发缺失 DLL 弹窗；独立 offscreen/hython 原生基线也曾退出 139。两组测试不适合作为当前产品回归对照，失败记录保留。用户随后确认正式启动仍空白，但没有 DLL 弹窗。
 - 本机原始调查：[STATUS.md](../.runtime/maintenance/help-browser-20260911/STATUS.md)，完整路径 `E:\Big-Chicken-Houdini-Studio\.runtime\maintenance\help-browser-20260911\STATUS.md`。本机证据未随 Git 发布，Pro 不可直接访问；重要结论已在此记录。
 - 原生快照的当前 URL 为本机帮助首页；Studio 快照的当前 URL 为空，首页配置相同。Studio Runtime 已加载，Panel 模块尚未加载；因此这次故障已存在于 Panel 代码加载之前，但不能据此排除 Runtime 或启动环境的影响。
-- Studio 的有界进程观察记录 6 次浏览器子进程启动，进程均在详细信息查询前消失；实际路径、角色和退出码未捕获。原生观察到一个仍存活的 Houdini 自带 renderer。不能把缺失信息补写为 DLL、QML 或其他已证实原因。
-- 下一步：用户休息后继续保留阻塞。备妥下一次真实 GUI 启动的有限日志补丁，尚未应用；待用户方便时，经同一 `Studio.exe` 复现并核对诊断变量实际到达宿主。两边都是内嵌 HelpBrowser，未扩大扫描去强取 QML 对象；现有日志为空也不代表没有初始化错误。详见 [R4-HELP-1 验证记录](r4-help-validation.md)。
+- 最初的 Studio 观察只记录了 6 次启动，未抓到退出码。后续真实 Studio 会话已订阅 stop 事件：PID 29188 的 4 个相关子进程、PID 9924 的 6 个相关子进程都报告 `3221225781`／`0xC0000135`（`STATUS_DLL_NOT_FOUND`）。这是具体的启动失败状态；缺哪个 DLL、辅助程序实际路径及角色仍未确定，不能据此直接认定私有 Qt 混用。
+- 增强日志会话 PID 9924 已确认 Runtime 正常加载、Panel 未加载，WebEngine libraryinfo 日志开关实际到达宿主，帮助仍空白；标准错误和已有会话日志仍未提供所需 Qt 路径/错误。之前用户报告的一次恢复已澄清为直接打开 HIP／Houdini，保留为原生正常观察，不能计作关闭 Runtime 后恢复。
+- 下一步按 [Pro 后续分析](r4-help-followup-review.md)：仅在下一次 Houdini 子进程 PATH 副本中移除已确认由 Launcher 添加的那一个 PySide6 目录，保留其余环境和 Runtime，做单变量对照。该补丁已经准备、尚未应用或运行；用户已疲惫，暂停继续索取 GUI 操作。所有临时启动器源码改动均已撤回。失败 trace 和准确边界见 [R4-HELP-1 验证记录](r4-help-validation.md)。
 
 ## 2026-09-10 RC 试用新增观察（待 Pro 判断）
 
