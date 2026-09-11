@@ -2,6 +2,8 @@
 
 **Owner environment correction (2026-09-11):** The owner authorized the reviewed custom Houdini search-path fix, commit and new ZIP. Normal Launcher/host startup carries the explicit search-variable list in `launcher_environment()` and appends Studio's package directory; ordinary helpers and isolated tests stay sanitized. Preserve Python/Qt/HFS cleanup, user files, native preferences and all execution/permission boundaries. See `docs/houdini-environment-validation.md`; headless HDA discovery/cook evidence does not replace standard-user GUI acceptance.
 
+The owner also reported generated VEX landing in the native workspace. Generated source exports are scene outputs, including inspection exports: use the existing `output_path()` policy, defaulting saved scenes to `$HIP/BigChickenStudio/<HIP stem>/{renders,exports,assets}`. Only disposable internal scratch belongs in the private workspace. Preserve explicit/existing destinations and old files/cwd/history; do not add write interception or broaden permissions.
+
 **Owner artwork correction (2026-09-10):** The owner explicitly requested the supplied Downloads illustration as the static Launcher background, a youthful white/blue palette, readable translucent nodes and the girl portrait as the Studio.exe icon. This overrides earlier Launcher pink/dark and no-brand-art restrictions. Use redesign-existing-projects only to improve this approved presentation. Keep the five-node topology, Changa hero, Lucide functional icons, native Qt, Panel presentation and execution architecture. Resources are bundled under src/studio/ui/assets/launcher-artwork; no runtime download.
 
 

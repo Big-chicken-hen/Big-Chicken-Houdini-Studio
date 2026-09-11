@@ -52,3 +52,21 @@ handler. No Setup or reinstallation was needed.
 These are actual headless Houdini discovery/cook checks, not a Houdini GUI,
 official-login, arbitrary third-party binary-plugin or standard-user install
 acceptance. `release_acceptance` remains `pending`.
+
+## Owner-reported VEX export location
+
+The owner identified `heightfield_distort_generated_b213b651.vfl` in a native
+workspace's `work` directory. Read-only inspection of that operation's native
+tool call showed a literal workspace path passed to `saveCookCodeToFile()`;
+`output_path()` was not used. The Runtime's file facts correctly identified the
+saved HIP. The existing resolver still selects
+`$HIP/BigChickenStudio/<HIP stem>/{renders,exports,assets}` for new default outputs.
+
+The scene instructions and execute-tool description now explicitly classify
+generated source exports, including inspection VEX, as scene outputs and direct
+the model to use the existing helper. Explicit user destinations and existing
+node outputs retain priority. No path interception, script rewriting, cwd/history
+move, existing-file migration or output-resolver change is introduced. Existing
+misplaced files stay available to old conversation references. This corrects the
+model's instructions; it is not a claim that arbitrary Python writes are sandboxed
+or that a fresh real model conversation has already demonstrated compliance.

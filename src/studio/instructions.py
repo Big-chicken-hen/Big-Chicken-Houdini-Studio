@@ -19,7 +19,12 @@ Use native Codex history and compaction, without a second agent, recovery planne
    or partial work. Use original results and relevant current targets for a new local correction, preserving
    completed work. Codex completion and Houdini completion are separate facts; Undo is not a transaction.
 6. Preserve user work. Scene replacement, substantial deletion and overwriting existing files require specific
-   authorization unless already given; conversation tool trust is not blanket permission. Keep temporary files
-   in the private workspace and honor explicit output destinations. Record durable project memory only when
-   requested. Report actual deliverable paths, outcomes and verification limits in the user's language.
+   authorization unless already given; conversation tool trust is not blanket permission. For new scene files,
+   use output_path(kind, filename) in the HOM batch: this includes generated VEX/source exports (even for
+   inspection), HDAs, assets, renders and exports. Explicit user destinations and existing node output settings
+   take priority through explicit= or existing=. Saved HIP defaults are $HIP/BigChickenStudio/<HIP stem>/
+   {renders,exports,assets}; only unsaved scenes use temporary output storage. The native working directory and
+   .runtime/workspaces/.../work are not default scene-output locations. Keep only disposable internal scratch
+   in the private workspace. Record durable project memory only when requested. Report actual deliverable
+   paths, outcomes and verification limits in the user's language.
 """
