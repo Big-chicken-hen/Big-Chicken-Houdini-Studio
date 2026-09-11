@@ -13,9 +13,16 @@ from pathlib import Path
 
 from .codex.protocol import SUPPORTED_CODEX_VERSION
 from .common import AppPaths, StudioError, atomic_json, identifier, new_id, read_json
+from .houdini_compatibility import inspect_houdini, require_houdini_launch
 from .ownership import WorkspaceLock, execution_lock
 from .targets import SceneCatalog, SceneTarget, path_key
 from .workspace import Workspaces
+
+
+HOUDINI_SEARCH_VARIABLES = (
+    "HOUDINI_PATH", "HOUDINI_PACKAGE_DIR", "HOUDINI_OTLSCAN_PATH",
+    "HOUDINI_OTL_PATH", "HOUDINI_OPLIBRARIES_PATH", "HOUDINI_DSO_PATH",
+)
 
 
 def hidden_flags():
@@ -52,6 +59,7 @@ def storage_environment(paths):
     return {**{key: str(value) for key, value in directories.items()},
             "HIA_PROJECT_ROOT": str(paths.root), "BCS_DATA_ROOT": str(paths.data_root),
             "BCS_CACHE_ROOT": str(paths.cache_root), "PYTHONPATH": str(paths.install("src")),
+            "BCS_HOUDINI_PREF_MODE": "user" if paths.user_houdini_preferences else "isolated",
             "PYTHONDONTWRITEBYTECODE": "1", "PYTHONNOUSERSITE": "1",
             "PIP_CONFIG_FILE": os.devnull, "PIP_DISABLE_PIP_VERSION_CHECK": "1"}
 
@@ -65,9 +73,23 @@ def helper_environment(paths):
                  "PIP_TARGET", "PIP_PREFIX", "PIP_ROOT", "PIP_USER"):
         env.pop(name, None)
     env.update(storage_environment(paths))
+    if paths.user_houdini_preferences and os.environ.get("HOUDINI_USER_PREF_DIR"):
+        # Preserve an existing native override, including __HVER__; otherwise
+        # let Houdini resolve its normal user preferences. Never copy/edit them.
+        env["HOUDINI_USER_PREF_DIR"] = os.environ["HOUDINI_USER_PREF_DIR"]
     output_override = render_output_directory(paths)
     if output_override is not None:
         env["HIA_RENDER_OUTPUT_DIR"] = str(output_override)
+    return env
+
+
+def launcher_environment(paths):
+    """Carry native search paths to the host; ordinary helpers stay sanitized."""
+    env = helper_environment(paths)
+    if paths.user_houdini_preferences:
+        # Keep values literal (including &, variables and path order). Do not
+        # restore a foreign Python/Qt/HFS installation or arbitrary HOUDINI_*.
+        env.update({name: os.environ[name] for name in HOUDINI_SEARCH_VARIABLES if name in os.environ})
     return env
 
 
@@ -97,7 +119,11 @@ def discover_houdini():
 
 def codex_executable(paths):
     name = "codex.exe" if os.name == "nt" else "codex"
-    candidates = [os.environ.get("BCS_CODEX_PATH"), paths.local("toolchains", "codex", name), shutil.which(name)]
+    if (paths.root / "release-manifest.json").is_file():
+        # A missing bundle is an installation failure, never PATH discovery.
+        return str(Path(os.environ.get("BCS_CODEX_PATH") or paths.install("tools", "codex", "bin", name)).resolve())
+    candidates = [os.environ.get("BCS_CODEX_PATH"), paths.install("tools", "codex", "bin", name),
+                  paths.local("toolchains", "codex", name), shutil.which(name)]
     for value in candidates:
         if value and Path(value).is_file():
             return str(Path(value).resolve())
@@ -123,25 +149,45 @@ def check_codex(codex, paths=None):
     return str(Path(codex).resolve())
 
 
-def preflight(houdini, codex, paths=None):
-    if not Path(houdini).is_file() or Path(houdini).name.lower() not in {"houdini.exe", "houdini", "houdinifx.exe"}:
-        raise StudioError("HOUDINI_REQUIRED", "Select a Houdini GUI executable")
+def preflight(houdini, codex, paths=None, *, houdini_confirmation=None, request_id=None):
+    selected = require_houdini_launch(inspect_houdini(houdini, paths), houdini_confirmation, request_id=request_id)
     return {"houdini": str(Path(houdini).resolve()), "codex": check_codex(codex, paths),
-            "codex_version": SUPPORTED_CODEX_VERSION}
+            "codex_version": SUPPORTED_CODEX_VERSION, "houdini_selected": selected,
+            "houdini_confirmation": houdini_confirmation is not None}
 
 
 def child_environment(paths, workspace_id, session_id, token):
     folder = paths.session(session_id)
-    for path in (folder, paths.cache("tmp"), paths.data("houdini-prefs")):
+    for path in (folder, paths.cache("tmp")):
         path.mkdir(parents=True, exist_ok=True)
-    env = helper_environment(paths)
+    env = launcher_environment(paths)
+    package = str(paths.root / "houdini" / "packages")
+    packages = env.get("HOUDINI_PACKAGE_DIR", "")
+    if package not in packages.split(os.pathsep):
+        packages += (os.pathsep if packages and not packages.endswith(os.pathsep) else "") + package
     env.update({"HIA_PROJECT_ROOT": str(paths.root), "BCS_WORKSPACE_ID": workspace_id,
                 "BCS_SESSION_ID": session_id, "BCS_SESSION_TOKEN": token, "BCS_AUTOSTART": "1",
-                "PYTHONPATH": str(paths.root / "src"), "HOUDINI_PACKAGE_DIR": str(paths.root / "houdini" / "packages"),
-                "HOUDINI_USER_PREF_DIR": str(paths.data("houdini-prefs", "__HVER__")),
+                "PYTHONPATH": str(paths.root / "src"), "HOUDINI_PACKAGE_DIR": packages,
                 "HOUDINI_TEMP_DIR": str(paths.cache("tmp")), "TEMP": str(paths.cache("tmp")),
                 "TMP": str(paths.cache("tmp")), "PYTHONDONTWRITEBYTECODE": "1",
                 "BCS_PYTHON_EXECUTABLE": console_python()})
+    if not paths.user_houdini_preferences:
+        paths.data("houdini-prefs").mkdir(parents=True, exist_ok=True)
+        env["HOUDINI_USER_PREF_DIR"] = str(paths.data("houdini-prefs", "__HVER__"))
+    return env
+
+
+def houdini_host_environment():
+    """Re-spell Windows keys only at the final host spawn; preserve all values."""
+    env = dict(os.environ)
+    if os.name == "nt":
+        # Python uppercases environ keys. Qt 6.8.3's Chromium renderer filter
+        # expects these exact spellings. Pass this dict directly to Popen:
+        # writing it back into os.environ would uppercase the keys again.
+        for native_name in ("Path", "SystemRoot", "SystemDrive"):
+            upper_name = native_name.upper()
+            if upper_name in env:
+                env[native_name] = env.pop(upper_name)
     return env
 
 
@@ -187,7 +233,7 @@ def _spawn_session(paths, workspace_id, checked, hip, session_id, target=None):
             "render_output_directory": output}
 
 
-def launch_target(paths, target, houdini, codex, *, request_id):
+def launch_target(paths, target, houdini, codex, *, request_id, houdini_confirmation=None):
     """Claim the UI's stable request ID once; an ambiguous reply never respawns it."""
     session_id = identifier(request_id)
     value = target.to_dict() if isinstance(target, SceneTarget) else target
@@ -215,7 +261,7 @@ def launch_target(paths, target, houdini, codex, *, request_id):
     atomic_json(folder / "status.json", {"state": "accepted", "process_may_exist": True})
     try:
         target = SceneTarget.from_dict(value)  # Revalidate the file at admission.
-        checked = preflight(houdini, codex, paths)
+        checked = preflight(houdini, codex, paths, houdini_confirmation=houdini_confirmation, request_id=session_id)
         workspace = SceneCatalog(paths).admit(target)
     except (StudioError, OSError) as exc:
         error = exc.payload()["error"] if isinstance(exc, StudioError) else {
@@ -255,7 +301,8 @@ def launch_status(paths, request_id):
         return {**base, "message": "Launch state is not confirmed; query this launch again"}
     if config.get("launcher_session_id") != session_id:
         return {**base, "message": "Launch identity does not match its saved status"}
-    result = {**base, **status, "target": config.get("target"), "workspace_id": config.get("workspace_id")}
+    result = {**base, **status, "target": config.get("target"), "workspace_id": config.get("workspace_id"),
+              "houdini_confirmation": config.get("houdini_confirmation") is True}
     if result["state"] in {"closed", "rejected"}:
         result["process_may_exist"] = False
         return result
@@ -275,6 +322,8 @@ def launch_status(paths, request_id):
             not status.get("houdini_pid") or descriptor.get("houdini_pid") != status["houdini_pid"]):
         return result
     result.update(state="runtime_connected", runtime_connected=True, process_may_exist=True)
+    if isinstance(descriptor.get("host"), dict):
+        result["host"] = descriptor["host"]  # Actual registered facts, never the selection snapshot.
     scene, target = descriptor.get("scene", {}), config.get("target") or {}
     if target.get("kind") == "empty":
         opened = scene.get("is_new_file") is True and not scene.get("saved_hip_path")
@@ -317,7 +366,7 @@ def supervise(paths, session_id):
         logs = paths.cache("logs", session_id)
         logs.mkdir(parents=True, exist_ok=True)
         with (logs / "houdini.log").open("ab") as log:
-            process = subprocess.Popen(command, env=dict(os.environ),
+            process = subprocess.Popen(command, env=houdini_host_environment(),
                                        cwd=paths.workspace(config["workspace_id"]) / "work",
                                        stdin=subprocess.DEVNULL, stdout=log, stderr=log)
             status["houdini_pid"] = process.pid

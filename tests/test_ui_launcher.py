@@ -145,14 +145,14 @@ class LauncherTests(unittest.TestCase):
         window.show()
         seen = []
         window.stack.currentChanged.connect(lambda _index: seen.append(window.current_page))
-        self.assertEqual(window.current_page, "checking")
-        self.assertFalse(window.checking_box.isVisible())
+        self.assertEqual(window.current_page, "flow")
+        self.assertFalse(window.login.isVisible())
         services.probe_gate.set()
         process_until(lambda: not window._pending)
-        self.assertEqual(window.current_page, "home")
+        self.assertEqual(window.current_page, "flow")
         self.assertNotIn("authentication", seen)
-        self.assertFalse(hasattr(window, "primary_action"))
-        self.assertEqual(window.size().toTuple(), (760, 560))
+        self.assertFalse(window.launch_button.isEnabled())
+        self.assertLessEqual(window.width(), window.screen().availableGeometry().width())
         count = len(services.probes)
         for name in ("settings", "diagnostics", "account"):
             window.show_secondary(name)
@@ -163,8 +163,8 @@ class LauncherTests(unittest.TestCase):
     def test_auth_actions_keep_the_original_login_and_completion_goes_to_home(self):
         window, services = self.window("signed_out", records=[])
         size = window.size()
-        self.assertEqual(window.current_page, "authentication")
-        self.assertFalse(window.open_button.isVisible())
+        self.assertEqual(window.current_page, "flow")
+        self.assertTrue(window.open_button.isVisible())
         self.assertEqual(services.opened_urls, [])
         window.login.click()
         process_until(lambda: "account" not in window._pending)
@@ -190,107 +190,106 @@ class LauncherTests(unittest.TestCase):
         services.state = "ready"
         window.refresh_account()
         process_until(lambda: "account" not in window._pending)
-        self.assertEqual(window.current_page, "home")
+        self.assertEqual(window.current_page, "flow")
         self.assertEqual(window.size(), size)
         self.assertEqual(services.launches, [])
 
-    def test_setup_template_shows_only_the_specified_actions_and_existing_requirements(self):
+    def test_setup_actions_stay_in_the_correct_node_without_disguising_missing_codex(self):
         window, services = self.window("missing_codex", records=[])
-        cases = (
-            ("missing_codex", ["查看安装步骤", "选择已有安装"]),
-            ("incompatible_codex", ["选择兼容安装", "查看要求"]),
-            ("codex_unconfirmed", ["选择已有安装", "查看要求"]),
-            ("codex_init_error", ["重新检查", "选择其他安装", "查看详情"]),
-            ("missing_houdini", ["选择 Houdini", "重新检查", "查看详情"]),
-        )
-        for state, expected in cases:
+        for state in ("missing_codex", "incompatible_codex", "codex_init_error", "missing_houdini"):
             with self.subTest(state=state):
                 services.state = state
-                snapshot = services.snapshot()
-                if state == "codex_unconfirmed":
-                    snapshot["codex"].update(state="incompatible", attempts=[{"code": "CODEX_REQUIRED"}])
-                window.apply_snapshot(snapshot)
+                window.apply_snapshot(services.snapshot())
                 window.render()
-                visible = [window.setup_actions.itemAt(i).widget() for i in range(window.setup_actions.count())]
-                self.assertEqual([widget.text() for widget in visible if widget.isVisible()], expected)
-                if "查看要求" in expected:
+                self.assertTrue(window.open_button.isEnabled())
+                self.assertFalse(window.launch_button.isEnabled())
+                self.assertEqual(window.setup_houdini.isVisible(), state == "missing_houdini")
+                self.assertEqual(window.setup_codex.isVisible(), state != "missing_houdini")
+                if state != "missing_houdini":
                     self.assertIn(SUPPORTED_CODEX_VERSION, window.setup_message.text())
-                    window.setup_details.click()
-                    self.assertEqual(window.current_page, "diagnostics")
-                    self.assertIn(SUPPORTED_CODEX_VERSION, window.diagnostics_text.toPlainText())
-                    window.back_secondary()
+                window.diagnostics_button.click()
+                self.assertIn(SUPPORTED_CODEX_VERSION, window.diagnostics_text.toPlainText())
+                window.back_secondary()
         self.assertEqual(services.opened_urls, [])
         self.assertEqual(len(services.probes), 1)
 
-    def test_open_and_empty_are_direct_activations_but_selection_remains_pure(self):
+    def test_open_and_empty_only_select_and_launch_is_the_single_admission(self):
         window, services = self.window(records=[])
         window.select_path("D:/fixture/selected.hip")
         process_until(lambda: "selection" not in window._pending)
-        self.assertIsNone(window._request_id)
-        self.assertEqual(services.admissions, {})
+        selected = window._target
         with patch("studio.ui.launcher.QtWidgets.QFileDialog.getOpenFileName", return_value=("", "")):
             window.open_button.click()
-        self.assertEqual(window.current_page, "home")
-        with patch("studio.ui.launcher.QtWidgets.QFileDialog.getOpenFileName",
-                   return_value=("D:/fixture/explicit.hip", "")):
+        self.assertIs(window._target, selected)
+        with patch("studio.ui.launcher.QtWidgets.QFileDialog.getOpenFileName", return_value=("D:/fixture/explicit.hip", "")):
             window.open_button.click()
-        self.assertEqual(window.current_page, "launching")
+        process_until(lambda: "selection" not in window._pending)
+        self.assertIsNone(window._request_id)
+        self.assertEqual(services.admissions, {})
+        self.assertEqual(window._source_branch, "open")
+        window.launch_button.click()
         request = window._request_id
+        window.launch_button.click()
         process_until(lambda: window._launch_phase is None)
-        self.assertEqual(services.launches[0][0], {"kind": "hip", "path": "D:/fixture/explicit.hip"})
-        self.assertEqual(services.launches[0][1], request)
+        self.assertEqual(len(services.launches), 1)
+        self.assertEqual(services.launches[0][:2], ({"kind": "hip", "path": "D:/fixture/explicit.hip"}, request))
         empty, empty_services = self.window(records=[])
         empty.empty_button.click()
+        self.assertEqual(empty_services.launches, [])
+        self.assertIsNone(empty._request_id)
+        empty.launch_button.click()
         process_until(lambda: empty._launch_phase is None)
         self.assertEqual(empty_services.launches[0][0]["kind"], "empty")
 
-    def test_recent_selects_without_launch_and_duplicate_activation_signals_share_one_request(self):
+    def test_recent_focus_is_not_selection_and_duplicate_activation_does_not_launch(self):
         window, services = self.window()
         window.recents.setCurrentRow(1)
+        window._recent_rows[1].setFocus()
+        self.app.processEvents()
+        self.assertIsNone(window._source_branch)
         item = window.recents.currentItem()
-        self.assertEqual(services.launches, [])
-        self.assertIsNone(window._request_id)
         window.recents.itemDoubleClicked.emit(item)
-        request = window._request_id
         window.recents.itemActivated.emit(item)
-        window._recent_rows[1].open_button.click()
+        process_until(lambda: "selection" not in window._pending)
+        self.assertEqual(window._source_branch, "recent")
+        self.assertEqual(services.launches, [])
+        window.launch_button.click()
+        request = window._request_id
+        window.launch_button.click()
         process_until(lambda: window._launch_phase is None)
         self.assertEqual(len(services.launches), 1)
         self.assertEqual(services.launches[0][1], request)
         keyboard, keyboard_services = self.window()
-        key = QtGui.QKeyEvent(QtCore.QEvent.KeyPress, QtCore.Qt.Key_Return, QtCore.Qt.NoModifier)
-        keyboard._recent_rows[0].keyPressEvent(key)
+        keyboard._recent_rows[0].keyPressEvent(QtGui.QKeyEvent(QtCore.QEvent.KeyPress, QtCore.Qt.Key_Return, QtCore.Qt.NoModifier))
         keyboard.recents.itemActivated.emit(keyboard.recents.item(0))
-        process_until(lambda: keyboard._launch_phase is None)
-        self.assertEqual(len(keyboard_services.launches), 1)
+        process_until(lambda: "selection" not in keyboard._pending)
+        self.assertEqual(keyboard_services.launches, [])
+        self.assertTrue(keyboard.launch_button.isEnabled())
 
-    def test_non_home_drop_waits_for_explicit_activation_and_home_drop_opens(self):
+    def test_drop_and_later_login_only_select_until_explicit_launch(self):
         window, services = self.window("signed_out", records=[])
         mime = QtCore.QMimeData()
         mime.setUrls([QtCore.QUrl.fromLocalFile("D:/fixture/dropped.hip")])
-        drop = QtGui.QDropEvent(QtCore.QPointF(30, 30), QtCore.Qt.CopyAction, mime,
-                               QtCore.Qt.LeftButton, QtCore.Qt.NoModifier)
+        drop = QtGui.QDropEvent(QtCore.QPointF(30, 30), QtCore.Qt.CopyAction, mime, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier)
         window.dropEvent(drop)
         process_until(lambda: "selection" not in window._pending)
         self.assertTrue(drop.isAccepted())
+        self.assertFalse(window.launch_button.isEnabled())
         services.state = "ready"
         window.apply_snapshot(services.snapshot())
         window.render()
-        self.assertEqual(window.current_page, "home")
-        self.assertTrue(window.deferred_row.isVisible())
         self.assertEqual(services.launches, [])
-        window.activate_deferred()
+        self.assertEqual(window._source_branch, "open")
+        window.launch_button.click()
         process_until(lambda: window._launch_phase is None)
         self.assertEqual(len(services.launches), 1)
         direct, direct_services = self.window(records=[])
-        enter = QtGui.QDragEnterEvent(QtCore.QPoint(30, 30), QtCore.Qt.CopyAction, mime,
-                                    QtCore.Qt.LeftButton, QtCore.Qt.NoModifier)
+        enter = QtGui.QDragEnterEvent(QtCore.QPoint(30, 30), QtCore.Qt.CopyAction, mime, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier)
         direct.dragEnterEvent(enter)
         self.assertTrue(direct.drop_hint.isVisible())
-        direct.dropEvent(QtGui.QDropEvent(QtCore.QPointF(30, 30), QtCore.Qt.CopyAction, mime,
-                                         QtCore.Qt.LeftButton, QtCore.Qt.NoModifier))
-        process_until(lambda: direct._launch_phase is None)
-        self.assertEqual(len(direct_services.launches), 1)
+        direct.dropEvent(QtGui.QDropEvent(QtCore.QPointF(30, 30), QtCore.Qt.CopyAction, mime, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier))
+        process_until(lambda: "selection" not in direct._pending)
+        self.assertEqual(direct_services.launches, [])
         mime.setUrls([QtCore.QUrl("https://example.invalid/asset.hip")])
         self.assertIsNone(direct.dropped_path(mime))
 
@@ -304,10 +303,10 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual([action.text() for action in window._menu.actions()],
                          ["重新定位", "复制原路径", "从最近列表移除"])
         window._menu.close()
-        self.assertEqual(row.height(), 64)
+        self.assertEqual(row.height(), 56)
         self.assertNotEqual(row.more_button.focusPolicy(), QtCore.Qt.NoFocus)
         window.activate_recent_record(records[0])
-        self.assertEqual(window.current_page, "home")
+        self.assertEqual(window.current_page, "flow")
         self.assertIsNone(window._request_id)
         with patch("studio.ui.launcher.QtWidgets.QFileDialog.getOpenFileName",
                    return_value=("D:/fixture/relocated.hip", "")):
@@ -324,6 +323,7 @@ class LauncherTests(unittest.TestCase):
         services.lose_launch = True
         window, services = self.window(services=services)
         window.empty_button.click()
+        window.launch_button.click()
         request = window._request_id
         process_until(lambda: window._launch_phase is None)
         self.assertEqual(window.projection().mode, "unknown")
@@ -333,7 +333,7 @@ class LauncherTests(unittest.TestCase):
         window.back_secondary()
         window.activate_target(PreviewTarget.empty())
         window.return_after_launch()
-        self.assertEqual(window.current_page, "launching")
+        self.assertEqual(window.current_page, "flow")
         self.assertEqual(window._request_id, request)
         services.admissions[request].update(state="runtime_connected", runtime_connected=True, target_opened=False)
         window.query_launch()
@@ -348,6 +348,7 @@ class LauncherTests(unittest.TestCase):
         services.launch_state = "target_opened"
         window, services = self.window(services=services)
         window.empty_button.click()
+        window.launch_button.click()
         process_until(window.isMinimized, timeout=1500)
         window.showNormal()
         window.apply_launch_status(services.admissions[window._request_id])
@@ -358,6 +359,7 @@ class LauncherTests(unittest.TestCase):
         detail_services.launch_state = "target_opened"
         details, detail_services = self.window(services=detail_services)
         details.empty_button.click()
+        details.launch_button.click()
         process_until(lambda: details._launch_phase is None)
         details.show_details()
         details.back_secondary()
@@ -383,6 +385,7 @@ class LauncherTests(unittest.TestCase):
         prepare = backend.prepare_launch
         backend.prepare_launch = lambda: {**prepare(), "codex_home": str(self.paths.local("different-profile"))}
         window.empty_button.click()
+        window.launch_button.click()
         process_until(lambda: window._launch_phase is None)
         self.assertEqual(window.projection().mode, "failed")
         self.assertEqual(window.error_details.failure.code, "PROFILE_MISMATCH")
@@ -390,7 +393,7 @@ class LauncherTests(unittest.TestCase):
         self.assertTrue(window.launch_back.isVisible())
         window.launch_back.click()
         process_until(lambda: not window._pending)
-        self.assertEqual(window.current_page, "home")
+        self.assertEqual(window.current_page, "flow")
         self.assertIsNone(window._request_id)
         self.assertEqual(len(services.backends), 2)
 

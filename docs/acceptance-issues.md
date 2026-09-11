@@ -2,6 +2,29 @@
 
 原要求：验收中新报告的 bug 先记录，不自行修复；后续按 Pro 审批推进工作，提交时一并附上这些问题，交由 Pro 审核。
 
+## R4-HELP-1：Studio 启动后的 Houdini 内置帮助失效
+
+- 2026-09-11 [Pro 审批](r4-help-review.md) 将其列为发布前 correctness blocker；用户已授权按该审批推进。仅处理此问题，PR #14 的自动 Ready／merge／Public RC 放行暂停。
+- 审阅代码：`e686e548352da2de3b742f393c52568df09551d2`；当前交付候选：`0.1.0-rc.1-8af563981e73`。
+- **开发入口：用户重复复现，并已取得同安装真实 GUI 快照。** 2026-09-11，用户先打开原生 Houdini，再正常关闭并通过 E 盘 `Studio.exe` 启动；原生帮助正常，Studio 帮助仍空白。两份主线程快照确认同一个 22.0.368 EXE、原生偏好目录和 Qt 库路径；不是完整导航验收。
+- **R4-HELP-1 在本轮验证范围内关闭。** `e6beb5a` 已通过真实开发入口的恢复、撤回失败、再恢复、多次冷启动和 Panel 共存；实际新 payload 的官方登录、Empty/Launch、帮助及导航也由用户确认正常，Houdini 和 Launcher 均退出 0。引入提交和具体缺失 DLL 仍未查明，不影响已验证的修正边界。PR #14 继续 Draft，独立标准用户安装验收另行保持 pending。
+- 本机帮助服务返回过完整首页和 Box 文档；检查到的宿主 Qt DLL 来源正确。它们没有验证实际窗口的 QML、资源、辅助进程和渲染链。
+- Codex 隔离 WebEngine 测试曾触发缺失 DLL 弹窗；独立 offscreen/hython 原生基线也曾退出 139。两组测试不适合作为当前产品回归对照，失败记录保留。用户随后确认正式启动仍空白，但没有 DLL 弹窗。
+- 本机原始调查：[STATUS.md](../.runtime/maintenance/help-browser-20260911/STATUS.md)，完整路径 `E:\Big-Chicken-Houdini-Studio\.runtime\maintenance\help-browser-20260911\STATUS.md`。本机证据未随 Git 发布，Pro 不可直接访问；重要结论已在此记录。
+- 原生快照的当前 URL 为本机帮助首页；Studio 快照的当前 URL 为空，首页配置相同。Studio Runtime 已加载，Panel 模块尚未加载；因此这次故障已存在于 Panel 代码加载之前，但不能据此排除 Runtime 或启动环境的影响。
+- 最初的 Studio 观察只记录了 6 次启动，未抓到退出码。后续真实 Studio 会话已订阅 stop 事件：PID 29188 的 4 个相关子进程、PID 9924 的 6 个相关子进程都报告 `3221225781`／`0xC0000135`（`STATUS_DLL_NOT_FOUND`）。这是具体的启动失败状态；缺哪个 DLL、辅助程序实际路径及角色仍未确定，不能据此直接认定私有 Qt 混用。
+- 增强日志会话 PID 9924 已确认 Runtime 正常加载、Panel 未加载，WebEngine libraryinfo 日志开关实际到达宿主，帮助仍空白；标准错误和已有会话日志仍未提供所需 Qt 路径/错误。之前用户报告的一次恢复已澄清为直接打开 HIP／Houdini，保留为原生正常观察，不能计作关闭 Runtime 后恢复。
+- 最新 [Pro 环境键名分析](r4-help-environment-case-review.md) 替代之前的 PATH 目录移除实验：先仅在最终 Houdini `Popen` 的普通字典中恢复 `Path`、`SystemRoot`、`SystemDrive` 的拼写，不改任何值或目录。已核对 Qt 6.8.3 固定 Chromium 源码的大小写敏感过滤规则，并在本机 Windows 子进程复现旧键名丢失、修正键名保留。30 项针对性检查及 Ruff 通过，开发和安装版入口均覆盖；这不是 Houdini GUI 验收。诊断增加原始 Win32 键名读取，旧的 `os.environ` 快照不能证明原始大小写。旧 PATH 移除补丁保留但未应用；现有 ZIP 未更新。待用户方便时仅复测此候选。失败 trace 和准确边界见 [R4-HELP-1 验证记录](r4-help-validation.md)。
+- 用户随后确认“这次有了”“都正常”：本次真实会话 PID 30148 的快照确认三个 Win32 原始键名已恢复、帮助 URL 正常，Runtime/Panel 均加载；PATH 内容、cwd、原生偏好路径与上次失败会话逐字相同。节点文档、链接、前后导航、关闭重开由用户确认正常；Panel 场景写入尚未单独确认。一次限时旧写法对照未等到新进程，已自动恢复源码，不算已复现。新安装器 `0.1.0-rc.1-e6beb5af2de4` 已构建，244 个载荷文件及包内 Python 的两项环境检查通过；真实 payload GUI 尚待完成，旧 ZIP 尚未替换。
+- 第二次协调好时机后完成了真正的撤回对照：PID 30056 的原始键名回到全大写，PATH/cwd/偏好仍相同，帮助再次空白，8 个子进程均退出 `0xC0000135`；源码已即时恢复。用户随后通过修正版启动 PID 7880，确认帮助正常、Panel 小型场景修改后帮助也正常。加上 PID 30308 的第二次修正版启动，已有三次全新修正版宿主正常；反向宿主正常退出 0。开发入口因果对照已成立，新包真实 GUI 正在等待用户完成。保留前一次超时无结果的记录，不能混算。
+
+- 包内会话 `75a43316d14f4ab181fc7b7f7a4c2c40`、Houdini PID 16832 通过。缓存宿主身份确认 Studio/Panel/Codex 来自新 payload，Qt/PySide 来自 SideFX；独立 Studio 验收数据留在 E 盘，没有复制认证/历史或执行系统安装器。新五文件 ZIP 为 `0.1.0-rc.1-e6beb5af2de4`、README-3，完整回读及 17 个相对链接通过；旧 ZIP/校验文件和本轮临时构建目录已清理，认证、工作区和证据保留。详见 [完整验证记录](r4-help-validation.md) 与 [包内 GUI 证据](evidence/r4-help/packaged-key-spelling-gui.json)。
+
+## 2026-09-10 RC 试用新增观察（待 Pro 判断）
+
+- **R4-EXIT-1：测试退出路径原生崩溃。** `ce388a4` 安装包完成屋顶续改、同 Turn 引导、11 条原生消息对照与 Save As 后，测试脚本通过 Python QTimer 回调调用 `hou.exit()`，宿主捕获 signal 11、退出 139。后续 `f0fce6e` 新进程重开同一 HIP/对话正常，通过原生窗口 close 槽退出为 0。两个结果分别保留；不能据此断言唯一根因或已修复全部关闭路径。未修改 Houdini 或产品关闭代码，普通用户正常关闭/重开继续属于外部验收。详见 [RC 试用证据](rc-trial-validation.md)。
+- **完成后仍可见原生重连提示。** 上述真实任务完成后，Panel 仍显示 `Reconnecting... 2/5`，但 11 条消息完整一致、结果正确、Runtime 无活跃操作。保留原生重连及 UI 状态事实，未将其认定为 NET-1 复发或自动修改网络/提示生命周期；一并交 Pro 审核。
+
 2026-09-09 的 [Release Readiness 审批](release-readiness-brief.md) 已明确授权
 PANEL-1 的 R1 诊断和修复。它不阻塞 PR #10 的技术合并，但阻塞公开发行。
 原始用户报告保留如下，当前证据见 [R1 验证](r1-validation.md)。
@@ -30,3 +53,39 @@ PANEL-1 的 R1 诊断和修复。它不阻塞 PR #10 的技术合并，但阻塞
 - 实际发现的新对话尚未物化响应也已修正并在新进程复验。缺失终态事件时，实际完整 native history 能收口已有流式消息。
 - **当前状态：R1 范围内已修复并通过验收，可技术收口。** 原用户进程与当时事件链仍未还原；不将受控复现写成原现场的唯一根因。原始失败和报告继续保留。
 - 公开发行仍需实际 RC 包中的消息完整性与完整新用户链路通过；不能用本轮源代码环境测试代替 R3/R4 的发行验收。
+
+## R4-NET-1：实际包中的原生网络回复失效，历史显示失败
+
+- 2026-09-10 更新：`a5731cf` 的局部 HTTP 交付修复通过本轮技术门槛：7 项故障测试、13 项既有 UI 测试、Ruff、全部 CI，以及同一实际包的两个 fresh Houdini GUI 进程。16 次完整正文/复制/渲染对照全部通过，网络错误与 icon diagnostic 均为 0；重连、双 Panel、关闭重开及草稿保留通过。证据与精确限制见 [NET-1 收口记录](r4-net-validation.md)。下方保留原始失败，原包不改成通过；native steer 与最终标准用户安装验收仍未完成。
+
+- 记录日期：2026-09-09；**状态：已复现，根因未确认，阻断 R4 合并与公开发行**。
+- 候选：`3150c15041ebedca1d266305d7375f30777c25a0`，已包含 R3 合并 `b48ceae`。
+- 环境：Houdini 22.0.368 自带 Python 3.13.10 / PySide6 6.8.3；独立 helper 为包内 CPython 3.13.15。模块路径确认没有把私有 Qt 混入 Houdini。
+- 会话：`b3bd5306a57e46b1a176fbc03d5fe997`；仅使用 HIP 副本和明确的隔离验收目录，没有新模型 Turn。
+- 第一处可见失败：读取原生 TC3 对话 `01a0809b-2d19-7853-bd8c-cd260aadd352` 后，Panel 显示“原生历史读取失败：Network reply is no longer available; query the original request state.”，消息卡数量为 0。
+- 证据：观察检查收据 `2fe0362051fe4c16885e3f37bd53f955` 为 failed/partial；其后的状态收据 `629b64ca0c0f4bc7aa14bce10ccde44b` 确认 Panel 仍连接、无 Python Panel 脚本异常，但历史未显示。[失败截图](evidence/r4/native-history-failure.png) 已提交。
+- 原生数据核对：同一 Bridge 可以重新读取原对话的两轮历史。后来 Panel 显示 98 个原生 item、10 个活动分组、4 条原始失败/部分完成提示和 3 张图片；不能因此把先前失败改为通过。
+- 新建第二个 Panel 的前两次有界观察成功，稍后两个 Panel 都再次显示 unavailable-reply 提示，最终观察见收据 `9f74de2bbb0f42f4a216bd2d758ffa49`。这说明重新打开 Panel 不能当作已证实的修复。
+- 同进程诊断出现 `ICON_EVENT_UNAVAILABLE`，参数类型为 `QNetworkReply`。目前只确认它与回复失效同时出现；没有证明图标事件过滤器、Qt/PySide 包装层或其他生命周期路径中的哪一处是根因。
+- 下一步应针对仍存活的 Api/manager、reply finished/destroyed 与非事件参数的顺序做小型关联复现；先获得能区分原因的证据，再做局部修复。不要替换 Houdini 的 Qt、重放场景写操作，或借此重做 UI/图标系统。
+- 包清单、独立启动、诊断导出、进程持有的安装器 mutex、helper 路径检查分别保留其实际结果；完整 native Panel 与新用户 RC 链路继续未通过。详见 [R4 验证记录](r4-validation.md)。
+
+## PANEL-STEER-1：Codex 工作期间继续发送引导（已批准首发）
+
+- 2026-09-10：新的 [最终发行审批](final-release-brief.md) 已批准纳入首发；先完成 NET-1，再实现固定 Codex 0.153.4 的 native steer。下方保留原提议登记，旧“仅记录”状态不再是当前施工边界。实现和验收尚未因此自动通过。
+- 2026-09-10 收口：`991cbce` 实际包通过固定二进制、竞态、恢复及真实 Houdini 同 Turn 引导验收。原生历史只有一个 Turn，三条输入各一次；实际屋檐 0.25 米、两坡 35°，原墙体、窗户和轮廓未改。全部 CI 与最终包长历史回归通过。证据见 [最终候选记录](r4-final-candidate.md)；标准用户完整安装流程仍未测，PR #14 保持 Draft。
+
+- 记录日期：2026-09-09；**状态：用户提议，等待 Pro 审核，仅记录，不施工**。
+- 用户观察与要求：
+
+  > 用户在发送东西给codex后，codex正在思考的时候，可以继续引导，我们的插件应该也要和codex这个功能一样吧
+  > 这个先不要急着做，提交到时候带上这个等着审核
+
+- 期望体验：在 Panel 已提交请求、Codex 仍在思考或工作时，用户可以再发送补充要求或方向修正，让 Codex 在当前工作中参考这些引导。
+- 待审事项：是否将这项体验纳入后续范围，以及如何沿用原生 Codex 的进行中任务语义。当前固定版本的接口支持、交互细节和验收方式留待审批后核对，本次不预定实现方案。
+- 本次处理：随当前提交和 PR 一并送审；不修改消息发送、许可、Stop 或界面行为，不将提议自行升级为 R4 的新增功能或发布门槛。
+
+## Launcher Dynamic Artwork：发行后方向
+
+2026-09-10 的最终审批仅登记可选 native GPU artwork layer 的未来方向，首发不施工；
+不添加 shader、素材、Qt GPU/WebEngine 模块或服务器依赖，不改变当前安装包。

@@ -13,6 +13,7 @@ from studio.codex.protocol import ProtocolPolicy
 from studio.common import AppPaths, StudioError, encoded
 from studio.launcher import codex_app_server_command
 from studio.onboarding import Onboarding
+from studio.houdini_compatibility import classify_houdini
 from studio.workspace import Workspaces
 
 
@@ -99,7 +100,9 @@ class OnboardingTests(unittest.TestCase):
 
         value = Onboarding(self.paths, client_factory=factory, version_checker=version,
                            candidate_provider=lambda *_: candidates,
-                           houdini_provider=lambda: [{"path": str(self.houdini), "label": "Houdini 22.0.368"}])
+                           houdini_provider=lambda: [{"path": str(self.houdini), "label": "Houdini 22.0.368"}],
+                           houdini_inspector=lambda path, _paths: {"path": str(path), "version": "22.0.368",
+                               "compatibility": classify_houdini({"version": "22.0.368", "ui_available": True})})
         self.addCleanup(value.close)
         return value
 

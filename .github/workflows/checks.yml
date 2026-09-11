@@ -82,12 +82,8 @@ jobs:
         run: .runtime/venv/Scripts/python.exe scripts/preview_ui.py --case high-dpi --scale 2 --out .runtime/previews/panel-productization/dpi-200
       - name: Render launcher states
         run: .runtime/venv/Scripts/python.exe scripts/preview_launcher.py --out .runtime/previews/launcher/dpi-100
-      - name: Render launcher at 125 percent
-        run: .runtime/venv/Scripts/python.exe scripts/preview_launcher.py --case high-dpi --scale 1.25 --out .runtime/previews/launcher/dpi-125
       - name: Render launcher at 150 percent
         run: .runtime/venv/Scripts/python.exe scripts/preview_launcher.py --case high-dpi --scale 1.5 --out .runtime/previews/launcher/dpi-150
-      - name: Render launcher at high DPI
-        run: .runtime/venv/Scripts/python.exe scripts/preview_launcher.py --case high-dpi --scale 2 --out .runtime/previews/launcher/dpi-200
       - name: Upload UI evidence
         if: always()
         uses: actions/upload-artifact@v4

@@ -2,7 +2,7 @@
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from studio.bridge import Bridge
 from studio.codex.errors import BridgeError, CodexRPCError
@@ -58,6 +58,19 @@ class BridgeTests(unittest.TestCase):
     def event(self, method, turn_id="turn-1", status="inProgress", thread_id="thread-1"):
         self.client.sink({"type": "codex_notification", "method": method,
                           "params": {"threadId": thread_id, "turn": {"id": turn_id, "status": status}}})
+
+    def test_running_codex_version_uses_initialize_originator_not_client_suffix(self):
+        for user_agent, expected in (
+                ('big_chicken_studio/0.153.4 (Windows 11.0.22631; x86_64) (big_chicken_studio; 0.1.0)', '0.153.4'),
+                ('Codex Desktop/0.153.4 (Windows 10.0.22631; x86_64) dumb (big_chicken_studio; 0.1.0)', '0.153.4'),
+                ('Unknown native build (big_chicken_studio; 0.1.0)', None),
+                (None, None)):
+            with self.subTest(user_agent=user_agent), patch('studio.bridge.serve', return_value=Mock(server_port=12345)):
+                self.bridge.client = Mock()
+                self.bridge.client.initialize.return_value = {'userAgent': user_agent}
+                self.bridge.release_identity['codex']['version'] = None
+                self.bridge.start()
+                self.assertEqual(self.bridge.release_identity['codex']['version'], expected)
 
     def test_interrupt_ack_is_not_terminal_and_does_not_cancel_running_hom(self):
         self.bridge.start_turn({"text": "edit"})

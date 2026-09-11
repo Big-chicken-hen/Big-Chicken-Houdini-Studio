@@ -1,0 +1,219 @@
+{
+  "candidate": "79c1842e1693d77a96c050a6778485d069967a11",
+  "production_check_passed": false,
+  "attach_mismatch": [
+    {
+      "event": "attach",
+      "at": 4161.6492137,
+      "sequence": 83,
+      "key": [
+        "GET",
+        "/state"
+      ],
+      "delivery": 443010566720,
+      "api": 443006283904,
+      "reply": {
+        "python_id": 443013286976,
+        "valid": true,
+        "cpp": 443959444672,
+        "route": "/state",
+        "finished": false,
+        "available": 0,
+        "status": null
+      },
+      "same_reply_owners": []
+    },
+    {
+      "event": "attach",
+      "at": 4161.6502392,
+      "sequence": 84,
+      "key": [
+        "GET",
+        "/events"
+      ],
+      "delivery": 294729118848,
+      "api": 443006283904,
+      "reply": {
+        "python_id": 443013286976,
+        "valid": true,
+        "cpp": 443959444672,
+        "route": "/state",
+        "finished": false,
+        "available": 0,
+        "status": null
+      },
+      "same_reply_owners": [
+        {
+          "sequence": 83,
+          "key": [
+            "GET",
+            "/state"
+          ]
+        }
+      ]
+    },
+    {
+      "event": "finish",
+      "at": 4161.6970913,
+      "sequence": 83,
+      "key": [
+        "GET",
+        "/state"
+      ],
+      "delivery": 443010566720,
+      "api": 443006283904,
+      "settled": false,
+      "attached": {
+        "python_id": 443013286976,
+        "valid": true,
+        "cpp": 443959444672,
+        "route": "/state",
+        "finished": false,
+        "available": 0,
+        "status": null
+      },
+      "reply": {
+        "python_id": 443013286976,
+        "valid": true,
+        "cpp": 443959444672,
+        "route": "/state",
+        "finished": true,
+        "available": 2311,
+        "status": 200
+      }
+    },
+    {
+      "event": "finish",
+      "at": 4161.6978851,
+      "sequence": 84,
+      "key": [
+        "GET",
+        "/events"
+      ],
+      "delivery": 294729118848,
+      "api": 443006283904,
+      "settled": false,
+      "attached": {
+        "python_id": 443013286976,
+        "valid": true,
+        "cpp": 443959444672,
+        "route": "/state",
+        "finished": false,
+        "available": 0,
+        "status": null
+      },
+      "reply": {
+        "python_id": 443013286976,
+        "valid": true,
+        "cpp": 443959444672,
+        "route": "/state",
+        "finished": true,
+        "available": 0,
+        "status": 200
+      }
+    }
+  ],
+  "request_and_finished_mismatch": [
+    {
+      "event": "get",
+      "at": 4252.4769557,
+      "sequence": 206,
+      "manager": 443005404544,
+      "request_route": "/state",
+      "request_cpp": 443946881792,
+      "reply": {
+        "python_id": 443014214912,
+        "valid": true,
+        "cpp": 444041363712,
+        "route": "/state",
+        "request_route": "/state",
+        "available": 0,
+        "finished": false
+      }
+    },
+    {
+      "event": "get",
+      "at": 4252.4806157,
+      "sequence": 207,
+      "manager": 443005404544,
+      "request_route": "/events",
+      "request_cpp": 443946842656,
+      "reply": {
+        "python_id": 443014214912,
+        "valid": true,
+        "cpp": 444041363712,
+        "route": "/state",
+        "request_route": "/state",
+        "available": 0,
+        "finished": false
+      }
+    },
+    {
+      "event": "manager_finished",
+      "at": 4252.5095307,
+      "manager": 443005404544,
+      "reply": {
+        "python_id": 443014214912,
+        "valid": true,
+        "cpp": 444041363712,
+        "route": "/state",
+        "request_route": "/state",
+        "available": 0,
+        "finished": false
+      }
+    },
+    {
+      "event": "manager_finished",
+      "at": 4252.51127,
+      "manager": 443005404544,
+      "reply": {
+        "python_id": 443014214912,
+        "valid": true,
+        "cpp": 444041363712,
+        "route": "/state",
+        "request_route": "/state",
+        "available": 2311,
+        "finished": true
+      }
+    }
+  ],
+  "valid_reply_map": {
+    "registered_native_keys": [
+      "0x6ce0cfe0",
+      "0x6ce0cff0"
+    ],
+    "note": "Both keys map to Python wrapper 0x44999c32c0. This valid capture is not the failure-time neighbor map.",
+    "capture": {
+      "request_route": "/state",
+      "reply_route": "/state",
+      "reply_python_id": 294634926784,
+      "reply_cpp": [
+        1826672608
+      ],
+      "dump": "C++ address....... PySide6.QtNetwork.QNetworkReply/000000006CE0CFE0 \nhasOwnership...... 0\ncontainsCppWrapper 0\nvalidCppObject.... 1\nwasCreatedByPython 0\nvalue......        0\nreference count... 2\n"
+    }
+  },
+  "installed_dll_allocation": {
+    "source_dll": "C:\\Program Files\\Side Effects Software\\Houdini 22.0.368\\bin\\Qt6Network.dll",
+    "source_bytes": 5979952,
+    "image_base": "0x180000000",
+    "method": "file-only PE exports, checked x64 instructions, MSVC RTTI",
+    "create_request_export": "?createRequest@QNetworkAccessManager@@MEAAPEAVQNetworkReply@@W4Operation@1@AEBVQNetworkRequest@@PEAVQIODevice@@@Z",
+    "create_request_rva": "0x121770",
+    "allocation_rva": "0x12221f",
+    "requested_allocation_bytes": 16,
+    "allocator_rva": "0x3cff10",
+    "constructor_call_rva": "0x12223e",
+    "constructor_rva": "0x1c9250",
+    "allocation_to_constructor_bytes": "b910000000e8e7dc2a004c8d4c24604c896424204c8d442468498bd6488bc8e80d700a00",
+    "vtable_store_rva": "0x1c92a5",
+    "vtable_rva": "0x3f9da0",
+    "complete_object_locator_rva": "0x508460",
+    "type_descriptor_rva": "0x5743b0",
+    "rtti_type": ".?AVQNetworkReplyHttpImpl@@",
+    "rtti_subobject_offset": 0,
+    "proves": "HFS Qt6Network HTTP reply factory requests 16 bytes and constructs QNetworkReplyHttpImpl there.",
+    "does_not_prove": "The failing second reply address equals the first reply wrapper extra +0x10 map key; obtain failure-time map evidence."
+  },
+  "scope": "Scalar identities, route names and allocation evidence only; no credentials or message bodies."
+}

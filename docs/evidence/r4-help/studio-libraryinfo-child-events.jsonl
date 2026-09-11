@@ -1,0 +1,14 @@
+{"host_pid":9924,"window_seconds":55,"event":"trace_begin","coverage":"Only this observation window; earlier starts are not reconstructed","utc":"2026-09-11T05:20:40.7367012Z"}
+{"details":"unavailable: exited before lookup","pid":23148,"event":"start","parent":9924,"utc":"2026-09-11T05:20:59.1836817Z"}
+{"pid":23148,"event":"stop","utc":"2026-09-11T05:20:59.1909715Z","exit_status":3221225781}
+{"details":"unavailable: exited before lookup","pid":18400,"event":"start","parent":9924,"utc":"2026-09-11T05:20:59.2237988Z"}
+{"pid":18400,"event":"stop","utc":"2026-09-11T05:20:59.1917844Z","exit_status":3221225781}
+{"details":"unavailable: exited before lookup","pid":29596,"event":"start","parent":9924,"utc":"2026-09-11T05:20:59.2575963Z"}
+{"pid":29596,"event":"stop","utc":"2026-09-11T05:20:59.1934827Z","exit_status":3221225781}
+{"details":"unavailable: exited before lookup","pid":22700,"event":"start","parent":9924,"utc":"2026-09-11T05:21:00.1766029Z"}
+{"pid":22700,"event":"stop","utc":"2026-09-11T05:21:00.1773815Z","exit_status":3221225781}
+{"details":"unavailable: exited before lookup","pid":6728,"event":"start","parent":9924,"utc":"2026-09-11T05:21:21.3362318Z"}
+{"pid":6728,"event":"stop","utc":"2026-09-11T05:21:21.3369787Z","exit_status":3221225781}
+{"details":"unavailable: exited before lookup","pid":22980,"event":"start","parent":9924,"utc":"2026-09-11T05:21:21.3710760Z"}
+{"pid":22980,"event":"stop","utc":"2026-09-11T05:21:21.2991233Z","exit_status":3221225781}
+{"event":"trace_end","observed_children":6,"utc":"2026-09-11T05:21:36.6778550Z"}

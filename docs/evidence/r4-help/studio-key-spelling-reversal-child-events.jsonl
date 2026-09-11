@@ -1,0 +1,18 @@
+{"coverage":"Only this observation window; earlier starts are not reconstructed","utc":"2026-09-11T08:28:55.6475182Z","host_pid":30056,"window_seconds":55,"event":"trace_begin"}
+{"parent":30056,"utc":"2026-09-11T08:29:11.1068808Z","details":"unavailable: exited before lookup","event":"start","pid":3244}
+{"utc":"2026-09-11T08:29:11.0664487Z","exit_status":3221225781,"event":"stop","pid":3244}
+{"parent":30056,"utc":"2026-09-11T08:29:11.1416021Z","details":"unavailable: exited before lookup","event":"start","pid":22432}
+{"utc":"2026-09-11T08:29:12.0676594Z","exit_status":3221225781,"event":"stop","pid":22432}
+{"parent":30056,"utc":"2026-09-11T08:29:12.1047593Z","details":"unavailable: exited before lookup","event":"start","pid":8004}
+{"utc":"2026-09-11T08:29:12.1055812Z","exit_status":3221225781,"event":"stop","pid":8004}
+{"parent":30056,"utc":"2026-09-11T08:29:12.1587161Z","details":"unavailable: exited before lookup","event":"start","pid":10360}
+{"utc":"2026-09-11T08:29:12.1058634Z","exit_status":3221225781,"event":"stop","pid":10360}
+{"parent":30056,"utc":"2026-09-11T08:29:12.1957077Z","details":"unavailable: exited before lookup","event":"start","pid":30016}
+{"utc":"2026-09-11T08:29:12.1060439Z","exit_status":3221225781,"event":"stop","pid":30016}
+{"parent":30056,"utc":"2026-09-11T08:29:28.7130308Z","details":"unavailable: exited before lookup","event":"start","pid":21804}
+{"utc":"2026-09-11T08:29:28.6800455Z","exit_status":3221225781,"event":"stop","pid":21804}
+{"parent":30056,"utc":"2026-09-11T08:29:28.7424929Z","details":"unavailable: exited before lookup","event":"start","pid":7256}
+{"utc":"2026-09-11T08:29:28.6795530Z","exit_status":3221225781,"event":"stop","pid":7256}
+{"parent":30056,"utc":"2026-09-11T08:29:28.7737372Z","details":"unavailable: exited before lookup","event":"start","pid":21884}
+{"utc":"2026-09-11T08:29:28.7744710Z","exit_status":3221225781,"event":"stop","pid":21884}
+{"utc":"2026-09-11T08:29:51.2217347Z","observed_children":8,"event":"trace_end"}

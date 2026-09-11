@@ -1,4 +1,7 @@
 .runtime/
+/Studio.exe
+/Delivery/
+/发布包/
 __pycache__/
 *.py[cod]
 *.egg-info/

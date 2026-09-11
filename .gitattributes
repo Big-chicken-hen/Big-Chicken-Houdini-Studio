@@ -3,3 +3,6 @@
 *.md text eol=lf
 *.ps1 text eol=crlf
 *.cmd text eol=crlf
+src/studio/ui/assets/changa-one/OFL.txt -text -whitespace
+src/studio/ui/assets/changa-one/METADATA.pb -text
+release/handoff/SHA256.txt text eol=lf

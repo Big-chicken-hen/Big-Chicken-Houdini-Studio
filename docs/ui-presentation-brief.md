@@ -1,5 +1,18 @@
 # PR #5 approved presentation specification
 
+**Owner artwork correction (2026-09-10):** The owner explicitly requested the supplied Downloads illustration as the static Launcher background, a youthful white/blue palette, readable translucent nodes and the girl portrait as the Studio.exe icon. This overrides earlier Launcher pink/dark and no-brand-art restrictions. Use redesign-existing-projects only to improve this approved presentation. Keep the five-node topology, Changa hero, Lucide functional icons, native Qt, Panel presentation and execution architecture. Resources are bundled under src/studio/ui/assets/launcher-artwork; no runtime download.
+
+
+**Current Launcher override (2026-09-10):** [Fixed node-flow Launcher approval](launcher-node-flow-brief.md)
+supersedes the staged Launcher pages, direct-open activation, isolated ellipsis
+toolbar and previous hero/font limits below. Account, the three scene-source
+branches and Launch remain visible together. Local selection has no admission
+side effects; only Launch creates a request. Changa One Italic is approved only
+for the Chicken hero, with the owner-approved white/blue surfaces, supplied static background and geometric connectors.
+Panel presentation, approved icons, native Qt and backend boundaries are unchanged.
+The earlier text is retained as historical approval; it does not restore direct
+Recent/Open/Empty/drop launching.
+
 User-supplied Pro review, 2026-09-06. Review head: 99761e99c94588e4876297992836a78ae8c1596d. The operative specification below is preserved from the review. It supersedes the earlier Dashboard layout and permission to use Qt system icons in product UI. Existing backend contracts remain frozen.
 
 **Current status:** the [later Pro closure approval](pr5-closure-brief.md), reviewed at `06b2c5c`, supersedes this document's construction stages and Merge Gate. UI implementation is frozen; the original text below remains the approved visual specification and a record of the completed construction stage. The current compact gate includes real account continuity, input, model/consent, image-informed editing, Save/Save As/reopen and bounded running-HOM Stop. An untested full cross-monitor DPI matrix alone is not a merge blocker. Only confirmed user-flow defects authorize further PR #5 code changes.

@@ -15,4 +15,5 @@ if ($Dev) { $studioArgs += '--dev' }
 if ($NoIndex) { $studioArgs += '--no-index' }
 if ($FindLinks) { $studioArgs += @('--find-links', $FindLinks) }
 & $Python @studioArgs
-exit $LASTEXITCODE
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+& (Join-Path $studioRoot 'scripts/build_studio_entry.ps1')
