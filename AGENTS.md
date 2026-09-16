@@ -1,5 +1,17 @@
 # Big-Chicken Houdini Studio development
 
+**R4-CONN-1 bounded exception (2026-09-16):** The owner supplied the
+[connection review](docs/r4-connection-review.md). Keep features frozen; permit
+only request-phase evidence, pre-write send recovery, exact original-input
+terminal handling, bounded disconnected polling and focused tests. See
+[current validation and pending gates](docs/r4-connection-validation.md).
+The source correction is locally tested; the 10048 incident's precise request
+and port-pressure source remain unproven. Do not replace NET-1 transport,
+automatically replay sends, change Clash/global TCP settings, reopen HELP-1 or
+claim the existing `e6beb5a` ZIP contains this correction. Actual-package
+recovery/long-running GUI and independent standard-user installation remain
+pending before final release.
+
 **R4-HELP-1 closed within the verified scope (2026-09-11):** The owner-authorized final Windows environment key-spelling correction passes the real development restore-failure/reapply-recovery comparison and the actual new payload GUI help/navigation check. Both normal exit paths pass. Preserve the correction, all prior failed probes and the [validation record](docs/r4-help-validation.md). PR #14 stays Draft for the separate standard-user installed workflow and final release decision. No global Qt scans, Qt pointer wrapping, lazy engine creation, directory/DLL workarounds or invalid offscreen/hython browser probes.
 
 The [environment-key review](docs/r4-help-environment-case-review.md) supersedes the private-PySide6 PATH-removal proposal. At the final Houdini `Popen`, an ordinary dict uses `Path`, `SystemRoot`, `SystemDrive`; every value/directory stays intact. Source/builder `e6beb5af2de46ec27b9bc50de068277db38bfe41` passes 30 focused checks and five CI jobs. Three corrected development cold starts, navigation/close-reopen, Panel modification and the real reversal/reapply sequence pass. Reversal restores uppercase raw names and eight `0xC0000135` exits with identical PATH/cwd/prefs. Actual payload host 16832 used packaged Studio/Panel/Codex and SideFX Qt, passed owner login/Empty/help/navigation and closed 0; its Launcher closed 0. The latest five-file ZIP is `0.1.0-rc.1-e6beb5af2de4` with README-3. Old ZIP/checksum and this task's clean build/source directories were removed after verified ZIP readback; E: diagnostic/acceptance state and authentication remain. Do not alter the unowned `docs/authoring-results.md` edit. No temporary source hunk is active. Standard-user installation remains untested.

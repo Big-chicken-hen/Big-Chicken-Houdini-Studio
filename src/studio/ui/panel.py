@@ -19,6 +19,7 @@ from .icons import icon_diagnostics, set_button_icon
 from .model_settings import ChoiceBox, ModelSettings
 from .requests import RequestCard, SessionTrustControl
 from .shared import Api, ApiFailure, ErrorDetails, button, label
+from ..http_diagnostics import HttpDiagnostics
 from .theme import COLORS, PANEL_ROOT, apply_theme, studio_stylesheet
 
 
@@ -103,6 +104,8 @@ class StudioPanel(QtWidgets.QWidget):
         self.closed = False
         self.state = {}
         self.bridge_connected = False
+        self.poll_failures = 0
+        self.poll_retry_at = 0.0
         self.logged_in = False
         self.account_known = False
         self.thread_id = None
@@ -612,13 +615,14 @@ class StudioPanel(QtWidgets.QWidget):
                 descriptor = read_json(self.paths.session(session_id) / "bridge.json")
                 if descriptor.get("launcher_session_id") != session_id:
                     raise ValueError("Studio 会话身份不匹配，请检查当前连接。")
-                self.api = Api(descriptor["url"], token, self)
+                self.api = Api(descriptor["url"], token, self, diagnostics=HttpDiagnostics.enabled(self.paths))
             except (OSError, ValueError, KeyError, StudioError) as exc:
                 self.account_label.setText("Studio 尚未连接")
                 self.show_notice(str(exc))
                 self.update_controls()
                 return
         if self.connected_api is not self.api:
+            self.reset_poll_backoff()
             self.connected_api = self.api
             self.advance_connection(reset_cursor=True)
             self.native_generation = None
@@ -644,6 +648,7 @@ class StudioPanel(QtWidgets.QWidget):
 
     def reconnect(self):
         self.show_notice("")
+        self.reset_poll_backoff()  # One explicit read attempt, never a user-send retry.
         self.advance_connection()
         self.connect_bridge()
         if self.bridge_connected:
@@ -653,15 +658,15 @@ class StudioPanel(QtWidgets.QWidget):
                 self.load_models()
 
     def refresh(self):
+        if time.monotonic() < self.poll_retry_at:
+            return
         revision = self.revision
         self.call("GET", "/state", done=lambda v: self.apply_state(v) if revision == self.revision else None,
                   failed=lambda message: self.connection_failed(message) if revision == self.revision else None,
                   unique=True)
-        event_thread = self.thread_id
-        generation = self.connection_generation
-        self.call("GET", "/events?after=" + str(self.cursor),
-                  done=lambda v: self.apply_events(v) if self.thread_id == event_thread and revision == self.revision
-                  and generation == self.connection_generation else None, unique=True)
+        if self.poll_failures:
+            return  # Only one deduplicated state probe while the service is unavailable.
+        self.refresh_events()
         if self.tabs.currentIndex() == 1:
             self.load_operations()
         if self.selection_pending:
@@ -671,10 +676,26 @@ class StudioPanel(QtWidgets.QWidget):
                       failed=lambda message: self.selection_failed("选择读取未确认，可按 ID " + operation_id + " 查询：" + message)
                       if self.selection_pending == operation_id else None, unique=True)
 
+    def refresh_events(self):
+        event_thread, revision, generation = self.thread_id, self.revision, self.connection_generation
+        self.call("GET", "/events?after=" + str(self.cursor),
+                  done=lambda v: self.apply_events(v) if self.thread_id == event_thread and revision == self.revision
+                  and generation == self.connection_generation else None, unique=True)
+
+    def reset_poll_backoff(self):
+        self.poll_failures = 0
+        self.poll_retry_at = 0.0
+        if self.poll.interval() != 850:
+            self.poll.setInterval(850)
+
     def connection_failed(self, message):
         if self.bridge_connected:
             self.advance_connection()
         self.bridge_connected = False
+        self.poll_failures = min(self.poll_failures + 1, 5)
+        delay_ms = min(850 * (2 ** self.poll_failures), 20000)
+        self.poll_retry_at = time.monotonic() + delay_ms / 1000
+        self.poll.setInterval(delay_ms)
         self.codex_label.setText("连接中断 · 状态未确认")
         self.runtime_label.setText("连接中断 · 执行结果未确认")
         self.update_identity_details(connected=False)
@@ -699,6 +720,8 @@ class StudioPanel(QtWidgets.QWidget):
             return
         self.apply_conversations(value.get("conversations", {}))
         recovered = not self.bridge_connected
+        backing_off = bool(self.poll_failures)
+        self.reset_poll_backoff()
         self.bridge_connected = True
         self.state = value
         workspace_id = (value.get("workspace") or {}).get("workspace_id")
@@ -796,7 +819,10 @@ class StudioPanel(QtWidgets.QWidget):
         if account_changed:
             self.account_known = self.logged_in = False
             self.update_controls()
+        if account_changed or backing_off:
             self.refresh_account()
+        if backing_off:
+            self.refresh_events()
 
     def update_controls(self):
         if not hasattr(self, "decision_save"):
@@ -976,6 +1002,8 @@ class StudioPanel(QtWidgets.QWidget):
             self.pending_preview.setVisible(self.pending_preview.isHidden())
 
     def refresh_account(self):
+        if self.poll_failures:
+            return
         revision, api = self.account_revision, self.api
         self.call("GET", "/account", done=self.apply_account,
                   failed=lambda message: self.account_failed(message) if api is self.api and revision == self.account_revision else None,
@@ -1264,7 +1292,7 @@ class StudioPanel(QtWidgets.QWidget):
         self.native_generation = generation
 
     def load_history(self, *, automatic=False, turn_id=None, older=False, _recovery=False):
-        if (self.closed or not self.thread_id or not self.logged_in
+        if (self.closed or self.poll_failures or not self.thread_id or not self.logged_in
                 or self.thread_id in self.deleted_threads or self.thread_id in self.archived_threads):
             return
         if self.history_thread != self.thread_id:
@@ -1633,9 +1661,20 @@ class StudioPanel(QtWidgets.QWidget):
         self.update_controls()
         self.show_notice("")
         snapshot["forward_attempted"] = None  # HTTP dispatch cannot prove native forwarding.
-        if not self.call("POST", "/turn" if intent == "start" else "/turn/steer", body,
-                         done=lambda value: self.sent(value, snapshot),
-                         failed=lambda message: self.send_failed(message, snapshot)):
+        # A background read can advance the UI connection generation while this
+        # exact request finishes. Its terminal belongs to the original input,
+        # fenced by API, native connection, account and snapshot identity instead.
+        api = self.api
+
+        def current_submission():
+            return (not self.closed and api is self.api and self.submission_source_current(snapshot)
+                    and self.submission_snapshot(message_id) is snapshot
+                    and snapshot["thread_id"] not in self.deleted_threads)
+
+        if self.closed or api is None or not api.call(
+                "POST", "/turn" if intent == "start" else "/turn/steer", body,
+                done=lambda value: self.sent(value, snapshot) if current_submission() else None,
+                failed=lambda message: self.send_failed(message, snapshot) if current_submission() else None):
             snapshot["forward_attempted"] = False
             self.send_failed(ApiFailure("连接尚未就绪，消息未发出。", submission_state="not_submitted"), snapshot)
 
@@ -1731,6 +1770,8 @@ class StudioPanel(QtWidgets.QWidget):
         state = "not_submitted" if getattr(message, "submission_state", None) == "not_submitted" else "unknown"
         record = {key: snapshot.get(key) for key in ("client_user_message_id", "intent", "connection_generation",
                   "account_revision", "thread_id", "expected_turn_id", "turn_id", "forward_attempted")}
+        if state == "not_submitted":
+            record["forward_attempted"] = False
         record.update(state=state, error={"message": str(message), "code": getattr(message, "code", None),
                                         "details": getattr(message, "details", None)})
         self.settle_submission(record, snapshot)

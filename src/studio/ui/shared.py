@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import http.client
 import json
+import os
 import select
 import socket
 import threading
 import time
+import uuid
 from urllib.parse import urlsplit
 
 from PySide6 import QtCore, QtWidgets
 from shiboken6 import isValid
 
+from ..http_diagnostics import exception_facts, message_fingerprint, route_label
 from .icons import icon_diagnostics, set_button_icon
 from .theme import studio_stylesheet
 
@@ -160,6 +163,28 @@ class _HttpJob(QtCore.QRunnable):
         self.finished = threading.Event()
         self.socket_lock = threading.Lock()
         self.socket = None
+        self.phase = "prepare"
+        self.request_started = False
+        self.diagnostics = None
+        self.message_hash = None
+        self.api_id = None
+        self.fault = {}
+        self.started_at = time.monotonic()
+
+    def transport_facts(self):
+        endpoint = urlsplit(self.url)
+        return {"request_id": self.request_id, "api_id": self.api_id, "message_hash": self.message_hash,
+                "time_unix": time.time(), "pid": os.getpid(),
+                "endpoint": f"{endpoint.hostname}:{endpoint.port}",
+                "method": self.method if self.method in {"GET", "POST"} else "<invalid>",
+                "route": route_label(self.path), "phase": self.phase,
+                "request_started": self.request_started, **self.fault}
+
+    def transport_failure(self, error, *, code="CONNECTION_LOST", status=None):
+        self.fault = exception_facts(error)
+        return ApiFailure(str(error).replace(self.token, "[REDACTED]"), code=code, status=status,
+                          submission_state="unknown" if self.request_started else "not_submitted",
+                          details=self.transport_facts())
 
     def cancel(self):
         self.cancelled.set()
@@ -180,6 +205,7 @@ class _HttpJob(QtCore.QRunnable):
         connection.auto_open = False  # Cancellation cannot cause send() to reconnect.
         response, active, status = None, None, None
         try:
+            self.phase = "socket"
             active = _CancellableSocket(self.cancelled, self.timeout)
             active.settimeout(self.timeout)
             with self.socket_lock:
@@ -189,14 +215,21 @@ class _HttpJob(QtCore.QRunnable):
                 connection.sock = active
             # The only supported host is the validated IPv4 loopback literal;
             # there is no DNS, proxy, redirect or automatic retry path.
+            self.phase = "connect"
             active.connect((endpoint.hostname, endpoint.port))
             if self.cancelled.is_set():
                 raise OSError("Request was closed before sending")
+            # Set this BEFORE entering any operation that can write HTTP bytes.
+            # Missing response headers do not prove a request was never sent.
+            self.phase = "request"
+            self.request_started = True
             connection.request(self.method, endpoint.path + self.path, body=self.payload,
                                headers={"Authorization": "Bearer " + self.token,
                                         "Content-Type": "application/json", "Connection": "close"})
+            self.phase = "response_headers"
             response = connection.getresponse()
             status = response.status
+            self.phase = "response_body"
             raw = response.read(self.response_limit + 1)
             if len(raw) > self.response_limit:
                 return ApiFailure("Bridge response exceeds the 18 MB transport limit", code="RESPONSE_LIMIT",
@@ -205,6 +238,7 @@ class _HttpJob(QtCore.QRunnable):
                 raise http.client.IncompleteRead(raw, response.length)
             if not raw:
                 raise ValueError("Bridge returned an empty response")
+            self.phase = "decode"
             value = json.loads(raw)
             if not isinstance(value, dict):
                 raise ValueError("Bridge returned an invalid response")
@@ -218,11 +252,9 @@ class _HttpJob(QtCore.QRunnable):
                                   details=error if isinstance(error, dict) else value)
             return value  # A successful receipt query can contain an execution error.
         except (ValueError, TypeError) as error:
-            return ApiFailure(str(error).replace(self.token, "[REDACTED]"), code="INVALID_RESPONSE",
-                              status=status, submission_state="unknown")
+            return self.transport_failure(error, code="INVALID_RESPONSE", status=status)
         except (OSError, http.client.HTTPException) as error:
-            return ApiFailure(str(error).replace(self.token, "[REDACTED]"), code="CONNECTION_LOST",
-                              status=status, submission_state="unknown")
+            return self.transport_failure(error, status=status)
         finally:
             try:
                 if response is not None:
@@ -240,10 +272,21 @@ class _HttpJob(QtCore.QRunnable):
     def run(self):
         try:
             value = self.exchange()
-        except Exception:
+        except Exception as error:
+            self.fault = exception_facts(error)
             value = ApiFailure("Local service did not confirm the request", code="CONNECTION_LOST",
-                               submission_state="unknown")
+                               submission_state="unknown" if self.request_started else "not_submitted",
+                               details=self.transport_facts())
         self.finished.set()
+        if self.diagnostics is not None:
+            try:
+                self.diagnostics.finished({**self.transport_facts(),
+                    "duration_ms": round((time.monotonic() - self.started_at) * 1000, 1),
+                    "status": getattr(value, "status", None),
+                    "submission_state": getattr(value, "submission_state", None)},
+                    failed=isinstance(value, ApiFailure), cancelled=self.cancelled.is_set())
+            except Exception:
+                pass
         try:
             self.signals.result.emit((self.request_id, value))
         except RuntimeError:
@@ -262,7 +305,7 @@ def _cancel_http_jobs(pending, counts, inflight):
 
 
 class Api(QtCore.QObject):
-    def __init__(self, url, token, parent=None):
+    def __init__(self, url, token, parent=None, *, diagnostics=None):
         super().__init__(parent)
         from ..http import loopback_url
         self.url, self.token = loopback_url(url), token
@@ -271,6 +314,8 @@ class Api(QtCore.QObject):
         self._pending = {}
         self._next_request = 0
         self.closed = False
+        self.diagnostics = diagnostics
+        self.api_id = uuid.uuid4().hex
         self.destroyed.connect(lambda *_args, pending=self._pending, counts=self._inflight_counts,
                                inflight=self.inflight: _cancel_http_jobs(pending, counts, inflight))
 
@@ -310,6 +355,13 @@ class Api(QtCore.QObject):
         self._next_request += 1
         request_id = self._next_request
         job = _HttpJob(request_id, key, self.url, self.token, method, path, payload, failure, self)
+        job.api_id, job.message_hash = self.api_id, message_fingerprint(body)
+        if self.diagnostics is not None:
+            try:
+                self.diagnostics.started(route_label(path))
+                job.diagnostics = self.diagnostics
+            except Exception:
+                pass
         self._pending[request_id] = (job, done, failed)
         self.inflight.add(key)
         self._inflight_counts[key] = self._inflight_counts.get(key, 0) + 1

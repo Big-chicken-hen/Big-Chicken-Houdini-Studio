@@ -1,5 +1,14 @@
 # Rebuild contract
 
+The 2026-09-16 [connection review](r4-connection-review.md) grants a bounded
+exception to the release freeze: request-phase diagnostics, definitely-unsent
+recovery, exact original-input terminal delivery and disconnected polling
+backoff. [R4-CONN-1](r4-connection-validation.md) remains open for correlated
+incident evidence and actual-package recovery/long-running GUI acceptance.
+The existing `e6beb5a` ZIP has not been replaced by these source changes.
+Do not infer Studio/Clash causality, rewrite the network layer, replay writes
+or change the closed HELP-1/environment correction.
+
 The owner-authorized [R4-HELP-1 correction](r4-help-validation.md) now passes
 development GUI causality and actual payload GUI help/navigation verification.
 Keep PR #14 Draft for the separate standard-user installed workflow/final release
