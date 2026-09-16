@@ -2,7 +2,7 @@
 
 2026-09-16。范围来自用户提供的完整 [Pro 审查](r4-connection-review.md)。
 
-**状态：源码修正与定向离线回归通过；现场 10048 因果归属和真实新包验收待完成。**
+**状态：完整 CI 与离屏渲染通过，独立验收包已构建并校验；现场 10048 因果归属和真实新包验收待完成。**
 此记录不宣称 Studio 导致或已经解决系统端口耗尽，不重新打开 R4-HELP-1。
 
 ## 7d94688 的 CI 失败与测试适配
@@ -28,6 +28,47 @@
 `local-full-ui-after-test-adaptation.log`。修正提交的完整 CI（包括此前跳过的
 渲染步骤）仍需以 GitHub 的该提交作业结果为准；通过后才能固定独立验收包。
 新包需单独标识，原 `e6beb5a` 交付 ZIP 及其历史结果继续保留。
+
+## 固定候选 145c434 与独立验收包
+
+测试适配提交为 `145c434d0b9c02c53f64c9386dc14603f0a006d6`。
+[CI 35047403865](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio/actions/runs/35047403865)
+**五个作业全部通过**：四个 backend 组合与 native-ui。完整 UI 为 141 项；
+基础 Panel、release conversation/progress、Panel 150%/200%、Launcher
+100%/150% 渲染步骤均成功，未跳过。对应 artifacts 已在 E 盘保存，并核看
+Launcher Ready 图及包内窄 Panel Stop 图；不等同真实 Houdini GUI 验收。
+
+只有上述 CI 完成后才运行离线构建，源码和 builder 均绑定到该提交。
+新包为 **`0.1.0-rc.1-145c434d0b9c`**，保存在
+`E:\Big-Chicken-Houdini-Studio\.runtime\conn1-build-145c434`，作为独立验收候选。
+`发布包` 中原外测 ZIP 的大小和 SHA-256 再次核对未变，未替换或删除。
+
+| 新包检查 | 结果 |
+| --- | --- |
+| 清单 | 245/245 文件 SHA-256 匹配，无额外载荷文件 |
+| 随包运行时 | Python 3.13.15，实际包内 Panel/shared/diagnostics/PySide6 模块 |
+| 包内隔离回归 | 24 项通过；会话删除正反对照、连接恢复、HTTP 生命周期、诊断 |
+| 包内离屏渲染 | 12 张 Panel 截图生成，确认模块来自新载荷 |
+| 独立 ZIP | 五文件、CRC 读回、内层安装器哈希与四份文档内容匹配 |
+| 真实 Studio.exe/Houdini、模型操作、系统安装器 | 未运行，不计 PASS |
+
+包内回归第一次尝试记录了一个 `QtTest` 导入错误：发行包按既定规则不含该
+测试模块。原日志和 JSON 保存在 `packaged-python-initial-no-qttest.*`，
+没有覆盖。之后仅从同一个哈希锁定的 PySide6 6.8.3 wheel 提取 QtTest.pyd
+和 Qt6Test.dll 到本机独立测试支持目录，由测试进程显式加载；未加入或修改
+安装载荷、Houdini 或任何全局配置。24 项通过的结论包含这项测试依赖边界。
+包内离屏渲染本身不需要额外 QtTest。测试结束后重新核对完整载荷清单。
+
+| 独立验收产物 | Bytes | SHA-256 |
+| --- | ---: | --- |
+| Installer.exe | 216143016 | `e4a66f8da83863185f6e5d0f9453bf86a7c018794793cb2f42d5bc83a297d8ae` |
+| Connection-Acceptance.zip | 215691705 | `d23c7a6ad324dbbbd149647331186747f49621142583f0e34438a1ccae15e837` |
+
+外层 README 明确标识本轮为 R4-CONN-1 独立验收，不继承旧包的实机结论，
+发送/补充、断连恢复、慢历史、双 Panel、Stop、长时使用及标准用户流程均
+保持未预填状态。完整包名为
+`Big-Chicken-Studio-0.1.0-rc.1-145c434d0b9c-Connection-Acceptance.zip`。
+[机器可读摘要](evidence/r4-connection/candidate-145c434.json) 绑定上述身份。
 
 ## 基线与证据边界
 
@@ -130,5 +171,5 @@ Windows 本地 Python 3.10.11 / PySide6 6.8.3 / Qt 6.8.3；Qt 使用 offscreen�
 - 标准用户安装、升级、卸载重装及完整创作流程仍独立 pending。
 
 现有 `发布包/Big-Chicken-Studio-0.1.0-rc.1-e6beb5af2de4-Tester.zip` 未改动，
-**不包含本轮源码修正**。当前是可继续审查的源码改动，不是通过新包验收的 RC。
+**不包含本轮源码修正**。本轮独立候选另行保留，不是通过真实新包验收的 RC。
 保持 R4-CONN-1 开放，最终发布条件暂不能按上一轮条件式签字直接判定满足。
