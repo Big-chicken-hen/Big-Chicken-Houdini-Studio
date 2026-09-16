@@ -5,6 +5,30 @@
 **状态：源码修正与定向离线回归通过；现场 10048 因果归属和真实新包验收待完成。**
 此记录不宣称 Studio 导致或已经解决系统端口耗尽，不重新打开 R4-HELP-1。
 
+## 7d94688 的 CI 失败与测试适配
+
+[CI 35046247959](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio/actions/runs/35046247959)
+已结束：四个 Windows/Ubuntu、Python 3.10/3.13 backend 作业通过，native-ui
+执行 140 项测试时有一个 error；后续 Panel、Launcher 和 DPI 渲染步骤跳过，
+不能计作通过。本机保存的原始失败日志位于同一 maintenance 目录下的
+`ci-35046247959-native-ui-failure.log`。
+
+`test_deleted_thread_rejects_its_late_turn_acknowledgement` 在读取 `/turn`
+回调时抛出 `StopIteration`。旧测试拦截 `panel.call`，而原消息终态恢复路径
+通过 `api.call` 发送，因此尚未进入删除保护断言。这是测试拦截位置不匹配，
+不是“删除保护已失败”的证据；也不改变此前 42 项定向检查通过的历史范围。
+
+本次仅修改测试与证据：该发送测试改在 Api 层捕获回调，保留生产
+`current_submission()` 检查真实运行；根据捕获请求构造完整、身份匹配的
+`submission` 接纳回应。正向对照确认未删除时可以结算，原测试确认删除后
+相同协议的迟到回应不能恢复 Thread、原提交、等待项或已删除草稿。未跳过、
+弱化或容忍缺失请求，未修改任何产品代码。
+
+本地再次执行完整 UI 套件：**141 项全部通过，Ruff 通过**。日志为
+`local-full-ui-after-test-adaptation.log`。修正提交的完整 CI（包括此前跳过的
+渲染步骤）仍需以 GitHub 的该提交作业结果为准；通过后才能固定独立验收包。
+新包需单独标识，原 `e6beb5a` 交付 ZIP 及其历史结果继续保留。
+
 ## 基线与证据边界
 
 本轮修改前，E 盘工作树为 `2ec79c2`，`ui/shared.py`、`ui/panel.py`、
