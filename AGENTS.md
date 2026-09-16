@@ -21,6 +21,16 @@ failure and the test-only support boundary are preserved in the validation recor
 Keep the original `e6beb5a` external ZIP unchanged; the new assembly is not GUI,
 model, system-installer or standard-user acceptance. R4-CONN-1 stays open.
 
+**Owner cleanup correction (2026-09-16):** The owner requested deletion of the
+separate `145c434` acceptance ZIP, installer and unpacked assembly; those local
+artifacts and unused test dependencies were removed. Keep their historical
+validation results. Do not recreate or retain another separate acceptance package
+unless requested. At the end of each test/build, remove its disposable outputs
+after preserving concise evidence and checking containment and active use.
+Never apply a blanket size quota or recursive cleanup to accounts, native history,
+workspaces, referenced scene artifacts, active dependencies or changed worktrees.
+See the cleanup record in `docs/r4-connection-validation.md`.
+
 **R4-HELP-1 closed within the verified scope (2026-09-11):** The owner-authorized final Windows environment key-spelling correction passes the real development restore-failure/reapply-recovery comparison and the actual new payload GUI help/navigation check. Both normal exit paths pass. Preserve the correction, all prior failed probes and the [validation record](docs/r4-help-validation.md). PR #14 stays Draft for the separate standard-user installed workflow and final release decision. No global Qt scans, Qt pointer wrapping, lazy engine creation, directory/DLL workarounds or invalid offscreen/hython browser probes.
 
 The [environment-key review](docs/r4-help-environment-case-review.md) supersedes the private-PySide6 PATH-removal proposal. At the final Houdini `Popen`, an ordinary dict uses `Path`, `SystemRoot`, `SystemDrive`; every value/directory stays intact. Source/builder `e6beb5af2de46ec27b9bc50de068277db38bfe41` passes 30 focused checks and five CI jobs. Three corrected development cold starts, navigation/close-reopen, Panel modification and the real reversal/reapply sequence pass. Reversal restores uppercase raw names and eight `0xC0000135` exits with identical PATH/cwd/prefs. Actual payload host 16832 used packaged Studio/Panel/Codex and SideFX Qt, passed owner login/Empty/help/navigation and closed 0; its Launcher closed 0. The latest five-file ZIP is `0.1.0-rc.1-e6beb5af2de4` with README-3. Old ZIP/checksum and this task's clean build/source directories were removed after verified ZIP readback; E: diagnostic/acceptance state and authentication remain. Do not alter the unowned `docs/authoring-results.md` edit. No temporary source hunk is active. Standard-user installation remains untested.
