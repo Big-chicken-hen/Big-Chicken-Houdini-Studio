@@ -30,6 +30,8 @@ class PreviewApi:
             "workspace": {"workspace_id": "preview_workspace", "name": "折光实验室  /  离屏预览"},
             "thread_id": "preview_thread", "turn_id": "preview_turn",
             "account_revision": 1,
+            "connection_generation": "preview_native_generation", "turn_revision": 1,
+            "user_submission": None, "unresolved_submissions": [],
             "thread_settings": {"thread_id": "preview_thread", "revision": 1,
                                 "model": "preview-model", "effort": "high", "source": "native"},
             "turn_settings": {"thread_id": "preview_thread", "turn_id": "preview_turn",
@@ -95,26 +97,39 @@ class PreviewApi:
         elif path == "/threads/select":
             result = {"thread": self.thread, "model": self.state["thread_settings"]["model"],
                       "reasoningEffort": self.state["thread_settings"]["effort"],
-                      "thread_settings": {**self.state["thread_settings"], "thread_id": self.thread["id"]}}
+                      "thread_settings": {**self.state["thread_settings"], "thread_id": self.thread["id"]},
+                      "connection_generation": self.state["connection_generation"]}
         elif path == "/thread":
-            result = {"thread": self.thread}
+            result = {"thread": self.thread, "connection_generation": self.state["connection_generation"]}
         elif route == "/thread/history":
             query = parse_qs(urlsplit(path).query)
             turn_id = query.get("turn_id", [None])[0]
             turns = self.thread.get("turns", [])
             if turn_id:
                 turns = [turn for turn in turns if turn.get("id") == turn_id]
-            result = {"thread": {**self.thread, "turns": turns}, "next_cursor": None, "turn_id": turn_id}
+            result = {"thread": {**self.thread, "turns": turns}, "next_cursor": None, "turn_id": turn_id,
+                      "connection_generation": self.state["connection_generation"]}
         elif path == "/reconcile":
-            result = {"reconciled": True, "thread": self.thread, "codex_state": self.state["codex"]["state"]}
+            result = {"reconciled": True, "thread": self.thread, "codex_state": self.state["codex"]["state"],
+                      "connection_generation": self.state["connection_generation"]}
+            if body and (self.state.get("user_submission") or {}).get("client_user_message_id") == body.get("client_user_message_id"):
+                result["submission"] = self.state["user_submission"]
         elif path == "/turn":
             self.state["codex"]["state"] = "running"
+            self.state["codex"]["stop_requested"] = False
+            self.state["turn_id"] = "preview_turn_2"
+            self.state["turn_revision"] += 1
             self.state["turn_settings"] = {"thread_id": self.state["thread_id"], "turn_id": "preview_turn_2",
                                            "requested_model": body.get("model"), "requested_effort": body.get("effort"),
                                            "model": body.get("model"), "effort": body.get("effort"), "confirmation": "requested",
                                            "from_model": None, "reason": None}
             result = {"turn": {"id": "preview_turn_2", "status": "inProgress", "items": []},
                       "turn_settings": self.state["turn_settings"]}
+            if body.get("client_user_message_id"):
+                result["submission"] = self.submission(body, "start", "preview_turn_2")
+        elif path == "/turn/steer":
+            result = {"turnId": body["expected_turn_id"],
+                      "submission": self.submission(body, "steer", body["expected_turn_id"])}
         elif path == "/stop":
             result = {"codex_interrupt_requested": True, "scene": {"future_operations_stopped": True}}
         elif path == "/operations":
@@ -147,6 +162,14 @@ class PreviewApi:
 
     def close(self):
         self.closed = True
+
+    def submission(self, body, intent, turn_id):
+        record = {"client_user_message_id": body["client_user_message_id"], "intent": intent,
+                  "connection_generation": body["connection_generation"], "account_revision": body["account_revision"],
+                  "thread_id": body["expected_thread_id"], "expected_turn_id": body.get("expected_turn_id"),
+                  "turn_id": turn_id, "state": "accepted", "forward_attempted": True, "native_item_id": None}
+        self.state["user_submission"] = record
+        return record
 
 
 def process_until(predicate, timeout=3000):

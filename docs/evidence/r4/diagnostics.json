@@ -1,0 +1,23 @@
+{
+  "format": 1,
+  "studio_version": "0.1.0-rc.1",
+  "source_commit": "3150c15041ebedca1d266305d7375f30777c25a0",
+  "package_integrity": {
+    "status": "matched",
+    "checked_files": 229,
+    "missing_files": 0,
+    "changed_files": 0
+  },
+  "windows_version": "10.0.22631",
+  "python_version": "3.13.15",
+  "codex_version": "0.153.4",
+  "houdini_version": "22.0.368",
+  "codex_verified": true,
+  "houdini_found": true,
+  "account_confirmed": false,
+  "failure_code": null,
+  "phase": "authentication",
+  "timings": null,
+  "tool_counts": null,
+  "scope": "Whitelisted installation and current launcher facts; no chat, credentials or user artifacts"
+}

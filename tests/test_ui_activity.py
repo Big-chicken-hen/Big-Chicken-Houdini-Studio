@@ -157,7 +157,9 @@ class ActivityTests(unittest.TestCase):
         panel.apply_state(copy.deepcopy(api.state))
         process_until(lambda: '阶段 2 / 4' in panel.work_status.text())
         self.assertIn('生成铺装', panel.work_status.text())
-        self.assertIs(panel.action_slot.currentWidget(), panel.stop_button)
+        self.assertFalse(panel.stop_button.isHidden())
+        self.assertFalse(panel.send_button.isHidden())
+        self.assertFalse(panel.send_button.isEnabled())
         panel.stop_pending = True
         panel.update_work_status()
         self.assertIn('等待当前步骤结束', panel.work_status.text())
@@ -173,4 +175,5 @@ class ActivityTests(unittest.TestCase):
         with patch.object(panel, 'refresh'):
             panel.stopped({'scene': {'future_operations_stopped': True}})
         self.assertIn('等待当前步骤结束', panel.work_status.text())
-        self.assertIs(panel.action_slot.currentWidget(), panel.stop_button)
+        self.assertFalse(panel.stop_button.isHidden())
+        self.assertFalse(panel.send_button.isHidden())

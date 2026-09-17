@@ -1,0 +1,111 @@
+{
+  "real_binary": "0.153.4",
+  "provider": "local controlled fixture",
+  "real_model": false,
+  "houdini": false,
+  "passed": true,
+  "thread_id": "01a08a43-c99d-7c23-8095-a1aaecd19ebb",
+  "turn_id": "01a08a43-c9d1-76e1-b6fe-14c07b035bac",
+  "results": [
+    {
+      "case": "no active turn",
+      "passed": true,
+      "error": {
+        "code": -32600,
+        "message": "no active turn to steer"
+      }
+    },
+    {
+      "case": "expected active turn id",
+      "passed": true,
+      "error": {
+        "code": -32600,
+        "message": "expected active turn id `wrong-turn` but found `01a08a43-c9d1-76e1-b6fe-14c07b035bac`"
+      }
+    },
+    {
+      "case": "sequential-steer",
+      "client_id": "controlled.steer-1",
+      "turn_id": "01a08a43-c9d1-76e1-b6fe-14c07b035bac",
+      "passed": true
+    },
+    {
+      "case": "sequential-steer",
+      "client_id": "controlled.steer-2",
+      "turn_id": "01a08a43-c9d1-76e1-b6fe-14c07b035bac",
+      "passed": true
+    },
+    {
+      "case": "sequential-steer",
+      "client_id": "controlled.steer-3",
+      "turn_id": "01a08a43-c9d1-76e1-b6fe-14c07b035bac",
+      "passed": true
+    },
+    {
+      "case": "native-client-id-order",
+      "passed": true,
+      "client_ids": [
+        "controlled.start",
+        "controlled.steer-1",
+        "controlled.steer-2",
+        "controlled.steer-3"
+      ],
+      "turn_started": 1
+    },
+    {
+      "case": "no active turn",
+      "passed": true,
+      "error": {
+        "code": -32600,
+        "message": "no active turn to steer"
+      }
+    }
+  ],
+  "provider_requests": [
+    {
+      "route": "/v1/responses",
+      "model": "mock-model",
+      "input_items": 3
+    },
+    {
+      "route": "/v1/responses",
+      "model": "mock-model",
+      "input_items": 7
+    }
+  ],
+  "event_methods": [
+    null,
+    null,
+    "configWarning",
+    "remoteControl/status/changed",
+    null,
+    null,
+    null,
+    "thread/started",
+    null,
+    "warning",
+    "thread/status/changed",
+    "turn/started",
+    "item/started",
+    "item/completed",
+    "item/started",
+    "item/completed",
+    "thread/tokenUsage/updated",
+    "account/rateLimits/updated",
+    "item/started",
+    "item/completed",
+    "item/started",
+    "item/completed",
+    "item/started",
+    "item/completed",
+    "item/started",
+    "item/completed",
+    "thread/tokenUsage/updated",
+    "account/rateLimits/updated",
+    "thread/status/changed",
+    "turn/completed",
+    "deprecationNotice",
+    null
+  ],
+  "source_report": ".runtime/reviews/r4-final/native-controlled/3a48e14fef1743a89bd78bf91088981b/report.json"
+}

@@ -11,8 +11,8 @@ if ($Console) {
     & $studioPython (Join-Path $studioRoot 'scripts/run.py') launcher
     exit $LASTEXITCODE
 }
-$studioPythonw = Join-Path $studioRoot '.runtime/venv/Scripts/pythonw.exe'
-if (-not (Test-Path -LiteralPath $studioPythonw -PathType Leaf)) {
-    throw 'Windowed Python is missing. Run setup again or use -Console.'
+$studioEntry = Join-Path $studioRoot 'Studio.exe'
+if (-not (Test-Path -LiteralPath $studioEntry -PathType Leaf)) {
+    throw 'Studio.exe is missing. Run Setup Studio.cmd first.'
 }
-Start-Process -FilePath $studioPythonw -ArgumentList @('"' + (Join-Path $studioRoot 'scripts/launch_window.pyw') + '"') -WorkingDirectory $studioRoot -WindowStyle Hidden
+Start-Process -FilePath $studioEntry -WorkingDirectory $studioRoot -WindowStyle Normal

@@ -1,0 +1,27 @@
+{
+  "repository": "https://github.com/google/fonts",
+  "revision": "20ea00016512b42da82bfaff8bcba7318256083a",
+  "family": "Changa One",
+  "style": "Italic",
+  "license": "OFL-1.1",
+  "files": [
+    {
+      "name": "ChangaOne-Italic.ttf",
+      "url": "https://raw.githubusercontent.com/google/fonts/20ea00016512b42da82bfaff8bcba7318256083a/ofl/changaone/ChangaOne-Italic.ttf",
+      "sha256": "b6228f50f720651795c98aa24cf93bf062fee5899084a9e60f115ab3886f5583",
+      "bytes": 26748
+    },
+    {
+      "name": "OFL.txt",
+      "url": "https://raw.githubusercontent.com/google/fonts/20ea00016512b42da82bfaff8bcba7318256083a/ofl/changaone/OFL.txt",
+      "sha256": "67261c7ceb3e627da5c94d6617dac6da29bf36b910bee304a7680ad62e2c8b46",
+      "bytes": 4396
+    },
+    {
+      "name": "METADATA.pb",
+      "url": "https://raw.githubusercontent.com/google/fonts/20ea00016512b42da82bfaff8bcba7318256083a/ofl/changaone/METADATA.pb",
+      "sha256": "223b20e3cd44c22338a64c1614afaa688020329b50373e35692c9455001b8d74",
+      "bytes": 886
+    }
+  ]
+}

@@ -300,7 +300,7 @@ class PanelProductTest(unittest.TestCase):
         self.assertTrue(controls.popup.isHidden())
         self.assertFalse(any(method == "POST" and path == "/turn" for method, path, _ in self.api.calls))
 
-    def test_send_stop_share_slot_and_working_shortcut_does_not_interrupt_or_resend(self):
+    def test_send_stays_in_place_with_independent_stop_and_unresolved_send_gate(self):
         self.panel.input.insertPlainText("current draft")
         self.app.processEvents()
         location = self.panel.send_button.mapTo(self.panel, QtCore.QPoint())
@@ -308,8 +308,10 @@ class PanelProductTest(unittest.TestCase):
         self.api.hold["/stop"] = []
         self.panel.send_button.click()
         self.app.processEvents()
-        self.assertIs(self.panel.action_slot.currentWidget(), self.panel.stop_button)
-        self.assertEqual(self.panel.stop_button.mapTo(self.panel, QtCore.QPoint()), location)
+        self.assertTrue(self.panel.send_button.isVisible())
+        self.assertTrue(self.panel.stop_button.isVisible())
+        self.assertEqual(self.panel.send_button.mapTo(self.panel, QtCore.QPoint()), location)
+        self.assertLess(self.panel.stop_button.mapTo(self.panel, QtCore.QPoint()).x(), location.x())
         self.panel.input.setFocus()
         QtTest.QTest.keyClick(self.panel.input, QtCore.Qt.Key_Return, QtCore.Qt.ControlModifier)
         self.assertEqual(sum(path == "/turn" for _, path, _ in self.api.calls), 1)

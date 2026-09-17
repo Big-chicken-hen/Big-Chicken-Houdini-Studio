@@ -1,0 +1,59 @@
+{
+  "date": "2026-09-17",
+  "build_id": "0.1.0-rc.1-b6bed7cdac13",
+  "source_commit": "b6bed7cdac1381765ba221ec8847c0b9a70f5f0e",
+  "builder_commit": "b6bed7cdac1381765ba221ec8847c0b9a70f5f0e",
+  "source_ci": {
+    "run": 35051014113,
+    "jobs": 5,
+    "conclusion": "success"
+  },
+  "manifest_files_verified": 245,
+  "unexpected_payload_files": [],
+  "packaged_python": {
+    "version": "3.13.15",
+    "tests": 24,
+    "failures": 0,
+    "errors": 0,
+    "production_imports_from_payload": true,
+    "QtTest_test_only_outside_payload": true
+  },
+  "installer": {
+    "file": "Big-Chicken-Studio-0.1.0-rc.1-b6bed7cdac13-win-x64.exe",
+    "bytes": 216143048,
+    "sha256": "ceddcb77c7fd3ac16d149ccafe95ec41cf0e0a04951f939505172f1ab4f9a3da"
+  },
+  "zip": {
+    "file": "Big-Chicken-Studio-0.1.0-rc.1-b6bed7cdac13-Tester.zip",
+    "bytes": 215691195,
+    "sha256": "ddda587374d5e93e047b546a8893a47508af529277a127f5370c989080a391e6",
+    "members_verified": 2,
+    "members": [
+      "Installer.exe",
+      "README.md"
+    ],
+    "handoff_relative_links_verified": 2
+  },
+  "prior_delivery": {
+    "file": "Big-Chicken-Studio-0.1.0-rc.1-e6beb5af2de4-Tester.zip",
+    "bytes": 215691126,
+    "sha256": "12abfc60b640e5a6fabbba09d846c3ac6a6f85766ee017e006ecccf4414bf25a"
+  },
+  "prior_delivery_unchanged_before_replacement": true,
+  "mermaid_implementation_included": false,
+  "release_acceptance": "pending",
+  "real_packaged_houdini_gui": "not_run",
+  "system_installer_executed": false,
+  "standard_user_acceptance": "pending",
+  "unsigned": true,
+  "local_delivery_replaced": true,
+  "temporary_build_outputs_removed": true,
+  "superseded_in_turn_zip": {
+    "file": "Big-Chicken-Studio-0.1.0-rc.1-b6bed7cdac13-Tester.zip",
+    "bytes": 215694340,
+    "sha256": "e245ecd4e2ae23accb9eaad099679c869c528bbfa42ac9f830af4a447774549e",
+    "members_verified": 5,
+    "handoff_relative_links_verified": 15
+  },
+  "single_readme_requested_by_owner": true
+}

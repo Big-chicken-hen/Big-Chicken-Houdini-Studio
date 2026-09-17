@@ -1,0 +1,21 @@
+--- a/src/studio/launcher.py
++++ b/src/studio/launcher.py
+@@ -351,8 +351,17 @@
+         command = [config["houdini"]] + ([config["hip"]] if config.get("hip") else [])
+         logs = paths.cache("logs", session_id)
+         logs.mkdir(parents=True, exist_ok=True)
++        # R4-HELP-1: temporary diagnostics for the one agreed GUI launch.
++        host_environment = dict(os.environ)
++        host_environment.update(QML_IMPORT_TRACE="1", QT_DEBUG_PLUGINS="1", QT_FORCE_STDERR_LOGGING="1")
++        host_environment["QT_LOGGING_RULES"] = (
++            host_environment.get("QT_LOGGING_RULES", "").rstrip(";\n")
++            + "\nqt.webenginecontext.debug=true\nqt.webengine.libraryinfo.debug=true"
++        )
++        host_environment["HOUDINI_DEFAULT_LOG_FILE"] = str(logs / "qt-initialization.log")
++        host_environment["HOUDINI_DEFAULT_LOG_FILE_SOURCES"] = '"Generic Logging" "Standard Error"'
+         with (logs / "houdini.log").open("ab") as log:
+-            process = subprocess.Popen(command, env=dict(os.environ),
++            process = subprocess.Popen(command, env=host_environment,
+                                        cwd=paths.workspace(config["workspace_id"]) / "work",
+                                        stdin=subprocess.DEVNULL, stdout=log, stderr=log)
+             status["houdini_pid"] = process.pid

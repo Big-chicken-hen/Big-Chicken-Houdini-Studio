@@ -1,0 +1,216 @@
+{
+  "source_commit": "991cbce9c90ef7e18dc9a2349ffc95082c5cb0b6",
+  "fresh_hython_process": true,
+  "model_run": false,
+  "hip_saved": false,
+  "houdini": "22.0.368",
+  "python": "3.13.10",
+  "original_objects_after_load": {
+    "wall_north": true,
+    "wall_south": true,
+    "wall_west": true,
+    "wall_east": true,
+    "window_north": true,
+    "window_south": true,
+    "roof_reference": true
+  },
+  "original_objects_after_control_change": {
+    "wall_north": true,
+    "wall_south": true,
+    "wall_west": true,
+    "wall_east": true,
+    "window_north": true,
+    "window_south": true,
+    "roof_reference": true
+  },
+  "original_objects_after_restore": {
+    "wall_north": true,
+    "wall_south": true,
+    "wall_west": true,
+    "wall_east": true,
+    "window_north": true,
+    "window_south": true,
+    "roof_reference": true
+  },
+  "restored_geometry_exact": true,
+  "control_change_changes_geometry": true,
+  "passed": true,
+  "exit_code": 0,
+  "loaded": {
+    "controls": {
+      "slope_deg": 35.0,
+      "eave_width": 0.25,
+      "roof_thickness": 0.2
+    },
+    "point_count": 12,
+    "face_count": 10,
+    "edge_count": 20,
+    "euler_characteristic": 2,
+    "eaves_horizontal_m": {
+      "west": 0.25,
+      "east": 0.25,
+      "north": 0.25,
+      "south": 0.25
+    },
+    "sides": {
+      "west": {
+        "face_count": 2,
+        "lower_face": 0,
+        "upper_face": 4,
+        "slope_degrees": [
+          35.000000974118116,
+          35.000000974118116
+        ],
+        "normal_thickness_m": 0.2000000077458048,
+        "parallel_abs_dot": 1.0
+      },
+      "east": {
+        "face_count": 2,
+        "lower_face": 1,
+        "upper_face": 3,
+        "slope_degrees": [
+          35.000000974118116,
+          35.000000974118116
+        ],
+        "normal_thickness_m": 0.2000000077458048,
+        "parallel_abs_dot": 1.0
+      }
+    },
+    "node_errors": {},
+    "checks": {
+      "cook_without_errors": true,
+      "four_sloping_faces": true,
+      "two_equal_expected_pitches": true,
+      "four_expected_horizontal_eaves": true,
+      "expected_normal_thickness": true,
+      "nondegenerate_planar_faces": true,
+      "every_edge_shared_twice": true,
+      "shared_edge_orientation_opposes": true,
+      "controls_match_requested_values": true
+    }
+  },
+  "altered_in_memory": {
+    "controls": {
+      "slope_deg": 30.0,
+      "eave_width": 0.15,
+      "roof_thickness": 0.1
+    },
+    "point_count": 12,
+    "face_count": 10,
+    "edge_count": 20,
+    "euler_characteristic": 2,
+    "eaves_horizontal_m": {
+      "west": 0.15000009536743164,
+      "east": 0.15000009536743164,
+      "north": 0.15000009536743164,
+      "south": 0.15000009536743164
+    },
+    "sides": {
+      "west": {
+        "face_count": 2,
+        "lower_face": 0,
+        "upper_face": 4,
+        "slope_degrees": [
+          29.999999210140846,
+          29.999999210140846
+        ],
+        "normal_thickness_m": 0.09999989576281736,
+        "parallel_abs_dot": 1.0
+      },
+      "east": {
+        "face_count": 2,
+        "lower_face": 1,
+        "upper_face": 3,
+        "slope_degrees": [
+          29.999999210140846,
+          29.999999210140846
+        ],
+        "normal_thickness_m": 0.09999989576281736,
+        "parallel_abs_dot": 1.0
+      }
+    },
+    "node_errors": {},
+    "checks": {
+      "cook_without_errors": true,
+      "four_sloping_faces": true,
+      "two_equal_expected_pitches": true,
+      "four_expected_horizontal_eaves": true,
+      "expected_normal_thickness": true,
+      "nondegenerate_planar_faces": true,
+      "every_edge_shared_twice": true,
+      "shared_edge_orientation_opposes": true,
+      "controls_match_requested_values": true
+    }
+  },
+  "restored_in_memory": {
+    "controls": {
+      "slope_deg": 35.0,
+      "eave_width": 0.25,
+      "roof_thickness": 0.2
+    },
+    "point_count": 12,
+    "face_count": 10,
+    "edge_count": 20,
+    "euler_characteristic": 2,
+    "eaves_horizontal_m": {
+      "west": 0.25,
+      "east": 0.25,
+      "north": 0.25,
+      "south": 0.25
+    },
+    "sides": {
+      "west": {
+        "face_count": 2,
+        "lower_face": 0,
+        "upper_face": 4,
+        "slope_degrees": [
+          35.000000974118116,
+          35.000000974118116
+        ],
+        "normal_thickness_m": 0.2000000077458048,
+        "parallel_abs_dot": 1.0
+      },
+      "east": {
+        "face_count": 2,
+        "lower_face": 1,
+        "upper_face": 3,
+        "slope_degrees": [
+          35.000000974118116,
+          35.000000974118116
+        ],
+        "normal_thickness_m": 0.2000000077458048,
+        "parallel_abs_dot": 1.0
+      }
+    },
+    "node_errors": {},
+    "checks": {
+      "cook_without_errors": true,
+      "four_sloping_faces": true,
+      "two_equal_expected_pitches": true,
+      "four_expected_horizontal_eaves": true,
+      "expected_normal_thickness": true,
+      "nondegenerate_planar_faces": true,
+      "every_edge_shared_twice": true,
+      "shared_edge_orientation_opposes": true,
+      "controls_match_requested_values": true
+    }
+  },
+  "original_report": ".runtime/reviews/r4-final/gui/1a1837ae02d44a34a006a749d2572b02/fresh-load/report.json",
+  "process": {
+    "exit_code": 0,
+    "package_root": "C:\\Users\\Administrator\\.codex\\worktrees\\c0c5\\Big-Chicken-Houdini-Studio\\.runtime\\r4-src\\.runtime\\steer-final-package\\0.1.0-rc.1-991cbce9c90e",
+    "source_commit": "991cbce9c90ef7e18dc9a2349ffc95082c5cb0b6",
+    "helper_environment_source": "C:\\Users\\Administrator\\.codex\\worktrees\\c0c5\\Big-Chicken-Houdini-Studio\\.runtime\\r4-src\\.runtime\\steer-final-package\\0.1.0-rc.1-991cbce9c90e\\src\\studio\\launcher.py",
+    "state_root": "C:\\Users\\Administrator\\.codex\\worktrees\\c0c5\\Big-Chicken-Houdini-Studio\\.runtime\\reviews\\r4-final\\gui\\1a1837ae02d44a34a006a749d2572b02\\fresh-load\\state",
+    "cache_root": "C:\\Users\\Administrator\\.codex\\worktrees\\c0c5\\Big-Chicken-Houdini-Studio\\.runtime\\reviews\\r4-final\\gui\\1a1837ae02d44a34a006a749d2572b02\\fresh-load\\cache",
+    "hip_before": {
+      "size": 116290,
+      "mtime_ns": 1789028248369205400
+    },
+    "hip_after": {
+      "size": 116290,
+      "mtime_ns": 1789028248369205400
+    },
+    "source_hip_file_unchanged": true
+  }
+}

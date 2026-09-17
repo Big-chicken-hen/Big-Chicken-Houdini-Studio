@@ -1,0 +1,12 @@
+{
+  "source_commit": "a5731cf92197f93d00f4254d469f5f37b153fa97",
+  "session": "a931f091a0b349a8b3b57a50d67638a6",
+  "workspace": "87678ce9883a453299e76939fb7ec98a",
+  "state_root": "C:\\Users\\Administrator\\.codex\\worktrees\\c0c5\\Big-Chicken-Houdini-Studio\\.runtime\\reviews\\tc2\\acceptance\\state",
+  "logs": "C:\\Users\\Administrator\\.codex\\worktrees\\c0c5\\Big-Chicken-Houdini-Studio\\.runtime\\reviews\\r4-final\\gui\\a931f091a0b349a8b3b57a50d67638a6",
+  "real_houdini_python_panel": true,
+  "package_root": "C:\\Users\\Administrator\\.codex\\worktrees\\c0c5\\Big-Chicken-Houdini-Studio\\.runtime\\r4-src\\.runtime\\net1-stdlib-package\\0.1.0-rc.1-a5731cf92197",
+  "private_python": "C:\\Users\\Administrator\\.codex\\worktrees\\c0c5\\Big-Chicken-Houdini-Studio\\.runtime\\r4-src\\.runtime\\net1-stdlib-package\\0.1.0-rc.1-a5731cf92197\\runtime\\python.exe",
+  "pid": 33220,
+  "closed_at": 1789025132.212129
+}

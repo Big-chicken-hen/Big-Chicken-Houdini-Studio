@@ -1,0 +1,7 @@
+{
+  "source_base_commit": "79c1842e1693d77a96c050a6778485d069967a11",
+  "tested_working_tree_changes": true,
+  "test_file": "tests/test_ui_api_lifecycle.py",
+  "exit_code": 0,
+  "output": "test_aliased_get_result_cannot_consume_or_destroy_another_active_reply (test_ui_api_lifecycle.ApiLifecycleTests) ... ok\r\ntest_close_interrupts_an_active_read_without_reconnect_or_callback (test_ui_api_lifecycle.ApiLifecycleTests) ... ok\r\ntest_disconnect_is_unknown_without_replay_and_invalid_routes_never_send (test_ui_api_lifecycle.ApiLifecycleTests) ... ok\r\ntest_duplicate_completion_is_delivered_once_after_io_cleanup (test_ui_api_lifecycle.ApiLifecycleTests) ... ok\r\ntest_empty_http_body_cannot_be_a_successful_empty_object (test_ui_api_lifecycle.ApiLifecycleTests) ... ok\r\ntest_overlapping_nonunique_reads_keep_unique_key_until_both_finish (test_ui_api_lifecycle.ApiLifecycleTests) ... ok\r\ntest_stop_does_not_wait_for_the_ordinary_http_worker (test_ui_api_lifecycle.ApiLifecycleTests) ... ok\r\n\r\n----------------------------------------------------------------------\r\nRan 7 tests in 3.635s\r\n\r\nOK"
+}

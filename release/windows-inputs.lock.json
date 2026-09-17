@@ -1,0 +1,109 @@
+{
+  "format": 1,
+  "studio_version": "0.1.0-rc.1",
+  "python_version": "3.13.15",
+  "codex_version": "0.153.4",
+  "pyside_version": "6.8.3",
+  "sources": [
+    {
+      "file": "python-3.13.15-embed-amd64.zip",
+      "url": "https://www.python.org/ftp/python/3.13.15/python-3.13.15-embed-amd64.zip",
+      "sha256": "d1f04d990aee1253d8569e8e5104e30fa9f5fa830899f14843448872d936a2cf",
+      "bytes": 11009825
+    },
+    {
+      "file": "PySide6_Essentials-6.8.3-cp39-abi3-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/8e/0f/5d8c6da7586e57ee032643e0c0e62335ef1a1add1a980160ddd1654f1d8d/PySide6_Essentials-6.8.3-cp39-abi3-win_amd64.whl",
+      "sha256": "3c0fae5550aff69f2166f46476c36e0ef56ce73d84829eac4559770b0c034b07",
+      "bytes": 72191029
+    },
+    {
+      "file": "shiboken6-6.8.3-cp39-abi3-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/aa/29/e77f3fba5337f2d98f977eece0fd24cda6cf7d83be2699514d2ca1d34f6c/shiboken6-6.8.3-cp39-abi3-win_amd64.whl",
+      "sha256": "bca3a94513ce9242f7d4bbdca902072a1631888e0aa3a8711a52cc5dbe93588f",
+      "bytes": 1150998
+    },
+    {
+      "file": "codex-0.153.4-win32-x64.tgz",
+      "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.153.4-win32-x64.tgz",
+      "sha256": "05f473573f38b3f4dc9484e6807a511a1bb0e128dfa50816dafc5f79e553cdca",
+      "bytes": 141495386
+    },
+    {
+      "file": "innosetup-7.1.0-x64.exe",
+      "url": "https://github.com/jrsoftware/issrc/releases/download/is-7_1_0/innosetup-7.1.0-x64.exe",
+      "sha256": "0362a383ed217d4c4239b5933866dd96d3eb2102737da92f80f6057a4b40df2f",
+      "bytes": 14304168
+    },
+    {
+      "file": "qtbase-everywhere-src-6.8.3.tar.xz",
+      "url": "https://download.qt.io/archive/qt/6.8/6.8.3/submodules/qtbase-everywhere-src-6.8.3.tar.xz",
+      "sha256": "56001b905601bb9023d399f3ba780d7fa940f3e4861e496a7c490331f49e0b80",
+      "bytes": 48426536
+    },
+    {
+      "file": "qtsvg-everywhere-src-6.8.3.tar.xz",
+      "url": "https://download.qt.io/archive/qt/6.8/6.8.3/submodules/qtsvg-everywhere-src-6.8.3.tar.xz",
+      "sha256": "35eb516460f00f264eb504baa253432384351cf23fb9980a5857190e8deef438",
+      "bytes": 2009072
+    },
+    {
+      "file": "pyside-setup-everywhere-src-6.8.3.tar.xz",
+      "url": "https://download.qt.io/official_releases/QtForPython/pyside6/PySide6-6.8.3-src/pyside-setup-everywhere-src-6.8.3.tar.xz",
+      "sha256": "d2c896f7f1a6a7ea4c9f98cfe317272fd139703ddf612b86999f09e48aeef0e6",
+      "bytes": 16611768
+    },
+    {
+      "file": "CODEX-LICENSE",
+      "url": "https://raw.githubusercontent.com/openai/codex/rust-v0.153.4/LICENSE",
+      "sha256": "d17f227e4df5da1600391338865ce0f3055211760a36688f816941d58232d8dc",
+      "bytes": 10926
+    },
+    {
+      "file": "CODEX-NOTICE",
+      "url": "https://raw.githubusercontent.com/openai/codex/rust-v0.153.4/NOTICE",
+      "sha256": "9d71575ecfd9a843fc1677b0efb08053c6ba9fd686a0de1a6f5382fd3c220915",
+      "bytes": 242
+    },
+    {
+      "file": "qtimageformats-everywhere-src-6.8.3.tar.xz",
+      "url": "https://download.qt.io/archive/qt/6.8/6.8.3/submodules/qtimageformats-everywhere-src-6.8.3.tar.xz",
+      "bytes": 2035140,
+      "sha256": "049bfb99845e4801672aca07c3c4fc4c140f932a3a33faa899419579e33ef1c8"
+    },
+    {
+      "file": "RIPGREP-LICENSE-MIT",
+      "url": "https://raw.githubusercontent.com/BurntSushi/ripgrep/15.2.0/LICENSE-MIT",
+      "bytes": 1081,
+      "sha256": "0f96a83840e146e43c0ec96a22ec1f392e0680e6c1226e6f3ba87e0740af850f"
+    },
+    {
+      "file": "RIPGREP-UNLICENSE",
+      "url": "https://raw.githubusercontent.com/BurntSushi/ripgrep/15.2.0/UNLICENSE",
+      "bytes": 1211,
+      "sha256": "7e12e5df4bae12cb21581ba157ced20e1986a0508dd10d0e8a4ab9a4cf94e85c"
+    },
+    {
+      "file": "PCRE2-LICENCE",
+      "url": "https://raw.githubusercontent.com/PCRE2Project/pcre2/pcre2-10.45/LICENCE.md",
+      "bytes": 3867,
+      "sha256": "9cf7ac6976099a1d856826d3ef1b093bd6b84489dc6100628ac79e740cf9885a"
+    },
+    {
+      "file": "RATATUI-0.30.2-LICENSE",
+      "url": "https://static.crates.io/crates/ratatui/ratatui-0.30.2.crate",
+      "archive_sha256": "3274ba0a2c5e1bcad2a2005d20f4dc59dad26b2eb0940fb094500dba4099d57d",
+      "archive_member": "ratatui-0.30.2/LICENSE",
+      "bytes": 1132,
+      "sha256": "50eb43e8d742c9c61a9391e42b2184fce54dbd1893a1bb1c85b8c9ee217ab1f5"
+    },
+    {
+      "file": "MSVC-RUNTIME-LICENSE.rtf",
+      "url": "https://aka.ms/vs/17/release/vc_redist.x64.exe",
+      "archive_sha256": "cc0ff0eb1dc3f5188ae6300faef32bf5beeba4bdd6e8e445a9184072096b713b",
+      "archive_member": "u4",
+      "bytes": 9235,
+      "sha256": "8099dc3cf9502c335da829e5c755948a12e3e6de490eb492a99deb673d883d8b"
+    }
+  ]
+}

@@ -14,12 +14,12 @@ class ConversationUiTests(unittest.TestCase):
     setUp = fixtures.PanelTest.setUp
     tearDown = fixtures.PanelTest.tearDown
 
-    def capture_calls(self):
+    def capture_calls(self, *, api=False):
         calls = []
         def call(method, path, body=None, **callbacks):
             calls.append({"method": method, "path": path, "body": body, **callbacks})
             return True
-        override = patch.object(self.panel, "call", call)
+        override = patch.object(self.panel.api if api else self.panel, "call", call)
         override.start()
         self.addCleanup(override.stop)
         return calls
@@ -71,18 +71,44 @@ class ConversationUiTests(unittest.TestCase):
         self.assertEqual(self.panel.input.toPlainText(), "Current draft")
         self.assertEqual(self.panel.thread_id, current)
 
-    def test_deleted_thread_rejects_its_late_turn_acknowledgement(self):
+    def captured_start(self):
         fixtures.PanelTest.idle(self)
-        calls = self.capture_calls()
-        target = self.panel.thread_id
+        calls = self.capture_calls(api=True)
         self.panel.input.setPlainText("A pending message")
         self.panel.update_controls()
+        self.assertTrue(self.panel.send_button.isEnabled())
         self.panel.send()
-        reply = next(row["done"] for row in calls if row["path"] == "/turn")
+        request = next(row for row in calls if row["path"] == "/turn")
+        body = request["body"]
+        submission = {"client_user_message_id": body["client_user_message_id"], "intent": "start",
+                      "connection_generation": body["connection_generation"],
+                      "account_revision": body["account_revision"], "thread_id": body["expected_thread_id"],
+                      "expected_turn_id": None, "turn_id": "old-turn", "state": "accepted",
+                      "forward_attempted": True, "native_item_id": "accepted-user-item"}
+        response = {"connection_generation": body["connection_generation"],
+                    "account_revision": body["account_revision"], "submission": submission}
+        return request["done"], response, self.panel.pending_submission
+
+    def test_live_thread_accepts_the_captured_turn_acknowledgement(self):
+        reply, response, original = self.captured_start()
+        self.panel.input.setPlainText("Later draft")
+        reply(response)
+        self.assertEqual(original["state"], "accepted")
+        self.assertIsNone(self.panel.pending_submission)
+        self.assertFalse(self.panel.uncertain_send)
+        self.assertEqual(self.panel.thread_id, original["thread_id"])
+        self.assertEqual(self.panel.input.toPlainText(), "Later draft")
+
+    def test_deleted_thread_rejects_its_late_turn_acknowledgement(self):
+        reply, response, original = self.captured_start()
+        target = original["thread_id"]
         self.panel.apply_conversations({"revision": 1, "deleted": [target], "pending": []})
-        reply({"turn": {"id": "old-turn", "status": "completed", "items": []}})
+        reply(response)
+        self.assertEqual(original["state"], "pending")  # The valid ACK was fenced, not applied.
         self.assertIsNone(self.panel.thread_id)
         self.assertIsNone(self.panel.pending_submission)
+        self.assertNotIn(original["client_user_message_id"], self.panel.awaiting_native)
+        self.assertNotIn(original["client_user_message_id"], self.panel.retained_submissions)
         self.assertNotIn(target, self.panel.drafts)
         self.assertEqual(self.panel.input.toPlainText(), "")
 

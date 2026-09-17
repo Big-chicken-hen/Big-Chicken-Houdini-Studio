@@ -1,0 +1,34 @@
+{
+  "passed": true,
+  "build_id": "0.1.0-rc.1-991cbce9c90e",
+  "source_commit": "991cbce9c90ef7e18dc9a2349ffc95082c5cb0b6",
+  "builder_commit": "991cbce9c90ef7e18dc9a2349ffc95082c5cb0b6",
+  "versions": {
+    "python": "3.13.15",
+    "pyside": "6.8.3",
+    "qt": "6.8.3",
+    "codex": "0.153.4"
+  },
+  "package_integrity": {
+    "status": "matched",
+    "checked_files": 230,
+    "missing_files": 0,
+    "changed_files": 0
+  },
+  "zip_members": [
+    "diagnostics.json"
+  ],
+  "sentinels": {
+    "state\\auth.json": true,
+    "state\\chat.json": true,
+    "cache\\user-output.hip": true
+  },
+  "diagnostic_reads_under_package_only": 231,
+  "installer_existing_sha256": "6e45d650814808e3b0f83be2256e59001cb6f49d436fbdbe49bc96660af92de9  Big-Chicken-Studio-0.1.0-rc.1-991cbce9c90e-win-x64.exe",
+  "installer_rehashed": false,
+  "diagnostics_export_calls": 1,
+  "installation_tested": false,
+  "real_user_state_accessed": false,
+  "houdini_or_bridge_started": false,
+  "scope": "Preparation only; clean standard-user acceptance remains separate."
+}

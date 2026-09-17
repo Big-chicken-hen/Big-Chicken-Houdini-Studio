@@ -1,0 +1,135 @@
+{
+  "real_binary": "0.153.4",
+  "provider": "local controlled fixture",
+  "real_model": false,
+  "houdini": false,
+  "passed": true,
+  "product_allowlist_unchanged": true,
+  "binary_version": "codex-cli 0.153.4",
+  "owned_client_closed": true,
+  "results": [
+    {
+      "case": "review-steer-rejected",
+      "passed": true,
+      "thread_id": "01a08a47-801f-7e73-87cc-5aab70b3cdad",
+      "turn_id": "01a08a47-8052-7582-ac64-d96eb4cd0e9c",
+      "error": {
+        "code": -32600,
+        "data": {
+          "message": "cannot steer a review turn",
+          "codexErrorInfo": {
+            "activeTurnNotSteerable": {
+              "turnKind": "review"
+            }
+          },
+          "additionalDetails": null,
+          "misalignment": null
+        },
+        "message": "cannot steer a review turn"
+      },
+      "terminal_status": "completed"
+    },
+    {
+      "case": "compact-steer-rejected",
+      "passed": true,
+      "thread_id": "01a08a47-8131-79f0-b4ab-e8759b693c9a",
+      "turn_id": "01a08a47-8207-7750-9ed7-aed47f172074",
+      "error": {
+        "code": -32600,
+        "data": {
+          "message": "cannot steer a compact turn",
+          "codexErrorInfo": {
+            "activeTurnNotSteerable": {
+              "turnKind": "compact"
+            }
+          },
+          "additionalDetails": null,
+          "misalignment": null
+        },
+        "message": "cannot steer a compact turn"
+      },
+      "terminal_status": "completed"
+    }
+  ],
+  "provider_requests": [
+    {
+      "route": "/v1/responses",
+      "phase": "review",
+      "model": "mock-model",
+      "input_items": 3
+    },
+    {
+      "route": "/v1/responses",
+      "phase": "compact-setup",
+      "model": "mock-model",
+      "input_items": 3
+    },
+    {
+      "route": "/v1/responses",
+      "phase": "compact",
+      "model": "mock-model",
+      "input_items": 5
+    }
+  ],
+  "event_methods": [
+    null,
+    null,
+    "configWarning",
+    "remoteControl/status/changed",
+    null,
+    null,
+    null,
+    "thread/started",
+    null,
+    "warning",
+    null,
+    "item/started",
+    null,
+    null,
+    "warning",
+    "item/completed",
+    "thread/status/changed",
+    "turn/started",
+    "item/started",
+    "item/completed",
+    "item/started",
+    "item/started",
+    "item/completed",
+    "item/started",
+    "item/completed",
+    "thread/status/changed",
+    "turn/completed",
+    null,
+    null,
+    "thread/started",
+    null,
+    "warning",
+    "thread/status/changed",
+    "turn/started",
+    "item/started",
+    "item/completed",
+    "item/started",
+    "item/completed",
+    "thread/tokenUsage/updated",
+    "account/rateLimits/updated",
+    "thread/status/changed",
+    "turn/completed",
+    null,
+    "thread/status/changed",
+    "turn/started",
+    "item/started",
+    "thread/tokenUsage/updated",
+    "account/rateLimits/updated",
+    "thread/tokenUsage/updated",
+    "account/rateLimits/updated",
+    "thread/tokenUsage/updated",
+    "account/rateLimits/updated",
+    "item/completed",
+    "warning",
+    "thread/status/changed",
+    "turn/completed",
+    null
+  ],
+  "owned_http_closed": true,
+  "source_report": ".runtime/reviews/r4-final/native-special/e8e731f1694d4956bc00d69231f8416f/report.json"
+}

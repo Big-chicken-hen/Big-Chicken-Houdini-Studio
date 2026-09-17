@@ -11,3 +11,68 @@ An idle thread before its first turn has no rollout to resume. In this build, `t
 After `turn/interrupt` acknowledges the request, native terminal events or an explicit native state query determine the Codex state. Runtime receipts independently determine HOM state. See the official [App Server documentation](https://learn.chatgpt.com/docs/app-server) for the lifecycle and protocol overview; generated fields and actual installed-version checks govern this release.
 
 Saved multi-turn history, authenticated inference, approvals during inference, native MCP image delivery through a real model turn, and effective context capacity still require a real session. Unit event fixtures and an empty native thread do not verify those flows.
+
+## Same-Turn user guidance (PANEL-STEER-1)
+
+The consumed schema now includes `turn/steer` with `threadId`, the required
+`expectedTurnId`, `input`, and optional `clientUserMessageId`; success returns
+`turnId`. `turn/start` also accepts `clientUserMessageId`, and native
+`userMessage.clientId` echoes it. These fields were read from this version's
+generated schemas. Steer receives no model, effort, cwd or permission overrides.
+There is no stable public Turn field identifying Core's Regular/Review/Compact
+task kind; native admission performs that final check.
+
+The pinned upstream source is `rust-v0.153.4`, commit
+`3d2ee51ca2d5db578f328aa75e20aa22c0197c9a`:
+
+- [Steer handler](https://github.com/openai/codex/blob/3d2ee51ca2d5db578f328aa75e20aa22c0197c9a/codex-rs/app-server/src/request_processors/turn_processor.rs#L994)
+  uses Core's steer-only path and maps its explicit NotSubmitted results.
+- [Native steer test](https://github.com/openai/codex/blob/3d2ee51ca2d5db578f328aa75e20aa22c0197c9a/codex-rs/app-server/tests/suite/v2/turn_steer.rs#L218)
+  verifies the original Turn ID and client ID echo; the
+  [start test](https://github.com/openai/codex/blob/3d2ee51ca2d5db578f328aa75e20aa22c0197c9a/codex-rs/app-server/tests/suite/v2/turn_start.rs#L651)
+  covers start's user-message identity.
+- [Core submission semantics](https://github.com/openai/codex/blob/3d2ee51ca2d5db578f328aa75e20aa22c0197c9a/codex-rs/protocol/src/turn_input.rs#L178)
+  distinguish acceptance from context update, persistence and model sampling.
+  The client ID is correlation, not a demonstrated replay-safe idempotency key.
+
+`steer_rejection_reason()` is a local 0.153.4 mapping, not new native error codes.
+No-active-Turn and expected-ID mismatch use `-32600` with exact versioned messages
+and no structured reason. Review/Compact use that same code plus
+`data.codexErrorInfo.activeTurnNotSteerable.turnKind` when serialization succeeds.
+The original RPC error stays available. Other errors after possible forwarding
+remain unknown. Native `turn/start` internally supports start-or-steer, so Studio
+must preserve its independent start-only admission boundary through frame write.
+
+`CodexStdioClient` exposes `prepare_tracked_request`, `send_prepared`,
+`wait_prepared`, `discard_prepared` and `retire_confirmed` for these two user-send methods. Preparation
+freezes one frame; writing is attempted at most once. The caller can serialize
+its final Stop/Thread/admission check with the write, then release its lock before
+waiting. Each ticket records its original process and request ID.
+
+Timeout does not remove the original response association. Up to 16 unresolved
+tickets are retained for five minutes, with expiry checked during later client
+activity; full capacity rejects preparation before any write. A transport failure
+after a possible write reports unknown and preserves late native ACK correlation.
+Actual RPC result/error, exact native-item confirmation or explicit expiry retires the association. Expiry is an
+error callback, never proof that input was not accepted or permission to resend.
+The Bridge must retain its unresolved input after transport correlation expires.
+Frozen frame bytes are released once a write is attempted; this is not chat history.
+
+After retaining exact native-item acceptance, the Bridge calls `retire_confirmed`
+to release the original RPC slot and wake its HTTP waiter. This produces no RPC
+result or callback: `wait_prepared` reports `CODEX_REQUEST_EXTERNALLY_CONFIRMED`,
+and the Bridge returns its existing accepted submission. Late RPC responses are
+ignored. Thus missing ACKs for already-confirmed inputs cannot impose a per-Turn
+send quota or hold the next send behind an obsolete HTTP wait.
+
+Callbacks receive `(ticket, result, error)` outside the client's pending/write
+locks. A possible transport failure can notify unknown before a later native ACK;
+the consumer must allow unknown-to-accepted while never downgrading accepted.
+Acceptance settlement cannot revive a completed Turn, clear a later draft,
+cancel Stop or restore Runtime ownership.
+
+`test_codex_tracked_requests.py` exercises controlled Python stdio faults and
+`test_native_steer_contract.py` checks consumed schema and rejection mapping.
+These tests and upstream-source review do not establish this candidate's native
+three-steer ordering or real Houdini/model interaction. Those require separate
+fixed-binary and real-host evidence before release.

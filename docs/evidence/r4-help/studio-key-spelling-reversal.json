@@ -1,0 +1,26 @@
+{
+  "issue": "R4-HELP-1",
+  "case": "temporarily_revert_only_final_host_environment_mapping",
+  "source_base": "e6beb5af2de46ec27b9bc50de068277db38bfe41",
+  "snapshot": "studio-30056-8b7117f524.json",
+  "snapshot_utc": "2026-09-11T08:29:07.020287+00:00",
+  "host_pid": 30056,
+  "session_id": "083642488dfc4f2cb14b0ccc22671d93",
+  "supervisor_pid": 30468,
+  "source_restored_after_spawn": true,
+  "help_url": "",
+  "raw_environment_names": [
+    "PATH",
+    "SYSTEMDRIVE",
+    "SYSTEMROOT"
+  ],
+  "path_value_equals_corrected_host": true,
+  "cwd_equals_corrected_host": true,
+  "preferences_equal_corrected_host": true,
+  "runtime_module_loaded": true,
+  "panel_module_loaded": false,
+  "owner_report": "Help became blank again after the controlled reversal",
+  "observed_child_exits": 8,
+  "exit_status": "0xC0000135",
+  "scope": "Actual reversal failure, not a payload or release acceptance result"
+}

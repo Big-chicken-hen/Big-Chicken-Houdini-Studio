@@ -9,12 +9,11 @@ import time
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
-from PySide6 import QtCore, QtGui, QtNetwork, QtWidgets  # noqa: E402
+from PySide6 import QtCore, QtGui, QtWidgets  # noqa: E402
 from shiboken6 import delete as delete_qobject, isValid  # noqa: E402
 
 from scripts.preview_ui import PreviewApi, configure_preview_fonts, fixture_image, process_until  # noqa: E402
@@ -47,6 +46,7 @@ class PanelTest(unittest.TestCase):
 
     def idle(self):
         self.api.state["codex"]["state"] = "idle"
+        self.api.state["turn_id"] = None
         self.api.state["runtime"].update(main_thread_busy=False, active_operation_id=None, queue_depth=0)
         self.panel.apply_state(copy.deepcopy(self.api.state))
 
@@ -73,7 +73,9 @@ class PanelTest(unittest.TestCase):
         self.panel.apply_state(copy.deepcopy(self.api.state))
         self.assertIn("等待主线程", self.panel.runtime_label.text())
         self.assertFalse(self.panel.send_button.isEnabled())
-        self.assertIs(self.panel.action_slot.currentWidget(), self.panel.stop_button)
+        self.assertTrue(self.panel.send_button.isVisible())
+        self.assertTrue(self.panel.stop_button.isVisible())
+        self.assertTrue(self.panel.stop_button.isEnabled())
 
     def test_decision_save_preserves_later_draft_and_failure(self):
         editor = self.panel.decision_input
@@ -201,9 +203,14 @@ class PanelTest(unittest.TestCase):
         self.api.errors["/turn"] = "response lost"
         self.panel.send()
         process_until(lambda: self.panel.uncertain_send)
-        self.assertEqual(self.panel.input.toPlainText(), "Change only roughness")
+        self.assertEqual(self.panel.input.toPlainText(), "")
+        self.assertEqual(self.panel.pending_submission["text"], "Change only roughness")
+        self.panel.toggle_pending_submission()
+        self.assertIn("Change only roughness", self.panel.pending_preview.toPlainText())
+        self.panel.input.setPlainText("Next editable draft")
         self.assertFalse(self.panel.send_button.isEnabled())
         self.panel.send()
+        self.assertEqual(self.panel.input.toPlainText(), "Next editable draft")
         self.assertEqual(sum(path == "/turn" for _, path, _ in self.api.calls), 1)
 
     def test_history_receives_live_events_without_buffering(self):
@@ -248,14 +255,18 @@ class PanelTest(unittest.TestCase):
     def test_definite_submission_rejection_preserves_editing_without_reconcile(self):
         self.idle()
         self.panel.input.setPlainText("Edit this input")
-        self.panel.submitting = True
+        self.api.hold["/turn"] = []
+        self.panel.send()
+        _, failed, _ = self.api.hold["/turn"].pop()
         failure = ApiFailure("Missing attachment", code="ATTACHMENT_NOT_FOUND", status=400,
                              submission_state="not_submitted", details={"attachment_id": "missing-image"})
-        self.panel.send_failed(failure)
-        self.assertIs(self.panel.error_details.failure, failure)
+        failed(failure)
+        self.assertEqual(self.panel.error_details.failure, {"message": str(failure),
+                         "code": failure.code, "details": failure.details})
         self.assertFalse(self.panel.uncertain_send)
         self.assertEqual(self.panel.input.toPlainText(), "Edit this input")
         self.assertTrue(self.panel.send_button.isEnabled())
+        self.assertFalse(any(path == "/reconcile" for _, path, _ in self.api.calls))
 
     def test_native_approval_and_question_require_explicit_action(self):
         approval = {"request_id": 7, "method": "item/commandExecution/requestApproval", "params": {
@@ -302,10 +313,12 @@ class PanelTest(unittest.TestCase):
     def test_launcher_ready_remains_owned_and_busy_selection_cannot_relaunch(self):
         launcher, services = make_fixture_window(records=[])
         launcher.empty_button.click()
+        launcher.launch_button.click()
         process_until(lambda: len(services.launches) == 1 and not launcher._pending)
-        self.assertEqual(launcher.current_page, "launching")
+        self.assertEqual(launcher.current_page, "flow")
         self.assertFalse(launcher.empty_button.isEnabled())
         launcher.empty_button.click()
+        launcher.launch_button.click()
         request_id = services.launches[0][1]
         services.admissions[request_id].update(state="unknown")
         launcher.query_launch()
@@ -328,13 +341,13 @@ class PanelTest(unittest.TestCase):
         self.assertTrue(launcher.launch_back.isVisible())
         launcher.launch_back.click()
         process_until(lambda: not launcher._pending)
-        self.assertEqual(launcher.current_page, "home")
+        self.assertEqual(launcher.current_page, "flow")
         self.assertTrue(launcher.empty_button.isEnabled())
         self.assertEqual(len(services.launches), 1)
         launcher.close()
         launcher.deleteLater()
 
-    def test_real_qt_http_is_nonblocking_and_authenticates(self):
+    def test_real_http_is_nonblocking_and_authenticates(self):
         token = secrets.token_urlsafe(32)
         observed = []
         receipts = {
@@ -421,56 +434,33 @@ class PanelTest(unittest.TestCase):
                         if isValid(owner):
                             owned_api.close()
                             delete_qobject(owner)
-            for retired in ("owner", "reply", "closed"):
-                with self.subTest(queued_finished_after=retired):
+            for retired in ("owner", "closed"):
+                with self.subTest(queued_delivery_after=retired):
                     owner = QtCore.QObject()
                     owned_api = Api(api.url, token, owner)
                     received, failures, callback_errors = [], [], []
-                    completion = QtCore.QEventLoop()
-                    timeout = QtCore.QTimer()
-                    timeout.setSingleShot(True)
-                    timeout.timeout.connect(completion.quit)
-                    native_get = owned_api.manager.get
-
-                    def queued_get(request):
-                        reply = native_get(request)
-                        signal = reply.finished
-                        signal.connect(completion.quit)
-                        # Real HTTP and reply; only delay Python delivery so teardown
-                        # deterministically occurs after finished was posted.
-                        reply.finished = SimpleNamespace(connect=lambda callback:
-                            signal.connect(lambda: QtCore.QTimer.singleShot(0, callback)))
-                        return reply
+                    completion = threading.Event()
 
                     try:
-                        with patch.object(owned_api.manager, "get", queued_get):
-                            owned_api.call("GET", "/slow", done=received.append, failed=failures.append)
-                        reply = next(iter(owned_api.replies))
-                        self.assertIsInstance(reply, QtNetwork.QNetworkReply)
-                        timeout.start(3000)
-                        completion.exec()
-                        timeout.stop()
-                        self.assertTrue(reply.isFinished())
+                        owned_api.call("GET", "/slow", done=received.append, failed=failures.append)
+                        job = next(iter(owned_api._pending.values()))[0]
+                        job.signals.result.connect(lambda *_: completion.set(), QtCore.Qt.DirectConnection)
+                        # Transport has completed and cleaned up, but do not pump
+                        # Qt until the owner is retired: delivery remains queued.
+                        self.assertTrue(completion.wait(3))
                         self.assertEqual(received + failures, [])
-                        delete_qobject(owner if retired == "owner" else reply)
-                        if retired == "closed":
+                        if retired == "owner":
+                            delete_qobject(owner)
+                        else:
                             owned_api.close()
                         with patch("sys.excepthook", capture_error):
                             self.app.sendPostedEvents(None, QtCore.QEvent.MetaCall)
                             self.app.processEvents()
                         self.assertEqual(callback_errors, [])
-                        self.assertEqual(received, [])
+                        self.assertEqual(received + failures, [])
                         self.assertEqual(owned_api.inflight, set())
-                        self.assertEqual(owned_api.replies, set())
-                        if retired == "reply":
-                            self.assertEqual(len(failures), 1)
-                            self.assertIsInstance(failures[0], ApiFailure)
-                            self.assertEqual(failures[0].code, "REPLY_UNAVAILABLE")
-                            self.assertEqual(failures[0].submission_state, "unknown")
-                        else:
-                            self.assertEqual(failures, [])
+                        self.assertEqual(owned_api._pending, {})
                     finally:
-                        timeout.stop()
                         if isValid(owner):
                             owned_api.close()
                             delete_qobject(owner)
