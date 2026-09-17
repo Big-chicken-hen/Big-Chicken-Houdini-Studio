@@ -40,12 +40,14 @@ candidate is unsigned; never instruct users to disable Windows protection.
 
 ## Current tester handoff
 
-The [handoff README](handoff/README.md), acceptance guide, feedback guide and
-installer checksum under `handoff/` are the exact documents in the current
-five-file ZIP. They are versioned separately from the installer so a documentation
-revision does not rebuild or change the tested application. The Installer.exe
-links resolve in the delivered ZIP; the executable itself is not tracked here.
+The owner requested one document in the delivery: the current ZIP contains only
+`Installer.exe` and the [handoff README](handoff/README.md). Installation, usage,
+feedback and installer checksum information are consolidated into that README.
+The separate acceptance/feedback/checksum files in `handoff/` remain repository
+reference material and are not included in the ZIP. Documentation is versioned
+separately from the installer; it does not rebuild or change the application.
+The Installer.exe link resolves in the delivered ZIP; the executable is not tracked here.
 
 The owner-selected `发布包` directory contains only the latest ZIP and its checksum.
-See [the current validation record](../docs/launcher-node-flow-validation.md) for
-the README-1 archive identity and the completed, user-authorized local cleanup.
+See [the current delivery record](../docs/r4-package-refresh-20260917.md) for
+the README-4 archive identity, package checks and completed temporary-file cleanup.

@@ -1,5 +1,19 @@
 # Big-Chicken Houdini Studio development
 
+**Owner delivery refresh (2026-09-17):** The owner explicitly requested updating
+the installer while deferring Mermaid work. Delivery is now
+`0.1.0-rc.1-b6bed7cdac13`, source/builder `b6bed7cdac1381765ba221ec8847c0b9a70f5f0e`.
+It includes the committed connection recovery and existing HELP-1 correction;
+no new product code or diagram dependency was added. Per the owner's final
+instruction, the ZIP contains only Installer.exe and one consolidated README.md.
+The verified two-file ZIP
+replaces the old local delivery; only that ZIP/checksum remain in `发布包`.
+Build checkout, unpacked payload, loose installer and temporary fixtures were
+removed after verification. See `docs/r4-package-refresh-20260917.md`.
+Real installed-package/standard-user acceptance remains pending; PR #14 stays
+Draft. This specific delivery authorization does not reopen Mermaid or authorize
+retaining another independent acceptance package.
+
 **R4-CONN-1 bounded exception (2026-09-16):** The owner supplied the
 [connection review](docs/r4-connection-review.md). Keep features frozen; permit
 only request-phase evidence, pre-write send recovery, exact original-input
