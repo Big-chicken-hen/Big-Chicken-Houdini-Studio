@@ -1,0 +1,1688 @@
+{
+  "codex_version": "0.170.0",
+  "source": "codex-cli 0.170.0 app-server generate-json-schema",
+  "scope": "Versioned schema excerpts used by the Studio App Server integration",
+  "requests": {
+    "ThreadStartParams": {
+      "required": [],
+      "properties": {
+        "approvalPolicy": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AskForApproval"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "approvalsReviewer": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ApprovalsReviewer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Override where approval requests are routed for review on this thread and subsequent turns."
+        },
+        "config": {
+          "additionalProperties": true,
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "developerInstructions": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sandbox": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SandboxMode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "definitions": {
+        "ApprovalsReviewer": {
+          "description": "Configures who approval requests are routed to for review. Examples include sandbox escapes, blocked network access, MCP approval prompts, and ARC escalations. Defaults to `user`. `auto_review` uses a carefully prompted subagent to gather relevant context and apply a risk-based decision framework before approving or denying the request. The legacy value `guardian_subagent` is accepted for compatibility.",
+          "enum": [
+            "user",
+            "auto_review",
+            "guardian_subagent"
+          ],
+          "type": "string"
+        },
+        "AskForApproval": {
+          "oneOf": [
+            {
+              "enum": [
+                "untrusted",
+                "on-request",
+                "never"
+              ],
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "granular": {
+                  "properties": {
+                    "mcp_elicitations": {
+                      "type": "boolean"
+                    },
+                    "request_permissions": {
+                      "default": false,
+                      "type": "boolean"
+                    },
+                    "rules": {
+                      "type": "boolean"
+                    },
+                    "sandbox_approval": {
+                      "type": "boolean"
+                    },
+                    "skill_approval": {
+                      "default": false,
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "mcp_elicitations",
+                    "rules",
+                    "sandbox_approval"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "granular"
+              ],
+              "title": "GranularAskForApproval",
+              "type": "object"
+            }
+          ]
+        },
+        "SandboxMode": {
+          "enum": [
+            "read-only",
+            "workspace-write",
+            "danger-full-access"
+          ],
+          "type": "string"
+        }
+      }
+    },
+    "ThreadResumeParams": {
+      "required": [
+        "threadId"
+      ],
+      "properties": {
+        "threadId": {
+          "type": "string"
+        },
+        "approvalPolicy": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AskForApproval"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "approvalsReviewer": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ApprovalsReviewer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Override where approval requests are routed for review on this thread and subsequent turns."
+        },
+        "config": {
+          "additionalProperties": true,
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "developerInstructions": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sandbox": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SandboxMode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "definitions": {
+        "ApprovalsReviewer": {
+          "description": "Configures who approval requests are routed to for review. Examples include sandbox escapes, blocked network access, MCP approval prompts, and ARC escalations. Defaults to `user`. `auto_review` uses a carefully prompted subagent to gather relevant context and apply a risk-based decision framework before approving or denying the request. The legacy value `guardian_subagent` is accepted for compatibility.",
+          "enum": [
+            "user",
+            "auto_review",
+            "guardian_subagent"
+          ],
+          "type": "string"
+        },
+        "AskForApproval": {
+          "oneOf": [
+            {
+              "enum": [
+                "untrusted",
+                "on-request",
+                "never"
+              ],
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "granular": {
+                  "properties": {
+                    "mcp_elicitations": {
+                      "type": "boolean"
+                    },
+                    "request_permissions": {
+                      "default": false,
+                      "type": "boolean"
+                    },
+                    "rules": {
+                      "type": "boolean"
+                    },
+                    "sandbox_approval": {
+                      "type": "boolean"
+                    },
+                    "skill_approval": {
+                      "default": false,
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "mcp_elicitations",
+                    "rules",
+                    "sandbox_approval"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "granular"
+              ],
+              "title": "GranularAskForApproval",
+              "type": "object"
+            }
+          ]
+        },
+        "SandboxMode": {
+          "enum": [
+            "read-only",
+            "workspace-write",
+            "danger-full-access"
+          ],
+          "type": "string"
+        }
+      }
+    },
+    "TurnStartParams": {
+      "required": [
+        "input",
+        "threadId"
+      ],
+      "properties": {
+        "effort": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ReasoningEffort"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Override the reasoning effort for this turn and subsequent turns."
+        },
+        "input": {
+          "items": {
+            "$ref": "#/definitions/UserInput"
+          },
+          "type": "array"
+        },
+        "model": {
+          "description": "Override the model for this turn and subsequent turns.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "clientUserMessageId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "definitions": {
+        "ByteRange": {
+          "properties": {
+            "end": {
+              "format": "uint",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "start": {
+              "format": "uint",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "end",
+            "start"
+          ],
+          "type": "object"
+        },
+        "ImageDetail": {
+          "enum": [
+            "auto",
+            "low",
+            "high",
+            "original"
+          ],
+          "type": "string"
+        },
+        "ReasoningEffort": {
+          "description": "A non-empty reasoning effort value advertised by the model.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "TextElement": {
+          "properties": {
+            "byteRange": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/ByteRange"
+                }
+              ],
+              "description": "Byte range in the parent `text` buffer that this element occupies."
+            },
+            "placeholder": {
+              "description": "Optional human-readable placeholder for the element, displayed in the UI.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "byteRange"
+          ],
+          "type": "object"
+        },
+        "UserInput": {
+          "oneOf": [
+            {
+              "properties": {
+                "text": {
+                  "type": "string"
+                },
+                "text_elements": {
+                  "default": [],
+                  "description": "UI-defined spans within `text` used to render or persist special elements.",
+                  "items": {
+                    "$ref": "#/definitions/TextElement"
+                  },
+                  "type": "array"
+                },
+                "type": {
+                  "enum": [
+                    "text"
+                  ],
+                  "title": "TextUserInputType",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text",
+                "type"
+              ],
+              "title": "TextUserInput",
+              "type": "object"
+            },
+            {
+              "anyOf": [
+                {
+                  "properties": {
+                    "url": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "url"
+                  ],
+                  "title": "UrlUserInput",
+                  "type": "object"
+                },
+                {
+                  "properties": {
+                    "fileId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "fileId"
+                  ],
+                  "title": "FileIdUserInput",
+                  "type": "object"
+                }
+              ],
+              "properties": {
+                "detail": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/definitions/ImageDetail"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "type": {
+                  "enum": [
+                    "image"
+                  ],
+                  "title": "ImageUserInputType",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "title": "ImageUserInput",
+              "type": "object"
+            },
+            {
+              "properties": {
+                "detail": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/definitions/ImageDetail"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "path": {
+                  "type": "string"
+                },
+                "type": {
+                  "enum": [
+                    "localImage"
+                  ],
+                  "title": "LocalImageUserInputType",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path",
+                "type"
+              ],
+              "title": "LocalImageUserInput",
+              "type": "object"
+            },
+            {
+              "anyOf": [
+                {
+                  "properties": {
+                    "url": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "url"
+                  ],
+                  "title": "UrlUserInput",
+                  "type": "object"
+                },
+                {
+                  "properties": {
+                    "fileId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "fileId"
+                  ],
+                  "title": "FileIdUserInput",
+                  "type": "object"
+                }
+              ],
+              "properties": {
+                "type": {
+                  "enum": [
+                    "audio"
+                  ],
+                  "title": "AudioUserInputType",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "title": "AudioUserInput",
+              "type": "object"
+            },
+            {
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "type": {
+                  "enum": [
+                    "localAudio"
+                  ],
+                  "title": "LocalAudioUserInputType",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path",
+                "type"
+              ],
+              "title": "LocalAudioUserInput",
+              "type": "object"
+            },
+            {
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "type": {
+                  "enum": [
+                    "skill"
+                  ],
+                  "title": "SkillUserInputType",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "path",
+                "type"
+              ],
+              "title": "SkillUserInput",
+              "type": "object"
+            },
+            {
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "type": {
+                  "enum": [
+                    "mention"
+                  ],
+                  "title": "MentionUserInputType",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "path",
+                "type"
+              ],
+              "title": "MentionUserInput",
+              "type": "object"
+            }
+          ]
+        }
+      }
+    },
+    "ThreadReadParams": {
+      "required": [
+        "threadId"
+      ],
+      "properties": {
+        "includeTurns": {
+          "description": "When true, include turns and their items from rollout history. Full-history hydration is deprecated for paginated threads; prefer a metadata-only read and page with `thread/turns/list` and `thread/items/list`.",
+          "type": "boolean"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      }
+    },
+    "ThreadListParams": {
+      "required": [],
+      "properties": {
+        "cwd": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadListCwdFilter"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional cwd filter or filters; when set, only threads whose session cwd exactly matches one of these paths are returned."
+        },
+        "limit": {
+          "description": "Optional page size; defaults to a reasonable server-side value.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "cursor": {
+          "description": "Opaque pagination cursor returned by a previous call.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sortKey": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadSortKey"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional sort key; defaults to created_at."
+        },
+        "sortDirection": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SortDirection"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional sort direction; defaults to descending (newest first)."
+        },
+        "searchTerm": {
+          "description": "Optional substring filter for the extracted thread title.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "archived": {
+          "description": "Optional archived filter; when set to true, only archived threads are returned. If false or null, only non-archived threads are returned.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "definitions": {
+        "SortDirection": {
+          "enum": [
+            "asc",
+            "desc"
+          ],
+          "type": "string"
+        },
+        "ThreadListCwdFilter": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          ]
+        },
+        "ThreadSortKey": {
+          "enum": [
+            "created_at",
+            "updated_at",
+            "recency_at",
+            "section_position"
+          ],
+          "type": "string"
+        }
+      }
+    },
+    "ThreadTurnsListParams": {
+      "required": [
+        "threadId"
+      ],
+      "properties": {
+        "threadId": {
+          "type": "string"
+        },
+        "limit": {
+          "description": "Optional turn page size.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "cursor": {
+          "description": "Opaque cursor to pass to the next call to continue after the last turn.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sortDirection": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SortDirection"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional turn pagination direction; defaults to descending."
+        },
+        "itemsView": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TurnItemsView"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How much item detail to include for each returned turn; defaults to summary."
+        }
+      },
+      "definitions": {
+        "SortDirection": {
+          "enum": [
+            "asc",
+            "desc"
+          ],
+          "type": "string"
+        },
+        "TurnItemsView": {
+          "oneOf": [
+            {
+              "description": "`items` was not loaded for this turn. The field is intentionally empty.",
+              "enum": [
+                "notLoaded"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "`items` contains only a display summary for this turn.",
+              "enum": [
+                "summary"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "`items` contains every ThreadItem available from persisted app-server history for this turn.",
+              "enum": [
+                "full"
+              ],
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    "ThreadItemsListParams": {
+      "required": [
+        "threadId"
+      ],
+      "properties": {
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "description": "Optional turn id to filter by. When omitted, returns items across the thread.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limit": {
+          "description": "Optional item page size.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "cursor": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadItemsListCursor"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Opaque continuation cursor or an exclusive item anchor in the requested visible turn. An item anchor requires a non-empty `turnId`; ascending (the default) returns items after it, and descending returns items before it. Continue with the returned string cursor."
+        },
+        "sortDirection": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SortDirection"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional item pagination direction; defaults to ascending."
+        }
+      },
+      "definitions": {
+        "SortDirection": {
+          "enum": [
+            "asc",
+            "desc"
+          ],
+          "type": "string"
+        },
+        "ThreadItemsListAnchor": {
+          "description": "An exclusive item position within the requested visible turn.",
+          "oneOf": [
+            {
+              "properties": {
+                "itemId": {
+                  "type": "string"
+                },
+                "type": {
+                  "enum": [
+                    "item"
+                  ],
+                  "title": "ItemThreadItemsListAnchorType",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "itemId",
+                "type"
+              ],
+              "title": "ItemThreadItemsListAnchor",
+              "type": "object"
+            }
+          ]
+        },
+        "ThreadItemsListCursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "$ref": "#/definitions/ThreadItemsListAnchor"
+            }
+          ],
+          "description": "Starting position for an item-history page."
+        }
+      }
+    },
+    "TurnInterruptParams": {
+      "required": [
+        "threadId",
+        "turnId"
+      ],
+      "properties": {
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      }
+    },
+    "LoginAccountParams": {
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "chatgpt"
+          ],
+          "title": "Chatgptv2::LoginAccountParamsType",
+          "type": "string"
+        }
+      }
+    },
+    "ModelListParams": {
+      "required": [],
+      "properties": {
+        "limit": {
+          "description": "Optional page size; defaults to a reasonable server-side value.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "cursor": {
+          "description": "Opaque pagination cursor returned by a previous call.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "includeHidden": {
+          "description": "When true, include models that are hidden from the default picker list.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      }
+    },
+    "GetAccountParams": {
+      "required": [],
+      "properties": {
+        "refreshToken": {
+          "description": "When `true`, requests a proactive token refresh before returning.\n\nIn managed auth mode this triggers the normal refresh-token flow. In external auth mode this flag is ignored. Clients should refresh tokens themselves and call `account/login/start` with `chatgptAuthTokens`.",
+          "type": "boolean"
+        }
+      }
+    },
+    "TurnSteerParams": {
+      "required": [
+        "expectedTurnId",
+        "input",
+        "threadId"
+      ],
+      "properties": {
+        "clientUserMessageId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "expectedTurnId": {
+          "description": "Required active turn id precondition. The request fails when it does not match the currently active turn.",
+          "type": "string"
+        },
+        "input": {
+          "items": {
+            "$ref": "#/definitions/UserInput"
+          },
+          "type": "array"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "definitions": {
+        "ByteRange": {
+          "properties": {
+            "end": {
+              "format": "uint",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "start": {
+              "format": "uint",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "end",
+            "start"
+          ],
+          "type": "object"
+        },
+        "ImageDetail": {
+          "enum": [
+            "auto",
+            "low",
+            "high",
+            "original"
+          ],
+          "type": "string"
+        },
+        "TextElement": {
+          "properties": {
+            "byteRange": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/ByteRange"
+                }
+              ],
+              "description": "Byte range in the parent `text` buffer that this element occupies."
+            },
+            "placeholder": {
+              "description": "Optional human-readable placeholder for the element, displayed in the UI.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "byteRange"
+          ],
+          "type": "object"
+        },
+        "UserInput": {
+          "oneOf": [
+            {
+              "properties": {
+                "text": {
+                  "type": "string"
+                },
+                "text_elements": {
+                  "default": [],
+                  "description": "UI-defined spans within `text` used to render or persist special elements.",
+                  "items": {
+                    "$ref": "#/definitions/TextElement"
+                  },
+                  "type": "array"
+                },
+                "type": {
+                  "enum": [
+                    "text"
+                  ],
+                  "title": "TextUserInputType",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text",
+                "type"
+              ],
+              "title": "TextUserInput",
+              "type": "object"
+            },
+            {
+              "anyOf": [
+                {
+                  "properties": {
+                    "url": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "url"
+                  ],
+                  "title": "UrlUserInput",
+                  "type": "object"
+                },
+                {
+                  "properties": {
+                    "fileId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "fileId"
+                  ],
+                  "title": "FileIdUserInput",
+                  "type": "object"
+                }
+              ],
+              "properties": {
+                "detail": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/definitions/ImageDetail"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "type": {
+                  "enum": [
+                    "image"
+                  ],
+                  "title": "ImageUserInputType",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "title": "ImageUserInput",
+              "type": "object"
+            },
+            {
+              "properties": {
+                "detail": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/definitions/ImageDetail"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "path": {
+                  "type": "string"
+                },
+                "type": {
+                  "enum": [
+                    "localImage"
+                  ],
+                  "title": "LocalImageUserInputType",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path",
+                "type"
+              ],
+              "title": "LocalImageUserInput",
+              "type": "object"
+            },
+            {
+              "anyOf": [
+                {
+                  "properties": {
+                    "url": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "url"
+                  ],
+                  "title": "UrlUserInput",
+                  "type": "object"
+                },
+                {
+                  "properties": {
+                    "fileId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "fileId"
+                  ],
+                  "title": "FileIdUserInput",
+                  "type": "object"
+                }
+              ],
+              "properties": {
+                "type": {
+                  "enum": [
+                    "audio"
+                  ],
+                  "title": "AudioUserInputType",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "title": "AudioUserInput",
+              "type": "object"
+            },
+            {
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "type": {
+                  "enum": [
+                    "localAudio"
+                  ],
+                  "title": "LocalAudioUserInputType",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path",
+                "type"
+              ],
+              "title": "LocalAudioUserInput",
+              "type": "object"
+            },
+            {
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "type": {
+                  "enum": [
+                    "skill"
+                  ],
+                  "title": "SkillUserInputType",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "path",
+                "type"
+              ],
+              "title": "SkillUserInput",
+              "type": "object"
+            },
+            {
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "type": {
+                  "enum": [
+                    "mention"
+                  ],
+                  "title": "MentionUserInputType",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "path",
+                "type"
+              ],
+              "title": "MentionUserInput",
+              "type": "object"
+            }
+          ]
+        }
+      }
+    }
+  },
+  "response_definitions": {
+    "ThreadStatus": {
+      "oneOf": [
+        {
+          "properties": {
+            "type": {
+              "enum": [
+                "notLoaded"
+              ],
+              "title": "NotLoadedThreadStatusType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "title": "NotLoadedThreadStatus",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "enum": [
+                "idle"
+              ],
+              "title": "IdleThreadStatusType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "title": "IdleThreadStatus",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "enum": [
+                "systemError"
+              ],
+              "title": "SystemErrorThreadStatusType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "title": "SystemErrorThreadStatus",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "activeFlags": {
+              "items": {
+                "$ref": "#/definitions/ThreadActiveFlag"
+              },
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "active"
+              ],
+              "title": "ActiveThreadStatusType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "activeFlags",
+            "type"
+          ],
+          "title": "ActiveThreadStatus",
+          "type": "object"
+        }
+      ]
+    },
+    "TurnStatus": {
+      "enum": [
+        "completed",
+        "interrupted",
+        "failed",
+        "inProgress"
+      ],
+      "type": "string"
+    },
+    "ReasoningEffort": {
+      "description": "A non-empty reasoning effort value advertised by the model.",
+      "minLength": 1,
+      "type": "string"
+    },
+    "TurnSteerResponse": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "turnId"
+      ],
+      "title": "TurnSteerResponse",
+      "type": "object"
+    },
+    "UserMessage": {
+      "properties": {
+        "clientId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "content": {
+          "items": {
+            "$ref": "#/definitions/UserInput"
+          },
+          "type": "array"
+        },
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "userMessage"
+          ],
+          "title": "UserMessageThreadItemType",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content",
+        "id",
+        "type"
+      ],
+      "title": "UserMessageThreadItem",
+      "type": "object"
+    },
+    "ModelListResponse": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "definitions": {
+        "CyberAccessProgram": {
+          "description": "Requested cyber treatment for an OpenAI model turn. Authorization and model-tier restrictions remain server-owned.",
+          "enum": [
+            "standard",
+            "daybreakBlue",
+            "daybreakRed"
+          ],
+          "type": "string"
+        },
+        "InputModality": {
+          "description": "Canonical user-input modality tags advertised by a model.",
+          "oneOf": [
+            {
+              "description": "Plain text turns and tool payloads.",
+              "enum": [
+                "text"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Image attachments included in user turns.",
+              "enum": [
+                "image"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Audio attachments included in user turns.",
+              "enum": [
+                "audio"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "Model": {
+          "properties": {
+            "additionalSpeedTiers": {
+              "default": [],
+              "description": "Deprecated: use `serviceTiers` instead.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "availabilityNux": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ModelAvailabilityNux"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "availableAccessPrograms": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ModelAccessPrograms"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Null when the catalog does not provide access-program metadata."
+            },
+            "defaultReasoningEffort": {
+              "$ref": "#/definitions/ReasoningEffort"
+            },
+            "defaultServiceTier": {
+              "default": null,
+              "description": "Catalog default service tier id for this model, when one is configured.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "description": {
+              "type": "string"
+            },
+            "displayName": {
+              "type": "string"
+            },
+            "hidden": {
+              "type": "boolean"
+            },
+            "id": {
+              "type": "string"
+            },
+            "inputModalities": {
+              "default": [
+                "text",
+                "image"
+              ],
+              "items": {
+                "$ref": "#/definitions/InputModality"
+              },
+              "type": "array"
+            },
+            "isDefault": {
+              "type": "boolean"
+            },
+            "model": {
+              "type": "string"
+            },
+            "modelSpecialty": {
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "multiAgentVersion": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/MultiAgentVersion"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Multi-agent runtime declared by this model, when available."
+            },
+            "serviceTiers": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/ModelServiceTier"
+              },
+              "type": "array"
+            },
+            "supportedReasoningEfforts": {
+              "items": {
+                "$ref": "#/definitions/ReasoningEffortOption"
+              },
+              "type": "array"
+            },
+            "supportsPersonality": {
+              "default": false,
+              "description": "@deprecated Always false; models no longer support personality selection.",
+              "type": "boolean"
+            },
+            "upgrade": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "upgradeInfo": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ModelUpgradeInfo"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "defaultReasoningEffort",
+            "description",
+            "displayName",
+            "hidden",
+            "id",
+            "isDefault",
+            "model",
+            "supportedReasoningEfforts"
+          ],
+          "type": "object"
+        },
+        "ModelAccessPrograms": {
+          "description": "Caller-specific explicit access programs advertised by model discovery.",
+          "properties": {
+            "cyber": {
+              "description": "Accepted explicit selections.",
+              "items": {
+                "$ref": "#/definitions/CyberAccessProgram"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "cyber"
+          ],
+          "type": "object"
+        },
+        "ModelAvailabilityNux": {
+          "properties": {
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "message"
+          ],
+          "type": "object"
+        },
+        "ModelServiceTier": {
+          "properties": {
+            "description": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "description",
+            "id",
+            "name"
+          ],
+          "type": "object"
+        },
+        "ModelUpgradeInfo": {
+          "properties": {
+            "migrationMarkdown": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "model": {
+              "type": "string"
+            },
+            "modelLink": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "retirementAt": {
+              "description": "Informational Unix timestamp for this upgrade's scheduled retirement, if known.",
+              "format": "int64",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "upgradeCopy": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "model"
+          ],
+          "type": "object"
+        },
+        "MultiAgentVersion": {
+          "description": "Multi-agent runtime supported by a model.",
+          "enum": [
+            "disabled",
+            "v1",
+            "v2"
+          ],
+          "type": "string"
+        },
+        "ReasoningEffort": {
+          "description": "A non-empty reasoning effort value advertised by the model.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "ReasoningEffortOption": {
+          "properties": {
+            "description": {
+              "type": "string"
+            },
+            "reasoningEffort": {
+              "$ref": "#/definitions/ReasoningEffort"
+            }
+          },
+          "required": [
+            "description",
+            "reasoningEffort"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "data": {
+          "items": {
+            "$ref": "#/definitions/Model"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "description": "Opaque cursor to pass to the next call to continue after the last item. If None, there are no more items to return.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "ModelListResponse",
+      "type": "object"
+    }
+  }
+}

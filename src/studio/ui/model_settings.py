@@ -38,6 +38,7 @@ class ModelPopup(QtWidgets.QFrame):
 
 class ModelSettings(QtWidgets.QWidget):
     changed = QtCore.Signal()
+    opened = QtCore.Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -370,6 +371,7 @@ class ModelSettings(QtWidgets.QWidget):
         self.popup.layout().activate()
         self.position_popup()
         self.models.setFocus(QtCore.Qt.PopupFocusReason)
+        self.opened.emit()
 
     def position_popup(self):
         screen = self.button.screen().availableGeometry()

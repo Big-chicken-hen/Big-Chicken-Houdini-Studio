@@ -1,8 +1,8 @@
 {
   "format": 1,
-  "studio_version": "0.1.0-rc.1",
+  "studio_version": "0.1.0-rc.2",
   "python_version": "3.13.15",
-  "codex_version": "0.153.4",
+  "codex_version": "0.170.0",
   "pyside_version": "6.8.3",
   "sources": [
     {
@@ -24,10 +24,10 @@
       "bytes": 1150998
     },
     {
-      "file": "codex-0.153.4-win32-x64.tgz",
-      "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.153.4-win32-x64.tgz",
-      "sha256": "05f473573f38b3f4dc9484e6807a511a1bb0e128dfa50816dafc5f79e553cdca",
-      "bytes": 141495386
+      "file": "codex-0.170.0-win32-x64.tgz",
+      "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.170.0-win32-x64.tgz",
+      "sha256": "49eedd5e5e1c828b0cfcdde97f19d83528d8fda4eafef3b02cc770da218b6da3",
+      "bytes": 188506732
     },
     {
       "file": "innosetup-7.1.0-x64.exe",
@@ -55,13 +55,13 @@
     },
     {
       "file": "CODEX-LICENSE",
-      "url": "https://raw.githubusercontent.com/openai/codex/rust-v0.153.4/LICENSE",
+      "url": "https://raw.githubusercontent.com/openai/codex/rust-v0.170.0/LICENSE",
       "sha256": "d17f227e4df5da1600391338865ce0f3055211760a36688f816941d58232d8dc",
       "bytes": 10926
     },
     {
       "file": "CODEX-NOTICE",
-      "url": "https://raw.githubusercontent.com/openai/codex/rust-v0.153.4/NOTICE",
+      "url": "https://raw.githubusercontent.com/openai/codex/rust-v0.170.0/NOTICE",
       "sha256": "9d71575ecfd9a843fc1677b0efb08053c6ba9fd686a0de1a6f5382fd3c220915",
       "bytes": 242
     },

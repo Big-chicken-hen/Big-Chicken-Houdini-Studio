@@ -4,7 +4,7 @@ import re
 
 from .errors import ProtocolRejected
 
-SUPPORTED_CODEX_VERSION = "0.153.4"
+SUPPORTED_CODEX_VERSION = "0.170.0"
 
 
 @dataclass(frozen=True)
@@ -38,13 +38,13 @@ class ProtocolPolicy:
 
 
 def steer_rejection_reason(error, expected_turn_id, version=SUPPORTED_CODEX_VERSION):
-    """Classify only proven 0.153.4 steer admission refusals, preserving the RPC.
+    """Classify only proven steer admission refusals for the supported binary.
 
     No-active/mismatch lack stable structured reason fields in this version.
     These are Studio categories, not invented native error codes. Everything
     else, including an internal error after possible acceptance, stays unknown.
     """
-    if version != "0.153.4" or not isinstance(expected_turn_id, str) or not expected_turn_id:
+    if version != SUPPORTED_CODEX_VERSION or not isinstance(expected_turn_id, str) or not expected_turn_id:
         return None
     details = getattr(error, "details", None)
     if (getattr(error, "code", None) != "CODEX_RPC_ERROR" or not isinstance(details, dict)

@@ -5,7 +5,9 @@ from unittest.mock import patch
 
 import test_onboarding as fixtures
 from studio.common import StudioError
+from studio.codex.protocol import SUPPORTED_CODEX_VERSION
 from studio.launcher import codex_executable
+from studio.onboarding import codex_candidates
 
 
 class CodexSelectionTests(unittest.TestCase):
@@ -54,7 +56,16 @@ class CodexSelectionTests(unittest.TestCase):
         self.assertEqual(result["codex"]["source"], "explicit_external")
         self.assertEqual(result["codex"]["path"], "compatible-explicit-external")
         self.assertIn(("initialize", {}), self.clients[0].calls)
-        self.assertEqual(result["codex"]["version"], "0.153.4")
+        self.assertEqual(result["codex"]["version"], SUPPORTED_CODEX_VERSION)
+
+    def test_discovers_project_native_layout_without_remembered_path(self):
+        name = "codex.exe" if os.name == "nt" else "codex"
+        binary = self.paths.local("toolchains", "codex", "bin", name)
+        binary.parent.mkdir(parents=True)
+        binary.touch()
+        with patch.dict(os.environ, {"BCS_CODEX_PATH": "", "PATH": "", "LOCALAPPDATA": ""}):
+            self.assertEqual(codex_candidates(self.paths)[0], str(binary))
+            self.assertEqual(codex_executable(self.paths), str(binary))
 
     def test_missing_or_uninitializable_bundle_never_falls_back(self):
         bundled = self.installed()

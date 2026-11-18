@@ -248,6 +248,7 @@ class StudioPanel(QtWidgets.QWidget):
         self.model_controls = ModelSettings()
         self.models, self.efforts = self.model_controls.models, self.model_controls.efforts
         self.model_controls.changed.connect(self.update_controls)
+        self.model_controls.opened.connect(self.load_models)
         self.settings_area = QtWidgets.QFrame()
         self.settings_area.setObjectName("status")
         self.settings_layout = QtWidgets.QVBoxLayout(self.settings_area)

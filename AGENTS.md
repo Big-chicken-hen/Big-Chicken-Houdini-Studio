@@ -1,5 +1,13 @@
 # Big-Chicken Houdini Studio development
 
+**RC2 model catalog (2026-11-18):** The owner requested synchronizing newly
+released models. Studio now pins Codex 0.170.0 and refreshes the native catalog
+when the picker opens. The RC2 installer is a separate local candidate with
+native protocol, isolated package and integrity checks. Its real Houdini and
+independent standard-user installation remain pending. The first public
+preview retains the original installer bytes. See
+[the RC2 validation](docs/rc2-model-catalog.md).
+
 **Owner release decision (2026-11-18):** The owner reported that external
 testing passed and authorized closing PR #14 and publishing the existing
 `0.1.0-rc.1-b6bed7cdac13` installer as the first public preview. See

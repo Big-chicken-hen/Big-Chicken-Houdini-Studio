@@ -16,6 +16,7 @@ APP_ROOT = Path(os.environ.get("HIA_PROJECT_ROOT") or Path(__file__).resolve().p
 sys.path.insert(0, str(APP_ROOT / "src"))
 
 from studio.common import AppPaths, StudioError, atomic_json  # noqa: E402
+from studio.codex.protocol import SUPPORTED_CODEX_VERSION  # noqa: E402
 from studio.launcher import helper_environment, hidden_flags  # noqa: E402
 
 
@@ -68,7 +69,7 @@ def setup(args):
         'import os, sys; sys.path.insert(0, os.path.abspath(os.path.join(sys.prefix, "..", "..", "src")))\n',
         encoding="utf-8")
     result = {"installed": True, "python": str(executable), "extras": extras,
-              "codex_version": "0.153.4", "app_root": str(paths.root)}
+              "codex_version": SUPPORTED_CODEX_VERSION, "app_root": str(paths.root)}
     atomic_json(paths.local("setup.json"), result)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0

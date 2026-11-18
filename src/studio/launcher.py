@@ -123,6 +123,7 @@ def codex_executable(paths):
         # A missing bundle is an installation failure, never PATH discovery.
         return str(Path(os.environ.get("BCS_CODEX_PATH") or paths.install("tools", "codex", "bin", name)).resolve())
     candidates = [os.environ.get("BCS_CODEX_PATH"), paths.install("tools", "codex", "bin", name),
+                  paths.local("toolchains", "codex", "bin", name),
                   paths.local("toolchains", "codex", name), shutil.which(name)]
     for value in candidates:
         if value and Path(value).is_file():

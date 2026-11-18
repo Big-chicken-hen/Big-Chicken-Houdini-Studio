@@ -48,6 +48,7 @@ reference material and are not included in the ZIP. Documentation is versioned
 separately from the installer; it does not rebuild or change the application.
 The Installer.exe link resolves in the delivered ZIP; the executable is not tracked here.
 
-The owner-selected `发布包` directory contains only the latest ZIP and its checksum.
-See [the current delivery record](../docs/r4-package-refresh-20260917.md) for
-the README-4 archive identity, package checks and completed temporary-file cleanup.
+The owner-selected `发布包` directory contains the newest local ZIP and its checksum.
+See the [RC2 delivery record](../docs/rc2-model-catalog.md) for the package checks.
+The [first public preview](../docs/rc1-public-preview.md) records the earlier
+installer's release decision and verified identity.

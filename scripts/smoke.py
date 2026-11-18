@@ -12,6 +12,7 @@ root = Path(os.environ.get("HIA_PROJECT_ROOT") or Path(__file__).resolve().paren
 sys.path.insert(0, str(root / "src"))
 
 from studio.common import AppPaths, StudioError  # noqa: E402
+from studio.codex.protocol import SUPPORTED_CODEX_VERSION  # noqa: E402
 from studio.launcher import check_codex, render_output_directory, storage_environment  # noqa: E402
 
 
@@ -38,7 +39,7 @@ def main():
             result["pyside6"] = __version__
         if args.codex:
             result["codex"] = check_codex(args.codex, paths)
-            result["codex_version"] = "0.153.4"
+            result["codex_version"] = SUPPORTED_CODEX_VERSION
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     except (ImportError, OSError, sqlite3.DatabaseError, StudioError) as exc:

@@ -334,9 +334,8 @@ class Bridge:
                                  "BCS_OWNER_ID", "BCS_PYTHON_EXECUTABLE", "BCS_DATA_ROOT", "BCS_CACHE_ROOT",
                                  "PYTHONPATH", "TEMP", "TMP"],
                     "startup_timeout_sec": 15, "tool_timeout_sec": 30,
-                    # Native session/persistent grants cannot be revoked in-place
-                    # in 0.153.4. Keep every batch promptable; Studio delegates only
-                    # precisely correlated single approvals after explicit consent.
+                    # Keep every batch promptable so Studio can revoke its own consent.
+                    # Delegate only precisely correlated single approvals after consent.
                     "default_tools_approval_mode": "prompt",
                     "tools": {name: {"approval_mode": "prompt"} for name in STUDIO_TOOLS}}}}}
 

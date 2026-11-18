@@ -27,8 +27,9 @@ package under licenses/sources. The Python wheel metadata is preserved. The
 commercial-license text in the upstream wheel does not imply a commercial license
 was purchased or substitute for the LGPLv3 terms included with the sources.
 
-Native Codex 0.153.4 uses the complete official win32-x64 npm binary layout,
-including its command runner, code mode host, sandbox setup helper and ripgrep.
+Native Codex 0.170.0 uses the official win32-x64 npm binary layout for the App
+Server, including its command runner, code mode host, sandbox setup helper and
+ripgrep. The optional voice subtree is excluded from this distribution.
 The original Apache-2.0 license and NOTICE are in CODEX-LICENSE and CODEX-NOTICE.
 The exact registry source, integrity-checked archive and input SHA-256 values are
 recorded in build-inputs.json. No account or another Codex installation is copied.
