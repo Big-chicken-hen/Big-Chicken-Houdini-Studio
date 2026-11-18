@@ -1,5 +1,13 @@
 # Big-Chicken Houdini Studio development
 
+**Owner release decision (2026-11-18):** The owner reported that external
+testing passed and authorized closing PR #14 and publishing the existing
+`0.1.0-rc.1-b6bed7cdac13` installer as the first public preview. See
+[the release decision](docs/rc1-public-preview.md) for the scope of that report
+and exact artifact identity. The owner also reported the HIP launch crash
+fixed. Model catalog synchronization is a separate candidate with its own
+validation. Mermaid remains deferred.
+
 **Owner delivery refresh (2026-09-17):** The owner explicitly requested updating
 the installer while deferring Mermaid work. Delivery is now
 `0.1.0-rc.1-b6bed7cdac13`, source/builder `b6bed7cdac1381765ba221ec8847c0b9a70f5f0e`.

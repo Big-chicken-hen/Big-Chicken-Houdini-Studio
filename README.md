@@ -2,7 +2,7 @@
 
 一个独立的 Houdini 创作工作室：原生 Qt 启动器与 Python Panel，Codex App Server 负责对话和推理，Houdini 主线程负责批量 HOM，runtime 保存场景身份与操作收据。它不依赖旧 HIA 安装目录。
 
-当前 **0.1.0-rc.1 已获准日常 RC 试用和定向测试**，尚未公开发行。R1–R3 已技术合并；R4 保持 Draft，等待新入口与独立标准用户验收。本轮按 [固定节点流 Launcher 审批](docs/launcher-node-flow-brief.md) 实现 Account → 场景分支 → Launch；NET-1、同一 Turn 内追加引导及既有验收证据保留，Panel 与执行架构保持不变。
+**0.1.0-rc.1** 是首个 Windows 公开预览。用户报告外部测试通过，并授权使用现有候选发布。安装包、校验文件及验证范围见 [GitHub Release](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio/releases/tag/v0.1.0-rc.1) 和 [首发记录](docs/rc1-public-preview.md)。
 
 已验证组合为 Windows 11 x64 / Houdini FX 22.0.368 / Codex 0.153.4。其他满足接入条件的 Houdini 22 系列为 Untested，逐次确认后可试测；无法确认的现场事实保留 Unknown。普通用户只从安装器创建的开始菜单入口启动，使用随包 Codex。外部 Codex 服务需要用户自己的有效 Clash 配置，端口由用户环境决定；Studio 不修改系统代理。以下源码 setup 仅供开发。既有 [模型实验结论](docs/model-acceptance-results.md) 保持不变。
 
