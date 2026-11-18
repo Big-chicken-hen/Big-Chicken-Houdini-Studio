@@ -25,6 +25,7 @@ def codex_candidates(paths, preferred=None):
     """Enumerate known native installations without executing shell wrappers."""
     name = "codex.exe" if os.name == "nt" else "codex"
     values = [preferred, paths.install("tools", "codex", "bin", name),
+              paths.local("toolchains", "codex", "bin", name),
               paths.local("toolchains", "codex", name), shutil.which(name)]
     if os.name == "nt":
         local = os.environ.get("LOCALAPPDATA")

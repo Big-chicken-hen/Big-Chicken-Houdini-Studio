@@ -125,7 +125,7 @@ class PreviewServices:
             "state": {"checking": "checking", "missing_codex": "missing", "codex_init_error": "error",
                       "incompatible_codex": "incompatible"}.get(self.state, "ready"),
             "attempts": [{"code": "CODEX_VERSION_UNSUPPORTED"}] if self.state == "incompatible_codex" else [],
-            "path": "C:/fixture/codex.exe", "version": "0.153.4", "message": ""},
+            "path": "C:/fixture/codex.exe", "version": "0.170.0", "message": ""},
             "houdini": {"state": "missing" if self.state == "missing_houdini" else "found",
                          "path": "C:/fixture/houdini.exe", "version": "22.0.368", "message": "",
                          "compatibility": {"status": "validated", "can_launch": True, "confirmation_required": False},

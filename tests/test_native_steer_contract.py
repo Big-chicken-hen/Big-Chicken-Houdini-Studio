@@ -10,8 +10,11 @@ from studio.codex.protocol import ProtocolPolicy, steer_rejection_reason
 class NativeSteerContractTests(unittest.TestCase):
     def test_consumed_pinned_contract_exposes_identity_without_turn_overrides(self):
         root = Path(__file__).resolve().parents[1]
-        contract = json.loads((root/'contracts/codex/0.153.4/integration.json').read_text(encoding='utf-8'))
-        self.assertEqual(contract['codex_version'], ProtocolPolicy().version)
+        version = ProtocolPolicy().version
+        contract = json.loads((root / 'contracts' / 'codex' / version / 'integration.json').read_text(encoding='utf-8'))
+        lock = json.loads((root / 'release/windows-inputs.lock.json').read_text(encoding='utf-8'))
+        self.assertEqual(contract['codex_version'], version)
+        self.assertEqual(lock['codex_version'], version)
         ProtocolPolicy().require_client_request('turn/steer')
         steer = contract['requests']['TurnSteerParams']
         self.assertEqual(set(steer['properties']), {'threadId', 'expectedTurnId', 'clientUserMessageId', 'input'})
@@ -19,6 +22,21 @@ class NativeSteerContractTests(unittest.TestCase):
         self.assertIn('clientUserMessageId', contract['requests']['TurnStartParams']['properties'])
         self.assertIn('clientId', contract['response_definitions']['UserMessage']['properties'])
         self.assertEqual(contract['response_definitions']['TurnSteerResponse']['required'], ['turnId'])
+
+    def test_consumed_catalog_fields_include_open_native_effort_strings(self):
+        root = Path(__file__).resolve().parents[1]
+        version = ProtocolPolicy().version
+        contract = json.loads((root / 'contracts' / 'codex' / version / 'integration.json').read_text(encoding='utf-8'))
+        request = contract['requests']['ModelListParams']
+        response = contract['response_definitions']['ModelListResponse']
+        self.assertLessEqual({'limit', 'cursor', 'includeHidden'}, set(request['properties']))
+        self.assertLessEqual({'data', 'nextCursor'}, set(response['properties']))
+        self.assertLessEqual({'model', 'supportedReasoningEfforts', 'defaultReasoningEffort', 'hidden'},
+                             set(response['definitions']['Model']['properties']))
+        effort = response['definitions']['ReasoningEffort']
+        self.assertEqual(effort['type'], 'string')
+        self.assertEqual(effort['minLength'], 1)
+        self.assertNotIn('enum', effort)
 
     def rejection(self, message, code=-32600, data=None, method='turn/steer'):
         return CodexRPCError(method, {'code': code, 'message': message, 'data': data})

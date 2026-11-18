@@ -46,7 +46,7 @@ class ReleaseIdentityUiTests(unittest.TestCase):
             before = window.diagnostics_text.toPlainText()
             self.assertIn('Houdini · 已选择: 22.0.368 · Unknown', before)
             self.assertIn('Houdini · 正在运行: Unknown（尚未连接）', before)
-            self.assertIn('Codex · Bundled · 已确认版本: 0.153.4', before)
+            self.assertIn('Codex · Bundled · 已确认版本: 0.170.0', before)
             self.assertIn('Build ID: 0.1.0-rc.1-aaaaaaaaaaaa', before)
             self.assertIn(str(self.paths.data_root), before)
             window._launch_record = {'runtime_connected': True, 'host': {'version': '22.0.400',

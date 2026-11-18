@@ -11,7 +11,7 @@
 [Setup]
 AppId=BigChickenHoudiniStudio
 AppName=Big-Chicken Houdini Studio
-AppVersion=0.1.0-rc.1
+AppVersion=0.1.0-rc.2
 AppPublisher=Big-chicken-hen
 AppPublisherURL=https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio
 DefaultDirName={localappdata}\Programs\Big-Chicken Houdini Studio

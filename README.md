@@ -2,14 +2,14 @@
 
 一个独立的 Houdini 创作工作室：原生 Qt 启动器与 Python Panel，Codex App Server 负责对话和推理，Houdini 主线程负责批量 HOM，runtime 保存场景身份与操作收据。它不依赖旧 HIA 安装目录。
 
-**0.1.0-rc.1** 是首个 Windows 公开预览。用户报告外部测试通过，并授权使用现有候选发布。安装包、校验文件及验证范围见 [GitHub Release](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio/releases/tag/v0.1.0-rc.1) 和 [首发记录](docs/rc1-public-preview.md)。
+**0.1.0-rc.1** 是首个 Windows 公开预览。安装包、校验文件及外测报告范围见 [GitHub Release](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio/releases/tag/v0.1.0-rc.1) 和 [首发记录](docs/rc1-public-preview.md)。当前源码为 **0.1.0-rc.2** 候选，随包 Codex 更新至 0.170.0，模型选择器显示当前账号的原生目录。
 
-已验证组合为 Windows 11 x64 / Houdini FX 22.0.368 / Codex 0.153.4。其他满足接入条件的 Houdini 22 系列为 Untested，逐次确认后可试测；无法确认的现场事实保留 Unknown。普通用户只从安装器创建的开始菜单入口启动，使用随包 Codex。外部 Codex 服务需要用户自己的有效 Clash 配置，端口由用户环境决定；Studio 不修改系统代理。以下源码 setup 仅供开发。既有 [模型实验结论](docs/model-acceptance-results.md) 保持不变。
+Windows 11 x64 / Houdini FX 22.0.368 是既有验证环境。其他满足接入条件的 Houdini 22 系列为 Untested，逐次确认后可试测。无法确认的现场事实保留 Unknown。普通用户从安装器创建的开始菜单入口启动，使用随包 Codex。外部 Codex 服务需要用户自己的有效 Clash 配置，端口由用户环境决定。
 
 ## 从源码在 Windows 开始（开发者）
 
 1. 将整个项目放在可写目录。支持空格和中文路径；不要放进 Houdini 安装目录。
-2. 准备 Python 3.10+、带 PySide6 的 Houdini GUI 安装，以及本项目固定使用的 **Codex CLI 0.153.4 原生可执行文件**。Houdini Panel 使用 Houdini 自带的 PySide6，不向它安装 Qt。
+2. 准备 Python 3.10+、带 PySide6 的 Houdini GUI 安装，以及本项目固定使用的 **Codex CLI 0.170.0 原生可执行文件**。Houdini Panel 使用 Houdini 自带的 PySide6。
 3. 双击 **`Setup Studio.cmd`**。这一步在本项目 `.runtime/venv` 安装产品和启动器的 PySide6；不会修改用户的 Houdini 或 Codex 配置，也不会启动 Houdini、登录或导入知识。
 4. 双击 **`Studio.exe`**（setup 会生成）。安装版的开始菜单也指向同名 EXE。Account 节点显示账号与 Codex 状态，必要时完成官方浏览器登录；从 Empty／Open／Recent 中选择目标，再点击 Launch 节点的“启动 Houdini”。选择、双击或拖入 HIP 都只选定目标。程序路径和诊断使用顶部“设置”“诊断”入口。
 5. 在 Houdini 面板标签旁点击 **＋ → New Pane Tab Type → Big-Chicken Studio**，直接打开 Studio。已有 Python Panel 也可在其界面选择栏中选择 **Big-Chicken Studio**。账户、模型和会话通过原生 Codex App Server 处理。

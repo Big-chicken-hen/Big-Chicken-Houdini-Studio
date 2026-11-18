@@ -108,13 +108,18 @@ def build(args):
     (runtime / 'python313._pth').write_text('python313.zip\n.\nLib/site-packages\n../src\nimport site\n', encoding='utf-8')
     codex = package / 'tools/codex'
     prefix = 'package/vendor/x86_64-pc-windows-msvc/'
-    with tarfile.open(inputs['codex-0.153.4-win32-x64.tgz']) as archive:
+    codex_archive = inputs[f"codex-{lock['codex_version']}-win32-x64.tgz"]
+    with tarfile.open(codex_archive) as archive:
         for member in archive:
             if not member.name.startswith(prefix) or member.isdir():
                 continue
+            relative = member.name[len(prefix):]
+            # Studio uses the text/image App Server and does not ship the voice sidecar.
+            if relative.startswith('codex-resources/voice/'):
+                continue
             if not member.isfile():
                 raise ValueError('Non-file in native Codex package')
-            path = destination(codex, member.name[len(prefix):])
+            path = destination(codex, relative)
             path.parent.mkdir(parents=True, exist_ok=True)
             with archive.extractfile(member) as incoming, path.open('xb') as outgoing:
                 shutil.copyfileobj(incoming, outgoing)

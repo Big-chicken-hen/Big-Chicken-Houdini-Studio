@@ -48,6 +48,23 @@ class PanelProductTest(unittest.TestCase):
         index = next(i for i in range(self.panel.models.count()) if self.panel.models.item(i).data(QtCore.Qt.UserRole)["model"] == slug)
         self.panel.models.setCurrentRow(index)
 
+    def test_open_picker_refreshes_catalog_for_an_already_signed_in_panel(self):
+        self.choose_model("second-model")
+        self.api.hold["/models"] = []
+        controls = self.panel.model_controls
+        controls.button.click()
+        self.assertTrue(controls.popup.isVisible())
+        loaded, _, _ = self.api.hold["/models"].pop()
+        self.api.models["data"].append({"model": "new-native-model", "displayName": "New model",
+                                        "defaultReasoningEffort": "low",
+                                        "supportedReasoningEfforts": [{"reasoningEffort": "low"},
+                                                                      {"reasoningEffort": "max"}]})
+        loaded({**self.api.models, "catalog_revision": controls.catalog_revision + 1})
+        self.assertEqual(controls.next_model, "second-model")
+        self.choose_model("new-native-model")
+        self.panel.efforts.setCurrentIndex(self.panel.efforts.findData("max"))
+        self.assertEqual(controls.request_settings()["effort"], "max")
+
     def select_thread(self, thread_id, model="preview-model", effort="high", revision=2):
         self.api.thread = {"id": thread_id, "turns": []}
         self.api.state.update(thread_id=thread_id, turn_id=None)
