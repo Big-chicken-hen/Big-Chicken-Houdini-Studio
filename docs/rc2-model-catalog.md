@@ -25,5 +25,17 @@ RC2 固定 Codex 0.170.0。Panel 每次打开模型选择器时重新读取同�
 - 用生产 Studio MCP 配置触发的许可请求可与原生工具项精确关联，并可明确拒绝。保留现有一次性发送及未知结果查询语义。五种既有许可和输入请求的生成入口与上一版一致。
 - 107 项本机定向测试通过，覆盖模型设置、严格版本检查、Qt 目录刷新、发送竞态、迟到确认和原会话恢复。Ruff 静态检查通过。
 
+## 本地安装候选
+
+- Build `0.1.0-rc.2-a3620009bcfd`。源码和构建脚本均来自 `a3620009bcfd0abef79c76b725c2deddd1ce8e2e`。
+- 245 项载荷文件与清单匹配。使用包内 Python 3.13.15 和包内 Codex 重新通过了旧 Thread 恢复、三次追加、Stop 与 MCP 许可检查。
+- 包内 Python 和生产 Qt 6.8.3 通过 18 项离屏模型选择与版本验证。QtTest 从同一锁定 wheel 加载至独立测试目录，未加入载荷。
+- ZIP 读回通过，包含 Installer.exe 和 README.md。安装器的哈希、README 字节和相对链接均通过校验。
+
+| 产物 | 字节 | SHA-256 |
+| --- | ---: | --- |
+| Installer.exe | 247854976 | `2bf56854a8a12bfc34acc912eb34406e77c9a7f31e7a6f15686dcf218824fabe` |
+| `Big-Chicken-Studio-0.1.0-rc.2-a3620009bcfd-Tester.zip` | 247413256 | `bdc27cda5abbabcf613031330bc61a19b016f068e55cc4b21351c2dd6ce549f1` |
+
 本轮没有对新候选运行真实 Houdini GUI、外部模型推理或独立标准用户安装。
 [首发外测报告及公开包](rc1-public-preview.md)的范围是原候选。

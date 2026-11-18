@@ -2,7 +2,7 @@
 
 在 Houdini 中，通过 Codex 对话创建场景、调整参数，并在原作品上继续修改。
 
-**Release Candidate** · **Windows 11 x64** · **原生 Houdini Panel**
+**Release Candidate 2** · **Windows 11 x64** · **原生 Houdini Panel**
 
 [快速开始](#快速开始) · [环境要求](#环境要求) · [日常使用](#日常使用) · [问题反馈](#问题反馈)
 
@@ -27,7 +27,7 @@
 | 操作系统 | Windows 11 x64 |
 | Houdini | 有效许可证；当前验证组合为 **Houdini FX 22.0.368** |
 | 其他 Houdini 22 配置 | 以启动器的兼容状态为准；允许的 **Untested** 配置需明确确认试用 |
-| Codex | 随包提供 **0.153.4**，默认使用 Bundled 版本 |
+| Codex | 随包提供 **0.170.0**，默认使用 Bundled 版本 |
 | 账号 | 使用自己的 ChatGPT 账号完成官方登录 |
 | 网络 | Clash 保持有效配置，端口使用自己的设置 |
 
@@ -39,6 +39,7 @@
 - **熟悉的 Houdini 配置**：正式启动沿用原有布局、配色和快捷键，Studio 不复制或改写偏好文件。
 - **自定义插件路径**：正常启动保留支持的 Houdini 插件搜索路径，并加入 Studio 的 package 目录；测试环境继续隔离。
 - **场景产物**：从已保存 HIP 工作时，默认将生成的 VEX 源码、HDA、导出和渲染文件放在 `$HIP/BigChickenStudio/<场景名>/` 下对应目录；明确指定位置和已有节点输出优先。
+- **模型选择**：打开 Panel 模型选择器即可刷新当前账号的原生目录。以列表实际显示的模型与档位为准。
 - **执行期间补充要求**：在 Panel 中继续输入引导；以界面实际接纳状态为准。
 - **停止任务**：使用 Panel 的 Stop。长时间执行的 HOM 操作可能需要等待执行边界，停止不代表撤销已完成修改。
 - **程序设置**：启动器右上角“设置”可查看或调整程序路径。
@@ -65,7 +66,7 @@
 默认诊断不包含聊天正文、凭证、图片或作品。如果启动器打不开，先提供 Windows 提示截图和启动位置即可。
 
 ```text
-Build：0.1.0-rc.1-b6bed7cdac13
+Build：0.1.0-rc.2-a3620009bcfd
 Windows / Houdini 版本：
 发生位置：启动器 / Panel / 安装过程
 发生时间 / 已连续使用时长：
@@ -83,19 +84,19 @@ Clash 继续使用自己的正常配置；不要通过清空账号、历史或�
 
 | 项目 | 当前版本 |
 | --- | --- |
-| Build | `0.1.0-rc.1-b6bed7cdac13` |
-| 源提交 | [`b6bed7c`](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio/commit/b6bed7cdac1381765ba221ec8847c0b9a70f5f0e) |
-| 文档修订 | `README-4` · 2026-09-17 |
-| 交付状态 | RC 候选；独立标准用户完整验收仍待完成 |
+| Build | `0.1.0-rc.2-a3620009bcfd` |
+| 源提交 | [`a362000`](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio/commit/a3620009bcfd0abef79c76b725c2deddd1ce8e2e) |
+| 文档修订 | `README-5` · 2026-11-18 |
+| 交付状态 | RC2 候选，真实 Houdini GUI 和独立标准用户安装仍待验证 |
 
-本次更新改进连接异常后的输入恢复：明确未发送的请求可恢复原文和附件，结果未知时保持核对，不自动重发。同时保留内置帮助修正、自定义 Houdini 搜索路径、场景产物目录规则及既有启动器界面。
+本次更新随包 Codex 至 0.170.0。对比验证中，Studio 账号的原生目录返回 GPT-6.2 Sol、GPT-6.2 Astra 和两者的 Max 档位。打开选择器时会重新读取目录。
 
-用户已反馈开发入口本轮使用正常；新安装包的真实使用和独立标准用户完整验收仍待完成。流程图代码块目前仍按源码显示，Mermaid 预览未纳入本次更新。验收记录只填写实际结果，未测试的项目不视为通过。
+原候选的用户外测报告对应 GitHub 的首发决策。RC2 已完成本机原生兼容、包内隔离测试和完整性检查。流程图代码块按源码显示。[首发及外测范围](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio/releases/tag/v0.1.0-rc.1)
 
 需要核对安装器完整性时，可使用以下 SHA-256（日常使用不必手动计算）：
 
 ```text
-ceddcb77c7fd3ac16d149ccafe95ec41cf0e0a04951f939505172f1ab4f9a3da  Installer.exe
+2bf56854a8a12bfc34acc912eb34406e77c9a7f31e7a6f15686dcf218824fabe  Installer.exe
 ```
 
 [项目主页](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio) · [返回快速开始](#快速开始)
