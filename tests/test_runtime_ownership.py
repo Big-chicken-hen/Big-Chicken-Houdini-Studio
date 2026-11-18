@@ -286,6 +286,7 @@ class RuntimeOwnershipTests(unittest.TestCase):
                         executeInMainThreadWithResult=lambda callback: callback())}), \
                     patch.object(runtime_server, "_session", None), \
                     patch.object(runtime_server, "AppPaths", return_value=self.paths), \
+                    patch.object(runtime_server, "collect_host_identity", return_value={'compatibility': {'status': 'unknown'}}), \
                     patch.object(runtime_server, "HoudiniScene", return_value=SceneFixture()), \
                     patch.object(runtime_server, "serve", side_effect=RuntimeError("server startup failed")):
                 ledger = Mock(side_effect=RuntimeError("ledger startup failed")) if failure_at == "ledger" else open_ledger

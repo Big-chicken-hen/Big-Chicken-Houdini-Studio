@@ -1,0 +1,162 @@
+{
+  "source_commit": "f0fce6e5fd2bd111e779b2e336bd82b5b0491bf3",
+  "builder_commit": "f0fce6e5fd2bd111e779b2e336bd82b5b0491bf3",
+  "build_id": "0.1.0-rc.1-f0fce6e5fd2b",
+  "installer": "Big-Chicken-Studio-0.1.0-rc.1-f0fce6e5fd2b-win-x64.exe",
+  "sha256": "95915fad026c7ba36d0df3ad8befdcf8543e074a5c32f3f6ac32f228545ee9c2",
+  "bytes": 211657859,
+  "manifest_files": 232,
+  "candidate_ci": {
+    "run_id": 34461330525,
+    "jobs": 5,
+    "result": "success"
+  },
+  "prior_product_ci": {
+    "commit": "ce388a443a60e704ead7e0321980297964015cb3",
+    "run_id": 34460251580,
+    "jobs": 5,
+    "result": "success"
+  },
+  "clash": {
+    "required": true,
+    "left_running": true,
+    "port_from_user_environment": true,
+    "off_test": "not_required_by_user",
+    "global_proxy_changed": false,
+    "internal_unavailable_proxy_fixture": "passed_in_test_process_only"
+  },
+  "owner": {
+    "os": "Windows 11 Pro 23H2 x64",
+    "build": "22631.6060",
+    "account": "Administrators member; elevated developer host",
+    "standard_user_gate": "untested",
+    "installer_exit_code": 0,
+    "upgrade_exit_code": 0,
+    "previous_version_retained": true,
+    "start_menu_entry": "Big-Chicken Houdini Studio",
+    "formal_roots": "LOCALAPPDATA/BigChickenStudio/state and cache",
+    "legacy_test_state": "Accessed explicitly in place; not copied or moved",
+    "scoped_process_evidence": "Extra native Codex plugin Node process exists in reused test state; no clean-user portability claim"
+  },
+  "model_regression": {
+    "build_id": "0.1.0-rc.1-ce388a443a60",
+    "production_route": "production_legacy_existing_workspace",
+    "workspace_id": "6e91a54f79264b68a58b4791818d4ae7",
+    "thread_id": "01a08a61-068e-7450-a572-4b6bce305db4",
+    "turn_id": "01a08aa6-77cb-72c3-87f6-130f89929820",
+    "initial_turns": 1,
+    "final_turns": 2,
+    "inputs": [
+      {
+        "intent": "start",
+        "client_id": "00e6c9539bed4bb595962790b29693c4.ff63f5e601e942ffb4b00940067e5516",
+        "turn_id": "01a08aa6-77cb-72c3-87f6-130f89929820",
+        "native_count": 1
+      },
+      {
+        "intent": "steer",
+        "client_id": "00e6c9539bed4bb595962790b29693c4.512de334a9a04a8e9ea4fe93ab1c8a15",
+        "turn_id": "01a08aa6-77cb-72c3-87f6-130f89929820",
+        "native_count": 1
+      }
+    ],
+    "model": "gpt-6-astra",
+    "effort": "native default",
+    "elapsed_seconds": 51.023,
+    "completed": true,
+    "native_reconnect_notice": "Reconnecting... 2/5",
+    "full_messages_matched": true,
+    "message_count": 11,
+    "parameters": {
+      "slope_deg": 35.0,
+      "eave_width": 0.25,
+      "roof_thickness": 0.18
+    },
+    "node_errors": {},
+    "panel_script_errors": "",
+    "original_frozen_hip_unchanged": true
+  },
+  "final_installed_reopen": {
+    "build_id": "0.1.0-rc.1-f0fce6e5fd2b",
+    "production_route": "production_launch_target",
+    "passed": true,
+    "same_workspace": true,
+    "same_thread": true,
+    "same_native_cwd": true,
+    "messages": 11,
+    "parameters": {
+      "slope_deg": 35.0,
+      "eave_width": 0.25,
+      "roof_thickness": 0.18
+    },
+    "points": 12,
+    "faces": 10,
+    "node_errors": {},
+    "panel_script_errors": "",
+    "codex": {
+      "version": "0.153.4",
+      "source": "bundled"
+    },
+    "houdini": {
+      "version": "22.0.368",
+      "application": "houdinifx",
+      "license_category": "Commercial",
+      "python_version": "3.13.10",
+      "qt_version": "6.8.3",
+      "pyside_version": "6.8.3",
+      "compatibility": {
+        "status": "validated",
+        "reason": "validated_combination",
+        "message": "已验证：Windows 11 x64 / Houdini FX 22.0.368 / 当前 Python 与 Qt 组合。",
+        "edition": "FX",
+        "confirmation_required": false,
+        "can_launch": true,
+        "auto_selectable": true
+      }
+    },
+    "new_model_requests": 0,
+    "normal_native_window_exit_code": 0
+  },
+  "preserved_exit_fault": {
+    "build_id": "0.1.0-rc.1-ce388a443a60",
+    "houdini_pid": 25828,
+    "exit_code": 139,
+    "signal": 11,
+    "trigger": "Test-only QTimer Python callback called hou.exit(exit_code=0, suppress_save_prompt=True)",
+    "stack": "H22 python313.dll interpreter/GIL, libPY compiled-code destruction, OPUI/FUSE UI destruction; Py_Exit/UT_Exit/QTimer",
+    "later_native_window_close": "Final installed build returned 0 using native close slot without Python Py_Exit callback",
+    "root_cause": "Not proven; no Houdini or product shutdown code changed; retain for Pro review"
+  },
+  "diagnostic": {
+    "format": 1,
+    "studio_version": "0.1.0-rc.1",
+    "build_id": "0.1.0-rc.1-f0fce6e5fd2b",
+    "source_commit": "f0fce6e5fd2bd111e779b2e336bd82b5b0491bf3",
+    "package_integrity": {
+      "status": "matched",
+      "checked_files": 232,
+      "missing_files": 0,
+      "changed_files": 0
+    },
+    "windows_version": "10.0.22631",
+    "python_version": "3.13.10",
+    "codex_version": "0.153.4",
+    "codex_source": "bundled",
+    "houdini_version": "22.0.368",
+    "houdini_running_version": "22.0.368",
+    "houdini_compatibility": "unknown",
+    "houdini_running_compatibility": "validated",
+    "houdini_application": "houdinifx",
+    "houdini_license_category": "Commercial",
+    "codex_verified": true,
+    "houdini_found": true,
+    "account_confirmed": false,
+    "failure_code": null,
+    "phase": "home",
+    "timings": null,
+    "tool_counts": null,
+    "scope": "Whitelisted installation and current launcher facts; no chat, credentials or user artifacts"
+  },
+  "published": false,
+  "pr14": "Draft; external standard-user workflow and final Pro Go remain required"
+}

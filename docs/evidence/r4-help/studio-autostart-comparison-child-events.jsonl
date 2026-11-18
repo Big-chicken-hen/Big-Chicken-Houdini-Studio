@@ -1,0 +1,10 @@
+{"event":"trace_begin","window_seconds":55,"utc":"2026-09-11T05:11:34.0899967Z","host_pid":29188,"coverage":"Only this observation window; earlier starts are not reconstructed"}
+{"details":"unavailable: exited before lookup","event":"start","utc":"2026-09-11T05:11:58.6820134Z","pid":5824,"parent":29188}
+{"details":"unavailable: exited before lookup","event":"start","utc":"2026-09-11T05:11:59.6841016Z","pid":9932,"parent":29188}
+{"details":"unavailable: exited before lookup","event":"start","utc":"2026-09-11T05:11:59.7168191Z","pid":24836,"parent":29188}
+{"event":"stop","utc":"2026-09-11T05:11:59.7216889Z","pid":9932,"exit_status":3221225781}
+{"event":"stop","utc":"2026-09-11T05:11:59.7228448Z","pid":24836,"exit_status":3221225781}
+{"event":"stop","utc":"2026-09-11T05:11:59.7230410Z","pid":5824,"exit_status":3221225781}
+{"details":"unavailable: exited before lookup","event":"start","utc":"2026-09-11T05:12:00.6747610Z","pid":8408,"parent":29188}
+{"event":"stop","utc":"2026-09-11T05:12:00.6401613Z","pid":8408,"exit_status":3221225781}
+{"event":"trace_end","utc":"2026-09-11T05:12:29.2461722Z","observed_children":4}

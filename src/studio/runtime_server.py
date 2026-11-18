@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import base64
+import copy
 import os
 
 from .common import AppPaths, StudioError, atomic_json, identifier
 from .http import serve
+from .host_identity import collect_host_identity
 from .ledger import Ledger
 from .ownership import execution_lock
 from .runtime import OperationRuntime
@@ -14,10 +16,11 @@ from .scene import HoudiniScene
 _session = None
 
 
-def runtime_router(runtime):
+def runtime_router(runtime, host=None):
+    identity = copy.deepcopy(host)
     def route(method, path, query, body):
         if method == "GET" and path == "/health":
-            return runtime.health()
+            return {**runtime.health(), **({'host': copy.deepcopy(identity)} if identity is not None else {})}
         if method == "GET" and path == "/operations":
             return {"operations": runtime.recent()}
         if method == "POST" and path == "/lookup":
@@ -65,26 +68,30 @@ def start():
         raise
     scene = ledger = runtime = server = None
     try:
+        host = collect_host_identity(hou, paths, hdefereval.executeInMainThreadWithResult)
+        if host['compatibility']['status'] == 'unsupported':
+            raise StudioError('HOUDINI_HOST_UNSUPPORTED', host['compatibility']['message'])
         scene = HoudiniScene(hou, paths.workspace(workspace_id) / "artifacts", secrets=(token,),
                              paths=paths, workspace_id=workspace_id, session_id=session_id)
         ledger = Ledger(paths.workspace(workspace_id) / "operations.sqlite", redact=scene.redact)
         runtime = OperationRuntime(ledger, scene, hdefereval.executeInMainThreadWithResult,
                                    workspace_id=workspace_id, session_id=session_id, ownership=ownership)
-        server = serve(runtime_router(runtime), token)
+        server = serve(runtime_router(runtime, host), token)
         descriptor = {
             "url": "http://127.0.0.1:" + str(server.server_port),
             "runtime_id": runtime.runtime_id, "workspace_id": workspace_id,
-            "launcher_session_id": session_id, "houdini_pid": os.getpid()}
+            "launcher_session_id": session_id, "houdini_pid": os.getpid(), "host": host}
         def publish_file_state(snapshot):
             atomic_json(paths.session(session_id) / "runtime.json", {**descriptor, "scene": snapshot})
         scene.file_publisher = publish_file_state
         publish_file_state(scene.cached())
-    except BaseException:
+    except BaseException as exc:
         try:
             atomic_json(paths.session(session_id) / "runtime-error.json", {
                 "launcher_session_id": session_id, "workspace_id": workspace_id,
-                "error": {"code": "RUNTIME_START_FAILED",
-                          "message": "Houdini runtime startup failed. Close this session before reopening the workspace."}})
+                "error": (exc.payload()['error'] if isinstance(exc, StudioError) else
+                          {"code": "RUNTIME_START_FAILED",
+                           "message": "Houdini runtime startup failed. Close this session before reopening the workspace."})})
         except BaseException:
             # Diagnostic write failure must not bypass cleanup or replace the
             # original startup exception. Never serialize exception text here.

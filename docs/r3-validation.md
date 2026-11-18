@@ -154,3 +154,14 @@ commit's CI to pass. R4 is still a separate draft: the user has no clean Windows
 non-administrator environment at present. Actual install/upgrade/uninstall and the
 full login/edit/image/save/reopen/resume path must pass before its merge/public
 release. This UI review does not waive that gate or certify cross-monitor input.
+
+## Subsequent integrated-package finding
+
+R3 merged as PR #13 at `b48ceae` after final record `419bb52` passed all five CI
+jobs (`34335158148`). On 2026-09-09, the integrated R4 package `3150c15` reproduced
+an intermittent `REPLY_UNAVAILABLE` during real Houdini history loading and later
+polling. Successful R3 runs above remain their actual observed results; removal
+of the viewport override is not proof of the complete cause or a universal fix.
+The new failed receipts and native screenshot are recorded as
+[R4-NET-1](acceptance-issues.md). That defect blocks final package acceptance and
+publication; no speculative network/Qt fix was folded into the packaging PR.

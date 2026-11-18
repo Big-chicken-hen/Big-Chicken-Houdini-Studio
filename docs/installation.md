@@ -1,6 +1,12 @@
 # 安装与交付
 
-## 安装边界
+R4 正在准备普通用户的 per-user Windows 安装器，随包固定 CPython 3.13.15、
+PySide6 Essentials 6.8.3 和原生 Codex 0.153.4，不依赖用户 Python/Node/Git。
+它目前允许日常 RC 试用和定向测试；NET-1 已通过实际包回归，独立标准用户验收和最终发布 Go 尚未完成。
+当前政策见 [最新审批与用户修正](rc-trial-scope.md)，安装器验收使用 [RC 步骤](rc-acceptance.md)。
+不要把下面的源码开发流程当作普通用户的发行入口。
+
+## 源码开发的安装边界
 
 分发单位是完整仓库或解压目录，必须保留 `src`、`houdini`、`scripts` 和 `pyproject.toml`。安装根默认按当前源码/入口的位置解析，也可用 `HIA_PROJECT_ROOT` 指定。普通场景工作在用户持久数据根的 `workspaces/<id>/work` 内，不能把插件源码目录当成创作项目。
 
@@ -27,11 +33,11 @@ setup 在 `.runtime/venv` 建 venv，pip 缓存在 `.runtime/cache/pip`，构建
 
 ## Codex 选择与版本
 
-本项目的协议契约固定为 **0.153.4**。Launcher 按明确 override、上次验证安装、安装内管理的工具链、PATH 与有限已知安装位置查找原生程序，验证版本和 App Server initialize。明确 override 无效时显示错误，不静默切换其他安装。环境缺失页可选择已有安装；路径覆盖选项在更多菜单的设置页中。选择 `codex.exe` 本体，不执行任意 `.cmd` / `.ps1` 包装器。也可设置 `BCS_CODEX_PATH`，或自行放置到 `.runtime/toolchains/codex/codex.exe`。没有默认下载或自动升级。
+本项目的协议契约固定为 **0.153.4**。正常安装默认使用随包 Codex，旧自动发现缓存或 PATH 中的新版本不会抢占它。高级设置中明确选择的外部程序必须通过精确版本与 App Server initialize 检查，并标为 Explicit external；无效时明确失败，通过现有“恢复使用随包版本”动作撤销选择，不静默回退。随包程序缺失需修复安装。选择 `codex.exe` 本体，不执行 `.cmd` / `.ps1` 包装器。源码开发另保留 `BCS_CODEX_PATH`、本地工具链及有限发现入口；没有自动下载或升级。
 
 官方 [Codex CLI 说明](https://learn.chatgpt.com/docs/codex/cli) 提供安装方式；从官方分发渠道取得所需版本。项目使用原生 [Codex App Server](https://learn.chatgpt.com/docs/app-server) 的会话与账户接口；当前官方文档不代替固定版本的实际协议核对。首次使用在 Launcher 点击“使用 ChatGPT 继续”，由官方返回的地址打开系统浏览器；等待期间可取消或重新打开当前登录页，只有原生账号查询确认后才进入首页。网络失败显示尚未确认。setup 与 smoke 不登录、不发模型请求。
 
-Windows 下，Studio 自有的登录和正式会话 Codex 进程都启用原生 `respect_system_proxy`，采用 Windows 已配置的系统代理。此开关仅通过子进程启动参数传入，不复制桌面 Codex 配置或认证，也不写入全局代理环境变量。启动参数的修复在新启动的 Studio 会话中生效。
+Windows 下，Studio 自有的登录和正式会话 Codex 进程都启用原生 `respect_system_proxy`，复用用户的系统与原生网络配置。本次试用需要用户自己的有效 Clash 连接，端口可以不同；Studio 不安装或配置 Clash，不关闭它测试，不写全局代理变量。内部认证 loopback 通信始终 direct，不要求用户设置 NO_PROXY。此开关仅通过子进程启动参数传入，不复制桌面 Codex 配置或认证。
 
 短生命周期 onboarding 只查询账号及处理官方登录，不创建 Thread、模型任务、MCP 或 Houdini。它在正式启动前关闭，生产进程使用同一个已验证的 Codex 程序和同一个用户持久数据根下 `codex-home`。此目录由 Codex 管理认证与历史；Studio 不复制 token 或编辑凭证。旧安装的 `.runtime/codex-home` 原地保留，不自动迁移；界面不提供旧上下文浏览或 profile 切换流程。
 

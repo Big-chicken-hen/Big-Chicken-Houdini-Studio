@@ -1,0 +1,31 @@
+{
+  "issue": "R4-HELP-1",
+  "case": "development_key_spelling_correction_first_cold_start",
+  "source_commit": "e6beb5af2de46ec27b9bc50de068277db38bfe41",
+  "snapshot": "studio-30148-da8e02d7cb.json",
+  "previous_failed_snapshot": "studio-9924-4802039ada.json",
+  "snapshot_utc": "2026-09-11T08:19:32.429077+00:00",
+  "session_id": "bfd8897fcaec4719970e9c52f736d840",
+  "host_pid": 30148,
+  "supervisor_pid": 1904,
+  "houdini_version": "22.0.368",
+  "help_url": "http://127.0.0.1:48626/",
+  "runtime_module_loaded": true,
+  "panel_module_loaded": true,
+  "raw_environment_source": "GetEnvironmentStringsW",
+  "raw_environment_names": [
+    "Path",
+    "SystemDrive",
+    "SystemRoot"
+  ],
+  "path_value_equals_previous_failed_host": true,
+  "cwd_equals_previous_failed_host": true,
+  "preferences_equal_previous_failed_host": true,
+  "owner_report": {
+    "help_content": "normal",
+    "node_help_and_links": "normal",
+    "back_forward_and_close_reopen": "normal",
+    "panel_scene_mutation": "not_separately_confirmed"
+  },
+  "scope": "One real development GUI recovery; reversal, additional cold start and payload GUI pending"
+}

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import copy
 import os
-import re
 import shutil
 import threading
 import time
@@ -14,6 +13,7 @@ from .codex.client import CodexStdioClient
 from .codex.protocol import ProtocolPolicy, SUPPORTED_CODEX_VERSION
 from .common import StudioError, atomic_json, read_json
 from .launcher import check_codex, codex_app_server_command, discover_houdini, helper_environment
+from .houdini_compatibility import inspect_houdini, require_houdini_launch, VALIDATED_VERSION
 
 
 ONBOARDING_POLICY = ProtocolPolicy(client_requests=frozenset({
@@ -24,7 +24,8 @@ ONBOARDING_POLICY = ProtocolPolicy(client_requests=frozenset({
 def codex_candidates(paths, preferred=None):
     """Enumerate known native installations without executing shell wrappers."""
     name = "codex.exe" if os.name == "nt" else "codex"
-    values = [preferred, paths.local("toolchains", "codex", name), shutil.which(name)]
+    values = [preferred, paths.install("tools", "codex", "bin", name),
+              paths.local("toolchains", "codex", name), shutil.which(name)]
     if os.name == "nt":
         local = os.environ.get("LOCALAPPDATA")
         if local:
@@ -53,10 +54,11 @@ def codex_candidates(paths, preferred=None):
 class Onboarding:
     """One owned App Server; never creates threads, tools or Houdini processes."""
     def __init__(self, paths, *, client_factory=CodexStdioClient, version_checker=check_codex,
-                 candidate_provider=codex_candidates, houdini_provider=discover_houdini):
+                 candidate_provider=codex_candidates, houdini_provider=discover_houdini, houdini_inspector=inspect_houdini):
         self.paths = paths
         self.client_factory, self.version_checker = client_factory, version_checker
         self.candidate_provider, self.houdini_provider = candidate_provider, houdini_provider
+        self.houdini_inspector = houdini_inspector
         self.lock, self.action = threading.RLock(), threading.RLock()
         self.client = self.account = None
         self.generation = self.revision = 0
@@ -136,17 +138,41 @@ class Onboarding:
         atomic_json(self.preferences_path, self.preferences)
 
     def _houdini(self, override):
-        installations = self.houdini_provider()
-        selected = override or self.preferences.get("last_houdini") or (installations[0]["path"] if installations else "")
-        if selected and (not Path(selected).is_file() or Path(selected).name.lower() not in
-                         {"houdini", "houdini.exe", "houdinifx.exe"}):
-            selected = "" if override else (installations[0]["path"] if installations else "")
-        if selected and not any(item["path"] == selected for item in installations):
-            installations = [{"path": str(Path(selected).resolve()), "label": Path(selected).parent.parent.name}, *installations]
-        version = re.search(r"\d+\.\d+(?:\.\d+)?", str(selected))
-        self.houdini = {"state": "found" if selected else "missing", "path": str(Path(selected).resolve()) if selected else "",
-                        "version": version.group() if version else None, "installations": installations,
-                        "message": "已找到安装；许可证将在启动时确认。" if selected else "未找到 Houdini，请选择已有安装。"}
+        installations = [{**item, **self.houdini_inspector(item["path"], self.paths)} for item in self.houdini_provider()]
+        selected_path = override or self.preferences.get("last_houdini")
+        if selected_path:
+            selected = self.houdini_inspector(selected_path, self.paths)
+            if not any(item["path"] == selected["path"] for item in installations):
+                installations.insert(0, {"label": Path(selected_path).parent.parent.name, **selected})
+        else:
+            automatic = [item for item in installations if item["compatibility"]["auto_selectable"]]
+            # Preserve explicit choices above; an untested newer build must not
+            # displace the observed baseline when selecting an installation.
+            automatic.sort(key=lambda item: (item["compatibility"]["status"] != "validated",
+                                             item["version"] != VALIDATED_VERSION))
+            selected = automatic[0] if automatic else None
+        if not selected or not selected["path"]:
+            self.houdini = {"state": "missing", "path": "", "version": None, "installations": installations,
+                            "message": "请选择已有 Houdini GUI 安装；后续 22.x minor 版本须手动选择。"}
+            return
+        self.houdini = {**{key: selected[key] for key in ("path", "version", "compatibility")},
+                        "state": "incompatible" if selected["compatibility"]["status"] == "unsupported" else "found",
+                        "installations": installations, "message": selected["compatibility"]["message"]}
+
+    def _codex_selection(self, override):
+        bundled = self.paths.install("tools", "codex", "bin", "codex.exe" if os.name == "nt" else "codex")
+        installed = (self.paths.root / "release-manifest.json").is_file()
+        # An explicit empty preference is the user's Restore bundled choice.
+        # Do not silently let an inherited external path undo that choice.
+        explicit = (str(override).strip() if override is not None else
+                    self.preferences["codex_override"] if "codex_override" in self.preferences else
+                    os.environ.get("BCS_CODEX_PATH"))
+        if explicit:
+            source = "bundled" if os.path.normcase(str(Path(explicit).resolve())) == os.path.normcase(str(bundled.resolve())) else "explicit_external"
+            return [explicit], source
+        if installed:
+            return [str(bundled)], "bundled"
+        return self.candidate_provider(self.paths, self.preferences.get("codex_verified")), "discovered"
 
     def probe(self, codex_override=None, houdini_override=None):
         with self.action:
@@ -162,10 +188,8 @@ class Onboarding:
                 self.revision += 1
                 if codex_override is not None:
                     self._save_preferences(codex_override=str(codex_override).strip())
-                explicit = (str(codex_override).strip() if codex_override is not None else
-                            self.preferences.get("codex_override") or os.environ.get("BCS_CODEX_PATH"))
                 self._houdini(houdini_override)
-            candidates = [explicit] if explicit else self.candidate_provider(self.paths, self.preferences.get("codex_verified"))
+                candidates, source = self._codex_selection(codex_override)
             failures = []
             for candidate in candidates:
                 try:
@@ -185,7 +209,7 @@ class Onboarding:
                     client.start()
                     client.initialize()
                     with self.lock:
-                        self.codex = {"state": "ready", "path": checked, "version": SUPPORTED_CODEX_VERSION,
+                        self.codex = {"state": "ready", "path": checked, "version": SUPPORTED_CODEX_VERSION, "source": source,
                                       "message": "原生连接已确认。"}
                         self._save_preferences(codex_verified=checked)
                         self.revision += 1
@@ -203,9 +227,12 @@ class Onboarding:
                         return self._failed("ONBOARDING_CLOSE_UNKNOWN", "Codex 连接退出尚未确认，不能再启动另一个。")
             with self.lock:
                 state = "missing" if not candidates else "incompatible"
-                self.codex.update(state=state, message="未找到可用 Codex。请安装或选择兼容的 " + SUPPORTED_CODEX_VERSION + "。",
-                                  path=str(explicit or ""), attempts=failures)
-            return self._failed("CODEX_OVERRIDE_INVALID" if explicit else "CODEX_REQUIRED", self.codex["message"])
+                self.codex.update(state=state, source=source,
+                                  message="随包 Codex 缺失或不可用，请修复安装。" if source == "bundled" else
+                                  "未找到可用 Codex。请安装或选择兼容的 " + SUPPORTED_CODEX_VERSION + "。",
+                                  path=str(candidates[0]) if len(candidates) == 1 else "", attempts=failures)
+            code = "CODEX_OVERRIDE_INVALID" if source == "explicit_external" else "CODEX_BUNDLED_INVALID" if source == "bundled" else "CODEX_REQUIRED"
+            return self._failed(code, self.codex["message"])
 
     def account_read(self):
         with self.action:
@@ -240,7 +267,7 @@ class Onboarding:
             self.account.logout()
             return self.snapshot()
 
-    def prepare_launch(self):
+    def prepare_launch(self, houdini_confirmation=None):
         with self.action:
             self._require_client()
             account = self.account.read()
@@ -248,8 +275,12 @@ class Onboarding:
                 raise StudioError("CHATGPT_LOGIN_REQUIRED", "请先确认 ChatGPT 登录。", 409)
             if self.houdini["state"] != "found":
                 raise StudioError("HOUDINI_REQUIRED", "请选择 Houdini 安装。")
+            selected = self.houdini_inspector(self.houdini["path"], self.paths)
+            require_houdini_launch(selected, houdini_confirmation)
             result = {"codex_path": self.codex["path"], "houdini_path": self.houdini["path"],
                       "codex_home": str(self.paths.codex_home)}
+            if houdini_confirmation is not None:
+                result["houdini_confirmation"] = copy.deepcopy(houdini_confirmation)
             self.last_account = self.snapshot()["account"]
             self._stop_client()
             return result

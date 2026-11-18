@@ -151,24 +151,26 @@ class ComposerTest(unittest.TestCase):
         editor.insertPlainText("原稿")
         self.api.hold["/turn"] = []
         self.panel.send()
-        done, _, _ = self.api.hold["/turn"].pop()
+        done, _, body = self.api.hold["/turn"].pop()
         self.assertTrue(editor.isEnabled())
+        self.assertEqual(editor.toPlainText(), "")
+        editor.insertPlainText("原稿")
         editor.insertPlainText("修改")
         cursor = editor.textCursor()
         cursor.movePosition(QtGui.QTextCursor.PreviousCharacter, QtGui.QTextCursor.KeepAnchor, 2)
         cursor.removeSelectedText()
         self.assertEqual(editor.toPlainText(), "原稿")
-        done({"turn": {"id": "new_turn", "status": "inProgress", "items": []}})
+        done({"submission": self.api.submission(body, "start", "new_turn")})
         self.assertEqual(editor.toPlainText(), "原稿")
         self.assertIsNone(self.panel.pending_submission)
 
-    def test_lost_submission_requires_new_matching_message_in_original_thread(self):
+    def test_lost_submission_requires_exact_client_identity_in_original_thread(self):
         editor = self.panel.input
         editor.insertPlainText("原消息")
         self.api.hold["/turn"] = []
         self.api.hold["/reconcile"] = []
         self.panel.send()
-        _, failed, _ = self.api.hold["/turn"].pop()
+        _, failed, body = self.api.hold["/turn"].pop()
         editor.insertPlainText("，继续写草稿")
         failed(ApiFailure("response lost"))
         self.assertEqual(self.panel.pending_submission["text"], "原消息")
@@ -176,18 +178,22 @@ class ComposerTest(unittest.TestCase):
         self.assertEqual(len(self.api.hold["/reconcile"]), 1)
         previous = copy.deepcopy(self.api.thread)
         previous["turns"][0]["items"].append({"id": "old_equal", "type": "userMessage", "content": [{"type": "text", "text": "原消息"}]})
-        self.panel.reconciled({"reconciled": True, "codex_state": "idle", "thread": previous})
+        source = {"connection_generation": body["connection_generation"], "reconciled": True, "codex_state": "idle"}
+        self.panel.reconciled({**source, "thread": previous})
         self.assertTrue(self.panel.uncertain_send)
         fresh = copy.deepcopy(previous)
         fresh["turns"].append({"id": "new_turn", "status": "completed", "items": [
             {"id": "new_user", "type": "userMessage", "content": [{"type": "text", "text": "原消息"}]}]})
+        self.panel.reconciled({**source, "thread": fresh})
+        self.assertTrue(self.panel.uncertain_send)  # Even new equal text is not identity.
+        fresh["turns"][-1]["items"][0]["clientId"] = body["client_user_message_id"]
         wrong = copy.deepcopy(fresh)
         wrong["id"] = "another_thread"
-        self.panel.reconciled({"reconciled": True, "codex_state": "idle", "thread": wrong})
+        self.panel.reconciled({**source, "thread": wrong})
         self.assertTrue(self.panel.uncertain_send)
-        self.panel.reconciled({"reconciled": True, "codex_state": "idle", "thread": fresh})
+        self.panel.reconciled({**source, "thread": fresh})
         self.assertFalse(self.panel.uncertain_send)
-        self.assertEqual(editor.toPlainText(), "原消息，继续写草稿")
+        self.assertEqual(editor.toPlainText(), "，继续写草稿")
         self.assertEqual(sum(path == "/turn" for _, path, _ in self.api.calls), 1)
 
     def test_offline_image_and_removed_upload_are_not_lost_or_resurrected(self):
@@ -228,7 +234,7 @@ class ComposerTest(unittest.TestCase):
         self.assertTrue(self.panel.runtime_status.isVisible())
         self.assertFalse(self.panel.settings_area.isHidden())
 
-    def test_matching_text_without_original_images_cannot_resolve_submission(self):
+    def test_matching_text_and_images_cannot_replace_exact_client_identity(self):
         editor = self.panel.input
         image = QtGui.QImage(16, 16, QtGui.QImage.Format_RGB32)
         image.fill(QtCore.Qt.white)
@@ -239,7 +245,7 @@ class ComposerTest(unittest.TestCase):
         self.api.hold["/turn"] = []
         self.api.hold["/reconcile"] = []
         self.panel.send()
-        _, failed, _ = self.api.hold["/turn"].pop()
+        _, failed, body = self.api.hold["/turn"].pop()
         self.panel.remove_attachment(attachment["local_key"])
         failed(ApiFailure("response lost"))
         self.assertEqual(self.panel.pending_submission["attachments"], [attachment])
@@ -247,9 +253,12 @@ class ComposerTest(unittest.TestCase):
         content = [{"type": "text", "text": "按这张参考图调整"}]
         history["turns"].append({"id": "new_turn", "status": "completed", "items": [
             {"id": "new_user", "type": "userMessage", "content": content}]})
-        self.assertFalse(self.panel.submission_in_history({"thread": history}))
+        source = {"connection_generation": body["connection_generation"], "thread": history}
+        self.assertFalse(self.panel.submission_in_history(source))
         content.append({"type": "localImage", "path": attachment["path"]})
-        self.assertTrue(self.panel.submission_in_history({"thread": history}))
+        self.assertFalse(self.panel.submission_in_history(source))
+        history["turns"][-1]["items"][0]["clientId"] = body["client_user_message_id"]
+        self.assertTrue(self.panel.submission_in_history(source))
         self.assertEqual(sum(path == "/turn" for _, path, _ in self.api.calls), 1)
 
     def test_first_message_loss_after_explicit_new_thread_can_reconcile(self):
@@ -273,13 +282,15 @@ class ComposerTest(unittest.TestCase):
         self.api.hold["/reconcile"] = []
         self.panel.update_controls()
         self.panel.send()
-        _, failed, _ = self.api.hold["/turn"].pop()
+        _, failed, body = self.api.hold["/turn"].pop()
         failed(ApiFailure("first turn response lost"))
         self.assertTrue(self.panel.uncertain_send)
-        self.assertTrue(self.panel.pending_submission["history_known"])
+        self.assertEqual(self.panel.pending_submission["client_user_message_id"], body["client_user_message_id"])
         fresh = {"id": "fresh_thread", "turns": [{"id": "first_turn", "status": "completed", "items": [
-            {"id": "first_user", "type": "userMessage", "content": [{"type": "text", "text": "第一个书架"}]}]}]}
-        self.panel.reconciled({"reconciled": True, "codex_state": "completed", "thread": fresh})
+            {"id": "first_user", "type": "userMessage", "clientId": body["client_user_message_id"],
+             "content": [{"type": "text", "text": "第一个书架"}]}]}]}
+        self.panel.reconciled({"reconciled": True, "codex_state": "completed", "thread": fresh,
+                               "connection_generation": body["connection_generation"]})
         self.assertFalse(self.panel.uncertain_send)
         self.assertEqual(self.panel.input.toPlainText(), "")
         self.assertEqual(sum(path == "/turn" for _, path, _ in self.api.calls), 1)

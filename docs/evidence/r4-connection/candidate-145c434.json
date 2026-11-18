@@ -1,0 +1,58 @@
+{
+  "build_id": "0.1.0-rc.1-145c434d0b9c",
+  "source_commit": "145c434d0b9c02c53f64c9386dc14603f0a006d6",
+  "builder_commit": "145c434d0b9c02c53f64c9386dc14603f0a006d6",
+  "ci": {
+    "run": 35047403865,
+    "conclusion": "success",
+    "jobs": 5,
+    "complete_ui_tests": 141,
+    "rendering_steps": "all passed",
+    "url": "https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio/actions/runs/35047403865"
+  },
+  "prior_ci": {
+    "run": 35046247959,
+    "conclusion": "failure",
+    "backend": "4 passed",
+    "native_ui": "140 tests, 1 error: old Panel.call interceptor missed /turn",
+    "renders": "skipped"
+  },
+  "manifest_files_verified": 245,
+  "packaged_checks": {
+    "python": "3.13.15",
+    "tests": 24,
+    "result": "pass",
+    "initial_attempt": "QtTest fixture dependency absent from deliberately minimal payload",
+    "test_only_support": "QtTest from the same pinned PySide6 6.8.3 wheel, outside payload",
+    "extra_payload_files": 0,
+    "offscreen_panel_captures": 12
+  },
+  "installer": {
+    "file": "Big-Chicken-Studio-0.1.0-rc.1-145c434d0b9c-win-x64.exe",
+    "bytes": 216143016,
+    "sha256": "e4a66f8da83863185f6e5d0f9453bf86a7c018794793cb2f42d5bc83a297d8ae"
+  },
+  "zip": {
+    "file": "Big-Chicken-Studio-0.1.0-rc.1-145c434d0b9c-Connection-Acceptance.zip",
+    "bytes": 215691705,
+    "sha256": "d23c7a6ad324dbbbd149647331186747f49621142583f0e34438a1ccae15e837",
+    "members_verified": 5
+  },
+  "old_external_zip": {
+    "build_id": "0.1.0-rc.1-e6beb5af2de4",
+    "unchanged": true,
+    "sha256": "12abfc60b640e5a6fabbba09d846c3ac6a6f85766ee017e006ecccf4414bf25a"
+  },
+  "real_houdini_gui": "pending",
+  "system_installer_executed": false,
+  "standard_user_acceptance": "pending",
+  "incident_10048_causality": "unconfirmed",
+  "artifact_retention": {
+    "updated": "2026-09-16",
+    "status": "removed_at_owner_request",
+    "removed": ["acceptance_zip", "installer", "checksums", "unpacked_payload", "temporary_QtTest_support"],
+    "historical_validation_preserved": true,
+    "rebuild_authorized": false,
+    "product_source_changed_by_cleanup": false
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "date": "2026-09-16",
+  "scope": "Owner daily E-drive development environment, user-operated real Houdini",
+  "source_head": "ef177589a7adefa62425fa38164a7489188225dd",
+  "production_source_candidate": "145c434d0b9c02c53f64c9386dc14603f0a006d6",
+  "product_files_differ_from_candidate": false,
+  "owner_feedback": "没问题了！！提交吧！！",
+  "owner_reported_result": "Normal behavior in this trial",
+  "session_id": "1ef4c2216db64899b0c8e2ce7fc850c4",
+  "houdini_pid": 21088,
+  "houdini_version": "22.0.368",
+  "modules": {
+    "panel": "E:\\Big-Chicken-Houdini-Studio\\src\\studio\\ui\\panel.py",
+    "transport": "E:\\Big-Chicken-Houdini-Studio\\src\\studio\\ui\\shared.py",
+    "diagnostics": "E:\\Big-Chicken-Houdini-Studio\\src\\studio\\http_diagnostics.py"
+  },
+  "diagnostic_window": {
+    "seconds": 30.075,
+    "started": 80.0,
+    "completed": 79.0,
+    "failed": 0.0,
+    "inflight": 1.0,
+    "routes": [
+      "/state",
+      "/events",
+      "/account",
+      "/threads",
+      "/models",
+      "/operations",
+      "/threads/select",
+      "/thread/history",
+      "/attachments"
+    ],
+    "turn_or_steer_in_window": false
+  },
+  "limits": [
+    "Short diagnostic window is separate from the owner report",
+    "Individual send/steer/Stop/recovery results and full use duration were not reported",
+    "Not an independent packaged or installed-standard-user test",
+    "Original 10048 incident causality remains unconfirmed"
+  ],
+  "real_packaged_gui": "pending",
+  "standard_user_acceptance": "pending",
+  "release_gate": "Draft; no merge or public release",
+  "prior_zips": "unchanged"
+}
