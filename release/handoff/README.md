@@ -2,7 +2,7 @@
 
 在 Houdini 中，通过 Codex 对话创建场景、调整参数，并在原作品上继续修改。
 
-**Release Candidate 2** · **Windows 11 x64** · **原生 Houdini Panel**
+**Release Candidate 3** · **Windows 11 x64** · **原生 Houdini Panel**
 
 [快速开始](#快速开始) · [环境要求](#环境要求) · [日常使用](#日常使用) · [问题反馈](#问题反馈)
 
@@ -40,6 +40,7 @@
 - **自定义插件路径**：正常启动保留支持的 Houdini 插件搜索路径，并加入 Studio 的 package 目录；测试环境继续隔离。
 - **场景产物**：从已保存 HIP 工作时，默认将生成的 VEX 源码、HDA、导出和渲染文件放在 `$HIP/BigChickenStudio/<场景名>/` 下对应目录；明确指定位置和已有节点输出优先。
 - **模型选择**：打开 Panel 模型选择器即可刷新当前账号的原生目录。以列表实际显示的模型与档位为准。
+- 模型支持 Fast 时，点击模型选择器右侧的**闪电**，从下一轮开始使用快速模式。再点一次恢复标准速度。快速模式可以和 Max 等推理强度一起使用，可能消耗更多额度。
 - **执行期间补充要求**：在 Panel 中继续输入引导；以界面实际接纳状态为准。
 - **停止任务**：使用 Panel 的 Stop。长时间执行的 HOM 操作可能需要等待执行边界，停止不代表撤销已完成修改。
 - **程序设置**：启动器右上角“设置”可查看或调整程序路径。
@@ -66,7 +67,7 @@
 默认诊断不包含聊天正文、凭证、图片或作品。如果启动器打不开，先提供 Windows 提示截图和启动位置即可。
 
 ```text
-Build：0.1.0-rc.2-a3620009bcfd
+Build：0.1.0-rc.3-79e0d7864d84
 Windows / Houdini 版本：
 发生位置：启动器 / Panel / 安装过程
 发生时间 / 已连续使用时长：
@@ -84,19 +85,19 @@ Clash 继续使用自己的正常配置；不要通过清空账号、历史或�
 
 | 项目 | 当前版本 |
 | --- | --- |
-| Build | `0.1.0-rc.2-a3620009bcfd` |
-| 源提交 | [`a362000`](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio/commit/a3620009bcfd0abef79c76b725c2deddd1ce8e2e) |
-| 文档修订 | `README-5` · 2026-11-18 |
-| 交付状态 | RC2 候选，真实 Houdini GUI 和独立标准用户安装仍待验证 |
+| Build | `0.1.0-rc.3-79e0d7864d84` |
+| 源提交 | [79e0d78](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio/commit/79e0d7864d847a3e3549b968107e0af2e2903b49) |
+| 文档修订 | `README-6` · 2026-11-25 |
+| 交付状态 | RC3 候选，真实 Houdini 会话和独立标准用户安装待验证 |
 
-本次更新随包 Codex 至 0.170.0。对比验证中，Studio 账号的原生目录返回 GPT-6.2 Sol、GPT-6.2 Astra 和两者的 Max 档位。打开选择器时会重新读取目录。
+包内 Codex 0.170.0 在本机测试服务上完成了同一对话的四轮验证。开启快速模式和沿用选择时请求携带 `priority`，关闭后及随后一轮使用标准速度，四轮均使用 `max` 推理强度。包内 Qt 6.8.3 通过了离屏按钮检查。实际账号的速度和额度以服务端为准。[Codex 速度设置](https://learn.chatgpt.com/docs/agent-configuration/speed)
 
-原候选的用户外测报告对应 GitHub 的首发决策。RC2 已完成本机原生兼容、包内隔离测试和完整性检查。流程图代码块按源码显示。[首发及外测范围](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio/releases/tag/v0.1.0-rc.1)
+首个公开预览的外测范围见发布记录。[首发及外测范围](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio/releases/tag/v0.1.0-rc.1)
 
 需要核对安装器完整性时，可使用以下 SHA-256（日常使用不必手动计算）：
 
 ```text
-2bf56854a8a12bfc34acc912eb34406e77c9a7f31e7a6f15686dcf218824fabe  Installer.exe
+4ebdb7dc62b255bef2656811d19a2b0fba1725700280f8408e4ea0e7adda98d9  Installer.exe
 ```
 
 [项目主页](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio) · [返回快速开始](#快速开始)
