@@ -20,6 +20,7 @@ class NativeSteerContractTests(unittest.TestCase):
         self.assertEqual(set(steer['properties']), {'threadId', 'expectedTurnId', 'clientUserMessageId', 'input'})
         self.assertEqual(set(steer['required']), {'threadId', 'expectedTurnId', 'input'})
         self.assertIn('clientUserMessageId', contract['requests']['TurnStartParams']['properties'])
+        self.assertEqual(contract['requests']['TurnStartParams']['properties']['serviceTier']['type'], ['string', 'null'])
         self.assertIn('clientId', contract['response_definitions']['UserMessage']['properties'])
         self.assertEqual(contract['response_definitions']['TurnSteerResponse']['required'], ['turnId'])
 
@@ -31,7 +32,7 @@ class NativeSteerContractTests(unittest.TestCase):
         response = contract['response_definitions']['ModelListResponse']
         self.assertLessEqual({'limit', 'cursor', 'includeHidden'}, set(request['properties']))
         self.assertLessEqual({'data', 'nextCursor'}, set(response['properties']))
-        self.assertLessEqual({'model', 'supportedReasoningEfforts', 'defaultReasoningEffort', 'hidden'},
+        self.assertLessEqual({'model', 'supportedReasoningEfforts', 'defaultReasoningEffort', 'serviceTiers', 'hidden'},
                              set(response['definitions']['Model']['properties']))
         effort = response['definitions']['ReasoningEffort']
         self.assertEqual(effort['type'], 'string')

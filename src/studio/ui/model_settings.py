@@ -1,6 +1,7 @@
 """Ephemeral projection of native settings and the user's next-turn override."""
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from ..codex.settings import FAST_SERVICE_TIERS, fast_service_tier
 from .icons import icon, set_button_icon
 from .shared import label
 from .theme import COLORS, apply_theme
@@ -51,6 +52,8 @@ class ModelSettings(QtWidgets.QWidget):
         self.catalog_loaded = False
         self.next_model = None
         self.next_effort = None
+        self.thread_service_tier = None
+        self.fast_choice = None  # None follows the native thread, including tiers outside this toggle.
         self.user_override = False
         self.native_source = "unknown"
         self._adjustment = ""
@@ -59,10 +62,12 @@ class ModelSettings(QtWidgets.QWidget):
         self._interactive = False
         self._active = False
         self._current_caption = ""
+        self._current_fast = False
         self._caption = ""
         self.current_turn_id = None
-        outer = QtWidgets.QVBoxLayout(self)
+        outer = QtWidgets.QHBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(4)
         self.setMinimumWidth(0)
         self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
         self.button = QtWidgets.QToolButton()
@@ -74,7 +79,14 @@ class ModelSettings(QtWidgets.QWidget):
         self.button.setLayoutDirection(QtCore.Qt.RightToLeft)
         self.button.clicked.connect(self.open_popup)
         set_button_icon(self.button, "chevron-down", text="选择模型与推理档位", size=16)
-        outer.addWidget(self.button)
+        outer.addWidget(self.button, 1)
+        self.fast_button = QtWidgets.QToolButton()
+        self.fast_button.setObjectName("fastMode")
+        self.fast_button.setProperty("studioRole", "quiet")
+        self.fast_button.setCheckable(True)
+        self.fast_button.setFixedSize(32, 32)
+        self.fast_button.clicked.connect(self.fast_changed)
+        outer.addWidget(self.fast_button)
         self.popup = ModelPopup(self, QtCore.Qt.Popup)
         self.popup.setObjectName("studioModelPopup")
         apply_theme(self.popup, popup=True)
@@ -120,6 +132,7 @@ class ModelSettings(QtWidgets.QWidget):
         self.thread_id = thread_id
         self.settings_revision = None
         self.next_model = self.next_effort = None
+        self.thread_service_tier = self.fast_choice = None
         self.user_override = False
         self.native_source = "unknown"
         self.selection_revision += 1
@@ -132,6 +145,8 @@ class ModelSettings(QtWidgets.QWidget):
             return
         self.popup.hide()
         self.account_revision = revision
+        self.thread_service_tier = self.fast_choice = None
+        self.settings_revision = None
         self.catalog_revision = -1
         self.catalog_loaded = False
         self.catalog = {}
@@ -154,6 +169,10 @@ class ModelSettings(QtWidgets.QWidget):
             return True
         self.settings_revision = revision
         self.native_source = settings.get("source", "unknown")
+        self.thread_service_tier = settings.get("service_tier")
+        if (restore or self.fast_choice is True and self.thread_service_tier in FAST_SERVICE_TIERS
+                or self.fast_choice is False and self.thread_service_tier is None):
+            self.fast_choice = None
         if restore or not self.user_override:
             self.next_model = settings.get("model")
             self.next_effort = settings.get("effort")
@@ -215,6 +234,8 @@ class ModelSettings(QtWidgets.QWidget):
             self.efforts.clear()
             model = self.catalog.get(self.next_model)
             if model:
+                if self.wants_fast() and not fast_service_tier(model):
+                    self.fast_choice = False
                 efforts = self.supported_efforts(model)
                 if self.next_effort is not None and self.next_effort not in efforts:
                     default = model.get("defaultReasoningEffort")
@@ -275,6 +296,15 @@ class ModelSettings(QtWidgets.QWidget):
         self.render_button()
         self.changed.emit()
 
+    def wants_fast(self):
+        return self.fast_choice if self.fast_choice is not None else self.thread_service_tier in FAST_SERVICE_TIERS
+
+    def fast_changed(self, checked):
+        self.fast_choice = checked
+        self.selection_revision += 1
+        self.render_button()
+        self.changed.emit()
+
     def request_settings(self):
         if (not self.thread_id or type(self.settings_revision) is not int
                 or not self.catalog_loaded or self.next_model not in self.catalog):
@@ -286,6 +316,8 @@ class ModelSettings(QtWidgets.QWidget):
                  "model": self.next_model}
         if self.next_effort is not None:
             value["effort"] = self.next_effort
+        if self.fast_choice is not None or self.thread_service_tier in FAST_SERVICE_TIERS:
+            value["service_tier"] = fast_service_tier(model) if self.wants_fast() else None
         return value
 
     def set_constraint(self, message):
@@ -299,11 +331,13 @@ class ModelSettings(QtWidgets.QWidget):
         if not active:
             self.current.hide()
             self._current_caption = ""
+            self._current_fast = False
             self.render_button()
             return
         if self.current_turn_id != turn_id:
             self.current.hide()
             self._current_caption = ""
+            self._current_fast = False
         if (not isinstance(settings, dict) or settings.get("thread_id") != self.thread_id
                 or turn_id is not None and settings.get("turn_id") != turn_id):
             self.render_button()
@@ -311,6 +345,9 @@ class ModelSettings(QtWidgets.QWidget):
         requested = str(settings.get("requested_model") or "未指定")
         effort = str(settings.get("requested_effort") or "默认")
         text = "本轮已请求：" + requested + " · " + effort
+        self._current_fast = settings.get("requested_service_tier") in FAST_SERVICE_TIERS
+        if self._current_fast:
+            text += " · 快速模式"
         if settings.get("confirmation") == "rerouted":
             text += "\n原生重路由：" + str(settings.get("model") or "未确认")
         self.current.setText(text)
@@ -327,6 +364,8 @@ class ModelSettings(QtWidgets.QWidget):
     def set_interactive(self, enabled):
         self._interactive = bool(enabled)
         self.button.setEnabled(self._interactive)
+        self.fast_button.setEnabled(self._interactive and not self._active
+                                    and bool(fast_service_tier(self.catalog.get(self.next_model, {}))))
         self.models.setEnabled(self._interactive)
         self.efforts.setEnabled(self._interactive and self.efforts.count() > 0)
         if not self._interactive:
@@ -341,6 +380,19 @@ class ModelSettings(QtWidgets.QWidget):
 
     def render_button(self):
         model = self.catalog.get(self.next_model) or {}
+        supported = bool(fast_service_tier(model))
+        self.fast_button.setEnabled(self._interactive and supported and not self._active)
+        self.fast_button.setChecked(self._current_fast if self._active else supported and self.wants_fast())
+        if self._active:
+            hint = "本轮已请求快速模式" if self._current_fast else "任务结束后可选择下一轮的快速模式"
+        elif not supported:
+            hint = "当前模型未提供快速模式" if model else "等待可用模型的快速模式信息"
+        elif self.fast_button.isChecked():
+            hint = "关闭快速模式，下一轮恢复标准速度"
+        else:
+            hint = "开启快速模式，从下一轮起生效，可能消耗更多额度"
+        if self.fast_button.toolTip() != hint:
+            set_button_icon(self.fast_button, "zap", text=hint, fallback_text="快", size=18, icon_only=True)
         title = model.get("displayName") or self.next_model or "选择模型"
         if self.catalog_loaded and self.next_model and not model:
             title += "（不可用）"
@@ -392,4 +444,4 @@ class ModelSettings(QtWidgets.QWidget):
         self.render_button()
 
     def sizeHint(self):
-        return QtCore.QSize(min(320, max(180, self.button.fontMetrics().horizontalAdvance(self._caption) + 56)), 32)
+        return QtCore.QSize(min(356, max(216, self.button.fontMetrics().horizontalAdvance(self._caption) + 92)), 32)

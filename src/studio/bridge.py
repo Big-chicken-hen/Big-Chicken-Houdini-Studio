@@ -15,7 +15,7 @@ from .accounts import NativeAccount
 from .codex.client import CodexStdioClient
 from .codex.errors import BridgeError
 from .codex.protocol import ProtocolPolicy, steer_rejection_reason
-from .codex.settings import ModelCatalog, NativeSettings
+from .codex.settings import ModelCatalog, NativeSettings, native_turn_overrides
 from .codex.trust import SessionTrust, STUDIO_TOOLS
 from .common import TERMINAL, StudioError, atomic_json, new_id, read_json, payload_hash
 from .conversations import Conversations, NOTIFICATIONS
@@ -170,6 +170,8 @@ class Bridge:
                 self.turn_revision += 1
             elif method == "model/rerouted":
                 self.settings.rerouted(params)
+            elif method == "thread/settings/updated":
+                self.settings.observe_service_tier(params)
             if event.get("type") in {"process_started", "process_exit", "process_stopped"}:
                 self.scene_trust.reset()
                 self.pending_requests.clear()
@@ -513,7 +515,8 @@ class Bridge:
                 raise StudioError("INVALID_SELECTION", "请重新确认选择引用。")
             reference = {"scene_epoch": reference["scene_epoch"], "nodes": list(reference["nodes"])}
         if intent == "steer" and any(key in body for key in (
-                "model", "effort", "cwd", "sandbox", "approvalPolicy", "developerInstructions", "settings_revision")):
+                "model", "effort", "service_tier", "serviceTier", "cwd", "sandbox", "approvalPolicy",
+                "developerInstructions", "settings_revision")):
             raise StudioError("STEER_OVERRIDES_REJECTED", "引导只追加输入，不改变当前任务的模型或许可。")
         for key in ("model", "effort"):
             if body.get(key) is not None and (not isinstance(body[key], str) or len(body[key]) > 160):
@@ -554,6 +557,8 @@ class Bridge:
                     current = (record["connection_generation"] == self.history.generation
                                and record["thread_id"] == self.thread_id
                                and record["account_revision"] == self.account.revision)
+                    if record["intent"] == "start" and current:
+                        self.settings.confirm_start_tier(record["thread_id"], record["client_user_message_id"])
                     if (record["intent"] == "start" and current and self.start_submission_id == record["client_user_message_id"]
                             and turn_id not in self.completed_turns and self.turn_id in {None, turn_id}):
                         # Only start owns start-state binding. A steer ACK never
@@ -612,10 +617,11 @@ class Bridge:
                     self._check_user_admission(body, intent, record)
                     model = (self.settings.turn or {}).get("model") if intent == "steer" else body.get("model") or self.settings.thread["model"]
                 inputs, snapshot = self._user_inputs(body, intent)
-                if intent == "start" and (body.get("model") or body.get("effort")) or body.get("attachments"):
+                if (intent == "start" and (body.get("model") or body.get("effort") or "service_tier" in body)
+                        or body.get("attachments")):
                     if not model:
                         raise StudioError("MODEL_UNCONFIRMED", "当前任务的模型尚未确认；内容已保留。", 409)
-                    self.models.validate(model, body.get("effort") if intent == "start" else None, bool(body.get("attachments")))
+                    self.models.validate(model, body.get("effort"), bool(body.get("attachments")), body.get("service_tier"))
                 health = None
                 if snapshot["selection_reference"] or intent == "start":
                     try:
@@ -627,7 +633,7 @@ class Bridge:
                 if intent == "steer":
                     params["expectedTurnId"] = record["expected_turn_id"]
                 else:
-                    params.update({key: body[key] for key in ("model", "effort") if body.get(key)})
+                    params.update(native_turn_overrides(body))
                 ticket = self.client.prepare_tracked_request("turn/" + intent, params,
                             lambda ticket, result, error: self._settle_user_rpc(record, ticket, result, error))
                 with self.lock:
@@ -689,6 +695,8 @@ class Bridge:
         try:
             record["forward_attempted"] = True
             self.submissions.settle(record, "accepted", turn_id=turn_id, native_item_id=item["id"])
+            if record["intent"] == "start":
+                self.settings.confirm_start_tier(thread_id, record["client_user_message_id"])
             ticket = self.submission_tickets.get(record["client_user_message_id"])
             if ticket is not None:
                 # Exact native acceptance releases capacity and the original
@@ -729,11 +737,11 @@ class Bridge:
                 raise StudioError("THREAD_REQUIRED", "Create or select a conversation first", 409)
             admission_revision = self.turn_revision
         account_revision = self.account.revision
-        if body.get("model") or body.get("effort"):
+        if body.get("model") or body.get("effort") or "service_tier" in body:
             model = body.get("model") or self.settings.thread["model"]
             if not model:
                 raise StudioError("MODEL_UNCONFIRMED", "请先确认本次使用的模型。", 409)
-            self.models.validate(model, body.get("effort"), bool(attachments))
+            self.models.validate(model, body.get("effort"), bool(attachments), body.get("service_tier"))
         with self.lock:
             self.settings.check_binding(body, self.thread_id)
             if admission_revision != self.turn_revision:
@@ -752,9 +760,7 @@ class Bridge:
             self.codex_state, self.stop_requested = "starting", False
             self.settings.requested(self.thread_id, body)
         params = {"threadId": self.thread_id, "input": inputs}
-        for key in ("model", "effort"):
-            if body.get(key):
-                params[key] = body[key]
+        params.update(native_turn_overrides(body))
         try:
             result = self.client.request("turn/start", params)
         except Exception:
@@ -764,6 +770,7 @@ class Bridge:
             raise
         with self.lock:
             turn_id = result["turn"]["id"]
+            self.settings.confirm_start_tier(self.thread_id)
             self.settings.admitted(turn_id)
             if turn_id not in self.completed_turns:
                 self.turn_id = turn_id

@@ -887,6 +887,7 @@ class StudioPanel(QtWidgets.QWidget):
             settings = self.pending_submission.get("settings") or {}
             self.model_controls.apply_turn({"thread_id": self.thread_id, "turn_id": None,
                 "requested_model": settings.get("model"), "requested_effort": settings.get("effort"),
+                "requested_service_tier": settings.get("service_tier", self.model_controls.thread_service_tier),
                 "model": settings.get("model"), "effort": settings.get("effort"), "confirmation": "requested"},
                 active=True, turn_id=None)
         query_snapshot = self.query_submission_snapshot()

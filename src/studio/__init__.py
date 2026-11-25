@@ -1,3 +1,3 @@
 """Big-Chicken Houdini Studio. No services start on import."""
 
-__version__ = "0.1.0-rc.2"
+__version__ = "0.1.0-rc.3"

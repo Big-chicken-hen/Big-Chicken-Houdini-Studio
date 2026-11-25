@@ -75,6 +75,7 @@ class Native:
         self.calls.append((method, copy.deepcopy(params)))
         if method == "model/list":
             return {"data": [{"model": "image-model", "inputModalities": ["text", "image"],
+                               "serviceTiers": [{"id": "priority", "name": "Fast"}],
                                "supportedReasoningEfforts": [{"reasoningEffort": "high"}]},
                               {"model": "text-model", "inputModalities": ["text"],
                                "supportedReasoningEfforts": []}], "nextCursor": None}
@@ -145,6 +146,38 @@ class BridgeSteerTests(unittest.TestCase):
         self.assertTrue(all("snapshot" not in record for record in self.bridge.submissions.records.values()))
         with self.assertRaises(StudioError):
             self.steer({**bodies[0], "text": "changed payload"})
+
+    def test_fast_changes_only_on_a_new_start_and_never_on_steer(self):
+        for tier in ("priority", None):
+            refused = self.steer(self.body(service_tier=tier))
+            self.assertEqual(refused["error"]["code"], "STEER_OVERRIDES_REJECTED")
+        self.assertFalse(self.client.tickets)
+        self.bridge.on_event({"method": "turn/completed", "params": {"threadId": "thread-a",
+                             "turn": {"id": "turn-a", "status": "completed"}}})
+        self.runtime.health.update(main_thread_busy=False, active_operation_id=None)
+        for tier in ("priority", None):
+            request = self.body(model="image-model", effort="high", service_tier=tier,
+                                expected_turn_id=None, settings_revision=self.bridge.settings.revision)
+            result = self.bridge.start_turn(request)["submission"]
+            self.assertEqual(result["state"], "accepted")
+            self.assertEqual(self.client.tickets[-1].params["serviceTier"], tier)
+            self.assertEqual(self.client.tickets[-1].params["effort"], "high")
+            self.assertEqual(self.bridge.state()["thread_settings"]["service_tier"], tier)
+            self.bridge.on_event({"method": "turn/completed", "params": {"threadId": "thread-a",
+                                 "turn": {"id": result["turn_id"], "status": "completed"}}})
+
+    def test_unknown_fast_start_changes_the_thread_only_on_matching_input_acceptance(self):
+        self.bridge.on_event({"method": "turn/completed", "params": {"threadId": "thread-a",
+                             "turn": {"id": "turn-a", "status": "completed"}}})
+        self.runtime.health.update(main_thread_busy=False, active_operation_id=None)
+        self.client.on_send = lambda _ticket: None
+        request = self.body(service_tier="priority", expected_turn_id=None)
+        self.assertEqual(self.bridge.start_turn(request)["submission"]["state"], "unknown")
+        self.bridge.on_event({"method": "turn/started", "params": {"threadId": "thread-a", "turn": {"id": "T"}}})
+        self.assertIsNone(self.bridge.settings.thread["service_tier"])
+        self.bridge.on_event({"method": "item/completed", "params": {"threadId": "thread-a", "turnId": "T",
+            "item": {"type": "userMessage", "id": "native-item", "clientId": request["client_user_message_id"]}}})
+        self.assertEqual(self.bridge.settings.thread["service_tier"], "priority")
 
     def test_unknown_blocks_other_panel_and_stop_then_terminal_outlast_late_ack(self):
         self.client.on_send = lambda _ticket: None

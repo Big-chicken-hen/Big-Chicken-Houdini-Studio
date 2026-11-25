@@ -65,6 +65,45 @@ class PanelProductTest(unittest.TestCase):
         self.panel.efforts.setCurrentIndex(self.panel.efforts.findData("max"))
         self.assertEqual(controls.request_settings()["effort"], "max")
 
+    def test_lightning_toggle_is_scoped_to_supported_models_and_the_clicked_send(self):
+        self.api.models["data"][1]["serviceTiers"] = [{"id": "priority", "name": "Fast"}]
+        self.panel.apply_models({**self.api.models, "catalog_revision": 2})
+        controls = self.panel.model_controls
+        self.assertFalse(controls.fast_button.isEnabled())
+        self.choose_model("second-model")
+        self.panel.efforts.setCurrentIndex(self.panel.efforts.findData("adaptive-max"))
+        self.assertFalse(controls.fast_button.icon().isNull())
+        self.assertNotIn("service_tier", controls.request_settings())
+        controls.fast_button.click()
+        self.assertEqual(controls.request_settings()["service_tier"], "priority")
+        self.choose_model("preview-model")
+        self.assertFalse(controls.fast_button.isEnabled())
+        self.assertFalse(controls.fast_button.isChecked())
+        self.assertIsNone(controls.request_settings()["service_tier"])
+        self.choose_model("second-model")
+        self.panel.efforts.setCurrentIndex(self.panel.efforts.findData("adaptive-max"))
+        controls.fast_button.click()
+        self.panel.input.setPlainText("fast fixture")
+        self.api.hold["/turn"] = []
+        self.panel.send()
+        _, _, sent = self.api.hold["/turn"].pop()
+        self.assertEqual((sent["service_tier"], sent["model"], sent["effort"]),
+                         ("priority", "second-model", "adaptive-max"))
+        self.assertFalse(controls.fast_button.isEnabled())
+        self.assertTrue(controls.fast_button.isChecked())
+
+    def test_resumed_native_fast_tier_can_be_cleared_without_affecting_other_threads(self):
+        controls = self.panel.model_controls
+        self.api.models["data"][0]["serviceTiers"] = [{"id": "priority", "name": "Fast"}]
+        self.panel.apply_models({**self.api.models, "catalog_revision": 2})
+        controls.apply_native({**self.api.state["thread_settings"], "service_tier": "priority"}, restore=True)
+        self.assertTrue(controls.fast_button.isChecked())
+        controls.fast_button.click()
+        self.assertIsNone(controls.request_settings()["service_tier"])
+        self.select_thread("other")
+        self.assertFalse(controls.fast_button.isChecked())
+        self.assertNotIn("service_tier", controls.request_settings())
+
     def select_thread(self, thread_id, model="preview-model", effort="high", revision=2):
         self.api.thread = {"id": thread_id, "turns": []}
         self.api.state.update(thread_id=thread_id, turn_id=None)
@@ -234,6 +273,10 @@ class PanelProductTest(unittest.TestCase):
             entry = self.panel.model_controls.button
             self.assertTrue(entry.isVisible())
             self.assertLessEqual(entry.mapTo(self.panel, QtCore.QPoint()).x() + entry.width(), width)
+            lightning = self.panel.model_controls.fast_button
+            self.assertTrue(lightning.isVisible())
+            self.assertFalse(lightning.geometry().intersects(entry.geometry()))
+            self.assertLessEqual(lightning.mapTo(self.panel, QtCore.QPoint()).x() + lightning.width(), width)
             entry.click()
             self.app.processEvents()
             popup = self.panel.model_controls.popup

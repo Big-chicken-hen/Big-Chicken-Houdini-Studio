@@ -8,6 +8,25 @@ import time
 from ..common import StudioError
 
 
+FAST_SERVICE_TIERS = ("priority", "fast")
+
+
+def fast_service_tier(model):
+    """Use the Fast id advertised for this model by the signed-in account."""
+    if "serviceTiers" in model:
+        return next((tier["id"] for tier in model.get("serviceTiers") or []
+                     if isinstance(tier, dict) and tier.get("id") in FAST_SERVICE_TIERS), None)
+    return next((tier for tier in model.get("additionalSpeedTiers") or [] if tier in FAST_SERVICE_TIERS), None)
+
+
+def native_turn_overrides(body):
+    params = {key: body[key] for key in ("model", "effort") if body.get(key)}
+    if "service_tier" in body:
+        # Native turn/start inherits an omitted tier and clears it on JSON null.
+        params["serviceTier"] = body["service_tier"]
+    return params
+
+
 class ModelCatalog:
     def __init__(self, client, account_revision):
         self.client, self.account_revision = client, account_revision
@@ -62,7 +81,7 @@ class ModelCatalog:
                 self.cached_at = time.monotonic()
                 return copy.deepcopy(self.cached)
 
-    def validate(self, model, effort, attachments=False):
+    def validate(self, model, effort, attachments=False, service_tier=None):
         item = next((value for value in self.read()["data"] if value["model"] == model), None)
         if item is None:
             raise StudioError("MODEL_UNAVAILABLE", "所选模型已不可用，请重新选择模型。", 409)
@@ -70,6 +89,8 @@ class ModelCatalog:
                    if isinstance(value, dict)]
         if effort is not None and effort not in efforts:
             raise StudioError("EFFORT_UNAVAILABLE", "所选推理强度不适用于此模型，请使用其原生默认值或重新选择。", 409)
+        if service_tier is not None and service_tier != fast_service_tier(item):
+            raise StudioError("FAST_MODE_UNAVAILABLE", "当前模型的快速模式已变化，请重新选择后发送。", 409)
         if attachments and "image" not in item.get("inputModalities", ["text", "image"]):
             raise StudioError("MODEL_IMAGE_UNSUPPORTED", "此模型不接受图片，请保留草稿并选择支持图片的模型。", 409)
 
@@ -78,8 +99,10 @@ class NativeSettings:
     """Called under the Bridge lock; never treats a requested model as routing proof."""
     def __init__(self):
         self.revision = 0
-        self.thread = {"thread_id": None, "revision": 0, "model": None, "effort": None, "source": "unknown"}
+        self.thread = {"thread_id": None, "revision": 0, "model": None, "effort": None,
+                       "service_tier": None, "source": "unknown"}
         self.turn = None
+        self._pending_tier = None
         self.pending_reroutes = {}
 
     def bind(self, thread_id, response):
@@ -88,8 +111,30 @@ class NativeSettings:
         self.thread = {"thread_id": thread_id, "revision": self.revision,
                        "model": model if isinstance(model, str) else None,
                        "effort": effort if isinstance(effort, str) else None,
+                       "service_tier": response.get("serviceTier"),
                        "source": "native" if isinstance(model, str) else "unknown"}
         self.turn, self.pending_reroutes = None, {}
+        self._pending_tier = None
+
+    def observe_service_tier(self, params):
+        settings = params.get("threadSettings")
+        if (not self.thread["thread_id"] or params.get("threadId") != self.thread["thread_id"]
+                or not isinstance(settings, dict) or "serviceTier" not in settings):
+            return
+        self._set_service_tier(settings["serviceTier"])
+
+    def _set_service_tier(self, tier):
+        if (tier is None or isinstance(tier, str)) and tier != self.thread["service_tier"]:
+            self.revision += 1
+            self.thread.update(service_tier=tier, revision=self.revision)
+
+    def confirm_start_tier(self, thread_id, client_id=None):
+        # An accepted start persists the override even without a settings notification.
+        if self._pending_tier is not None and self.thread["thread_id"] == thread_id:
+            expected_id, tier = self._pending_tier
+            if client_id == expected_id:
+                self._set_service_tier(tier)
+                self._pending_tier = None
 
     def check_binding(self, body, thread_id):
         if "expected_thread_id" in body and body["expected_thread_id"] != thread_id:
@@ -102,8 +147,11 @@ class NativeSettings:
         model = body.get("model") or self.thread["model"]
         effort = body.get("effort") or (self.thread["effort"] if model == self.thread["model"] else None)
         self.turn = {"thread_id": thread_id, "turn_id": None, "requested_model": model,
+                     "requested_service_tier": body.get("service_tier", self.thread["service_tier"]),
                      "requested_effort": effort, "model": model, "effort": effort,
                      "confirmation": "requested", "from_model": None, "reason": None}
+        self._pending_tier = ((body.get("client_user_message_id"), body["service_tier"])
+                              if "service_tier" in body else None)
         self.pending_reroutes = {}
 
     def admitted(self, turn_id):

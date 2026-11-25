@@ -113,6 +113,40 @@ class ModelSettingsTests(unittest.TestCase):
         self.assertEqual(error.exception.code, "MODEL_CATALOG_CHANGED")
         self.assertIsNone(self.bridge.models.cached)
 
+    def test_fast_tier_uses_catalog_id_and_null_clears_only_on_explicit_request(self):
+        fast = model("model-b", "minimal", serviceTiers=[{"id": "priority", "name": "Fast"}])
+        self.client.pages = [{"data": [fast, model("standard")], "nextCursor": None}]
+        for changes in ({"service_tier": "ultrafast"}, {"service_tier": "fast"},
+                        {"model": "standard", "effort": "high", "service_tier": "priority"}):
+            with self.assertRaises(StudioError) as failure:
+                self.bridge.start_turn(self.body(**changes))
+            self.assertEqual(failure.exception.code, "FAST_MODE_UNAVAILABLE")
+        for choice in ({}, {"service_tier": "priority"}, {"service_tier": None}):
+            result = self.bridge.start_turn(self.body(**choice))
+            _, request = self.client.calls[-1]
+            self.assertEqual("serviceTier" in request, "service_tier" in choice)
+            self.assertEqual(request.get("serviceTier"), choice.get("service_tier"))
+            self.assertEqual((request["model"], request["effort"]), ("model-b", "minimal"))
+            self.assertEqual(result["turn_settings"]["requested_service_tier"], choice.get("service_tier"))
+            self.assertEqual(self.bridge.state()["thread_settings"]["service_tier"], choice.get("service_tier"))
+            self.bridge.on_event({"method": "turn/completed", "params": {"threadId": self.bridge.thread_id,
+                "turn": {"id": result["turn"]["id"], "status": "completed"}}})
+
+    def test_native_tier_updates_are_bound_to_the_thread_and_fence_stale_sends(self):
+        old = self.body()
+        def updated(thread, tier):
+            self.bridge.on_event({"method": "thread/settings/updated", "params": {
+                "threadId": thread, "threadSettings": {"serviceTier": tier}}})
+        updated("other", "priority")
+        self.assertEqual(self.bridge.settings.revision, old["settings_revision"])
+        updated(self.bridge.thread_id, "priority")
+        self.assertEqual(self.bridge.state()["thread_settings"]["service_tier"], "priority")
+        with self.assertRaises(StudioError) as failure:
+            self.bridge.start_turn(old)
+        self.assertEqual(failure.exception.code, "MODEL_SETTINGS_STALE")
+        updated(self.bridge.thread_id, None)
+        self.assertIsNone(self.bridge.state()["thread_settings"]["service_tier"])
+
     def test_missing_later_page_and_disappearing_selection_do_not_fall_back(self):
         self.client.pages = [{"data": [model("model-b", "minimal")], "nextCursor": "0"}]
         with self.assertRaises(StudioError):

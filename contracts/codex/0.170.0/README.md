@@ -12,6 +12,12 @@ allows any nonempty string. Studio validates the selected effort using the
 individual catalog row. The public request surface retains the existing model,
 account, Thread, Turn and approval methods.
 
+The Composer lightning button selects the Fast id from the model's `serviceTiers`.
+`turn/start.serviceTier` accepts that id to enable Fast, JSON null to clear the
+selection, and omission to inherit. The accepted override applies to later turns.
+`thread/start` and `thread/resume` report the native `serviceTier`. Studio leaves
+`turn/steer` input-only.
+
 The existing steer request sends the clicked Thread and expected Turn, a client
 message ID and the input list. Native success identifies the original Turn.
 `userMessage.clientId` correlates the input with native events and history.

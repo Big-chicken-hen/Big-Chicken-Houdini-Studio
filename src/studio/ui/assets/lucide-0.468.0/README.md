@@ -1,8 +1,8 @@
 # Approved Studio icons
 
-Only the 23 names in `studio.ui.icons.APPROVED_ICONS` are product icons. Their
-approved uses are fixed by the Pro presentation specification. Other actions
-use text. These resources are not a product logo.
+Only the 24 names in `studio.ui.icons.APPROVED_ICONS` are product icons. The
+Composer uses `zap` for Fast mode. Other approved uses follow the Pro
+presentation specification. Other actions use text.
 
 Source: [Lucide 0.468.0](https://github.com/lucide-icons/lucide/tree/f12b0de177fbc2a6795e99be065887e72b237123/icons).
 The GitHub tag ref `0.468.0` was checked against commit

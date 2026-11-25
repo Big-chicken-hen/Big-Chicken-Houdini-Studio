@@ -21,7 +21,7 @@ APPROVED_ICONS = frozenset({
     "folder-open", "file-plus-2", "ellipsis", "square-pen", "paperclip", "mouse-pointer-2",
     "arrow-up", "square", "x", "chevron-down", "chevron-right", "arrow-left", "arrow-down",
     "search", "settings", "external-link", "check", "triangle-alert", "circle-alert",
-    "loader-circle", "refresh-cw", "maximize-2", "copy",
+    "loader-circle", "refresh-cw", "maximize-2", "copy", "zap",
 })
 RESOURCE_DIRECTORY = "assets/lucide-0.468.0"
 _icons = OrderedDict()
@@ -51,7 +51,7 @@ def _event_type(event):
     return event.type()
 
 
-@lru_cache(maxsize=23)
+@lru_cache(maxsize=len(APPROVED_ICONS))
 def _svg(name):
     return files("studio.ui").joinpath(RESOURCE_DIRECTORY, name + ".svg").read_bytes()
 

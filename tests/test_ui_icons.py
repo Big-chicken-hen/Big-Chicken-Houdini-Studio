@@ -24,7 +24,7 @@ class IconTests(unittest.TestCase):
 
     def test_only_the_approved_subset_and_full_license_notices_are_packaged(self):
         folder = Path(icons.__file__).parent / icons.RESOURCE_DIRECTORY
-        self.assertEqual(len(icons.APPROVED_ICONS), 23)
+        self.assertEqual(len(icons.APPROVED_ICONS), 24)
         self.assertEqual({path.stem for path in folder.glob("*.svg")}, icons.APPROVED_ICONS)
         for name in icons.APPROVED_ICONS:
             root = ET.fromstring((folder / (name + ".svg")).read_bytes())

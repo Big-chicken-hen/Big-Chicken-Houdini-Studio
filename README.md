@@ -2,7 +2,9 @@
 
 一个独立的 Houdini 创作工作室：原生 Qt 启动器与 Python Panel，Codex App Server 负责对话和推理，Houdini 主线程负责批量 HOM，runtime 保存场景身份与操作收据。它不依赖旧 HIA 安装目录。
 
-**0.1.0-rc.1** 是首个 Windows 公开预览。安装包、校验文件及外测报告范围见 [GitHub Release](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio/releases/tag/v0.1.0-rc.1) 和 [首发记录](docs/rc1-public-preview.md)。当前源码为 **0.1.0-rc.2** 候选，随包 Codex 更新至 0.170.0，模型选择器显示当前账号的原生目录。
+**0.1.0-rc.1** 是首个 Windows 公开预览。安装包、校验文件及外测报告范围见 [GitHub Release](https://github.com/Big-chicken-hen/Big-Chicken-Houdini-Studio/releases/tag/v0.1.0-rc.1) 和 [首发记录](docs/rc1-public-preview.md)。
+
+**0.1.0-rc.3** 候选使用 Codex 0.170.0。模型支持 Fast 时，点击 Panel 输入框下方、模型选择器旁的闪电，从下一轮起使用快速模式。再点一次恢复标准速度。模型和推理强度可独立选择。快速模式可能消耗更多额度。[Codex 速度设置](https://learn.chatgpt.com/docs/agent-configuration/speed)
 
 Windows 11 x64 / Houdini FX 22.0.368 是既有验证环境。其他满足接入条件的 Houdini 22 系列为 Untested，逐次确认后可试测。无法确认的现场事实保留 Unknown。普通用户从安装器创建的开始菜单入口启动，使用随包 Codex。外部 Codex 服务需要用户自己的有效 Clash 配置，端口由用户环境决定。
 
