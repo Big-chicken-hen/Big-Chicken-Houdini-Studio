@@ -24,6 +24,18 @@ class StoragePathsTests(unittest.TestCase):
         (self.install / "pyproject.toml").write_text("# fixture", encoding="utf-8")
         self.data, self.cache = self.base / "state", self.base / "cache"
 
+    @unittest.skipUnless(os.name == "nt", "Windows system proxy default")
+    def test_studio_codex_home_defaults_to_system_proxy_and_preserves_existing_config(self):
+        paths = AppPaths(self.install, data_root=self.data, cache_root=self.cache)
+        env = helper_environment(paths)
+        config = Path(env["CODEX_HOME"]) / "config.toml"
+        self.assertEqual(config.read_text(encoding="utf-8"), "[features]\nrespect_system_proxy = true\n")
+
+        custom = b"# Local preferences\r\n[features]\r\nrespect_system_proxy = false\r\n"
+        config.write_bytes(custom)
+        helper_environment(paths)
+        self.assertEqual(config.read_bytes(), custom)
+
     def test_explicit_fixture_root_ignores_ambient_user_profile(self):
         with patch.dict(os.environ, {"BCS_DATA_ROOT": str(self.data), "BCS_CACHE_ROOT": str(self.cache)}):
             paths = AppPaths(self.install)

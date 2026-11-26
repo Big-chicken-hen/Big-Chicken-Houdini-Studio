@@ -48,6 +48,20 @@ def render_output_directory(paths):
     return (path if path.is_absolute() else paths.root / path).resolve()
 
 
+def _seed_windows_codex_config(codex_home):
+    config = codex_home / "config.toml"
+    if config.exists():
+        return
+    temporary = codex_home / f"config.{new_id()}.tmp"
+    try:
+        temporary.write_bytes(b"[features]\nrespect_system_proxy = true\n")
+        # Windows rename publishes the whole file and refuses to replace a concurrent creator.
+        with contextlib.suppress(FileExistsError):
+            temporary.rename(config)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def storage_environment(paths):
     """Child/process-local storage settings; never edit a user's global configuration."""
     directories = {"CODEX_HOME": paths.codex_home, "TEMP": paths.cache("tmp"),
@@ -56,6 +70,8 @@ def storage_environment(paths):
                    "XDG_CONFIG_HOME": paths.data("config"), "XDG_DATA_HOME": paths.data("data")}
     for path in directories.values():
         path.mkdir(parents=True, exist_ok=True)
+    if os.name == "nt":
+        _seed_windows_codex_config(directories["CODEX_HOME"])
     return {**{key: str(value) for key, value in directories.items()},
             "HIA_PROJECT_ROOT": str(paths.root), "BCS_DATA_ROOT": str(paths.data_root),
             "BCS_CACHE_ROOT": str(paths.cache_root), "PYTHONPATH": str(paths.install("src")),
